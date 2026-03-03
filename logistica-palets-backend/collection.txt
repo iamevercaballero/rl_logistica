@@ -1,0 +1,309 @@
+{
+  "info": {
+    "name": "Logistica Palets API (Full)",
+    "_postman_id": "d7c3a6c2-1234-4a9a-9c99-abcdef123456",
+    "description": "Colección de pruebas para API de logística de palets (Auth, Products, Warehouses, Locations, Lots, Pallets, Movements)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000/api", "type": "string" },
+    { "key": "token", "value": "", "type": "string" },
+
+    { "key": "productId", "value": "", "type": "string" },
+    { "key": "warehouseId", "value": "", "type": "string" },
+    { "key": "locationId", "value": "", "type": "string" },
+    { "key": "lotId", "value": "", "type": "string" },
+    { "key": "palletId", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "0) Health",
+      "item": [
+        {
+          "name": "GET /api (health)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}", "host": ["{{baseUrl}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "1) Auth",
+      "item": [
+        {
+          "name": "Login (guarda token)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"admin123\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('token', json.access_token);",
+                  "pm.test('token recibido', function () { pm.expect(json.access_token).to.be.a('string'); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2) Products",
+      "item": [
+        {
+          "name": "Create Product (guarda productId)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"PROD-001\",\n  \"description\": \"Producto de prueba\",\n  \"unitOfMeasure\": \"UN\",\n  \"active\": true\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/products", "host": ["{{baseUrl}}"], "path": ["products"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json && json.id) pm.collectionVariables.set('productId', json.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Products",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/products", "host": ["{{baseUrl}}"], "path": ["products"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3) Warehouses",
+      "item": [
+        {
+          "name": "Create Warehouse (guarda warehouseId)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Deposito Central\",\n  \"address\": \"Ruta PY01 Km 15\",\n  \"active\": true\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/warehouses", "host": ["{{baseUrl}}"], "path": ["warehouses"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json && json.id) pm.collectionVariables.set('warehouseId', json.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Warehouses",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/warehouses", "host": ["{{baseUrl}}"], "path": ["warehouses"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4) Locations",
+      "item": [
+        {
+          "name": "Create Location (usa warehouseId, guarda locationId)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"A-01-01\",\n  \"warehouseId\": \"{{warehouseId}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/locations", "host": ["{{baseUrl}}"], "path": ["locations"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json && json.id) pm.collectionVariables.set('locationId', json.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Locations",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/locations", "host": ["{{baseUrl}}"], "path": ["locations"] }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "5) Lots (NUEVO)",
+      "item": [
+        {
+          "name": "List Lots",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/lots", "host": ["{{baseUrl}}"], "path": ["lots"] }
+          }
+        },
+        {
+          "name": "Create Lot (usa productId, guarda lotId)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lotCode\": \"LOT-001\",\n  \"productId\": \"{{productId}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/lots", "host": ["{{baseUrl}}"], "path": ["lots"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json && json.id) pm.collectionVariables.set('lotId', json.id);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "name": "6) Pallets (NUEVO)",
+      "item": [
+        {
+          "name": "Create Pallet (usa lotId+locationId, guarda palletId)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"PALLET-0001\",\n  \"lotId\": \"{{lotId}}\",\n  \"quantity\": 100,\n  \"currentLocationId\": \"{{locationId}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/pallets", "host": ["{{baseUrl}}"], "path": ["pallets"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json && json.id) pm.collectionVariables.set('palletId', json.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Pallets",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/pallets", "host": ["{{baseUrl}}"], "path": ["pallets"] }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "7) Movements (NUEVO: Exit + Transfer)",
+      "item": [
+        {
+          "name": "Entry (crea pallet por movimiento) - usa lotId+locationId",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reference\": \"Ingreso inicial\",\n  \"notes\": \"Prueba\",\n  \"items\": [\n    {\n      \"palletCode\": \"PAL-ENTRY-01\",\n      \"lotId\": \"{{lotId}}\",\n      \"locationId\": \"{{locationId}}\",\n      \"quantity\": 10\n    }\n  ]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/movements/entry", "host": ["{{baseUrl}}"], "path": ["movements", "entry"] }
+          }
+        },
+        {
+          "name": "Exit (usa palletId)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reference\": \"Salida prueba\",\n  \"notes\": \"Prueba\",\n  \"items\": [\n    {\n      \"palletId\": \"{{palletId}}\",\n      \"quantity\": 5\n    }\n  ]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/movements/exit", "host": ["{{baseUrl}}"], "path": ["movements", "exit"] }
+          }
+        },
+        {
+          "name": "Transfer (usa palletId + destination locationId)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"palletId\": \"{{palletId}}\",\n  \"destinationLocationId\": \"{{locationId}}\",\n  \"quantity\": 1,\n  \"reference\": \"Transfer prueba\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/movements/transfer", "host": ["{{baseUrl}}"], "path": ["movements", "transfer"] }
+          }
+        }
+      ]
+    }
+  ]
+}

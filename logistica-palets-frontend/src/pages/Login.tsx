@@ -16,7 +16,7 @@ export default function LoginPage() {
       await login(username, password); 
       nav("/", { replace: true });
     } catch (e: any) {
-      setError(e?.response?.data?.message || "Login inválido");
+      setError(e?.response?.data?.message || "Usuario o contraseña incorrectos");
     }
   }
 

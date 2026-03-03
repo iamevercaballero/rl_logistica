@@ -66,7 +66,7 @@ export default function CommandPalette({
             autoFocus
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar módulo… (Products, Pallets, Movements…) "
+            placeholder="Buscar módulo… (Productos, Palets, Movimientos…) "
             style={{
               width: "100%",
               padding: "10px 12px",

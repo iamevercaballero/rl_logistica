@@ -139,7 +139,7 @@ export default function AppLayout() {
       {/* Main */}
       <main style={shell.main}>
         <div style={shell.topbar}>
-          <div style={shell.topbarTitle}>Workspace</div>
+          <div style={shell.topbarTitle}>Panel</div>
           <div style={shell.topbarRight}>
             <span style={{ ...shell.pill, background: "#f9fafb" }}>
               {role ?? "SIN_ROLE"}

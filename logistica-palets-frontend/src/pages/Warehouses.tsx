@@ -39,7 +39,7 @@ export default function WarehousesPage() {
       setLoading(false);
     }
   }
-
+  
   return (
     <div>
       <h2>Warehouses</h2>

@@ -1,6 +1,7 @@
 import { Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { logout } from "../api/auth";
 import { getUserRole, canRead } from "../auth/rbac";
+import { useAuth } from "../auth/AuthContext";
 import type React from "react";
 
 const linkStyle = ({ isActive }: { isActive: boolean }) => ({
@@ -90,16 +91,18 @@ const modules = [
 ] as const;
 
 export default function AppLayout() {
-  const token = localStorage.getItem("token");
+  const { user, isReady, logout: authLogout } = useAuth();
   const nav = useNavigate();
-  const role = getUserRole();
+  const role = user?.role;
 
-  if (!token) return <Navigate to="/login" replace />;
+  if (!isReady) return null; // o un loader
+  if (!user) return <Navigate to="/login" replace />;
 
   function handleLogout() {
-    logout();
+    authLogout();
     nav("/login", { replace: true });
   }
+
 
   const visible = role
     ? modules.filter((m) => m.key === "dashboard" || canRead(m.key as any, role))
@@ -139,7 +142,7 @@ export default function AppLayout() {
       {/* Main */}
       <main style={shell.main}>
         <div style={shell.topbar}>
-          <div style={shell.topbarTitle}>Workspace</div>
+          <div style={shell.topbarTitle}>Panel</div>
           <div style={shell.topbarRight}>
             <span style={{ ...shell.pill, background: "#f9fafb" }}>
               {role ?? "SIN_ROLE"}

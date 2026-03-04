@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { getUserRole, canRead } from "../auth/rbac";
+import { getToken } from "../auth/authStorage";
 import { getKpis, type KpisResponse } from "../api/kpis";
 import { getMovements, type MovementRow } from "../api/reports";
 import CommandPalette from "../components/CommandPalette";
@@ -27,7 +28,7 @@ function fmtDate(iso: string) {
 }
 
 export default function DashboardPage() {
-  const token = localStorage.getItem("token");
+  const token = getToken();
   const role = getUserRole();
   const nav = useNavigate();
 

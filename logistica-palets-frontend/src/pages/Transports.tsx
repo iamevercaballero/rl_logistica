@@ -20,7 +20,7 @@ export default function TransportsPage() {
   }
 
   useEffect(() => {
-    refresh().catch((e: any) => setError(e?.response?.data?.message || "Error cargando transports"));
+    refresh().catch((e: any) => setError(e?.response?.data?.message || "Error cargando transportes"));
   }, []);
 
   async function handleCreate(e: React.FormEvent) {
@@ -33,7 +33,7 @@ export default function TransportsPage() {
       await createTransport({ plate, type, description });
       await refresh();
     } catch (e: any) {
-      setError(e?.response?.data?.message || "Error creando transport");
+      setError(e?.response?.data?.message || "Error creando transporte");
     } finally {
       setLoading(false);
     }

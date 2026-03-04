@@ -1,8 +1,11 @@
 import axios from "axios";
 import { getToken, clearAuthStorage } from "../auth/authStorage";
 
+const rawBaseUrl = import.meta.env.VITE_API_BASE_URL ?? import.meta.env.VITE_API_URL ?? "http://localhost:3000/api";
+const baseURL = rawBaseUrl.replace(/\/$/, "");
+
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL ?? "http://localhost:3000",
+  baseURL,
 });
 
 api.interceptors.request.use((config) => {

@@ -1,6 +1,5 @@
 import { Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { logout } from "../api/auth";
-import { getUserRole, canRead } from "../auth/rbac";
+import { canRead } from "../auth/rbac";
 import { useAuth } from "../auth/AuthContext";
 import type React from "react";
 

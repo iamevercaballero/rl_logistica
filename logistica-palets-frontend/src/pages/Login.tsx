@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { login } from "../api/auth";
+import { useAuth } from "../auth/AuthContext";
 
 export default function LoginPage() {
   const nav = useNavigate();
+  const { login: authLogin } = useAuth();
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("admin");
   const [error, setError] = useState("");
@@ -13,7 +15,8 @@ export default function LoginPage() {
     setError("");
 
     try {
-      await login(username, password); 
+      const payload = await login(username, password);
+      authLogin(payload);
       nav("/", { replace: true });
     } catch (e: any) {
       setError(e?.response?.data?.message || "Usuario o contraseña incorrectos");

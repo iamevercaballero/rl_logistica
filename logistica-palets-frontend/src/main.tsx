@@ -12,6 +12,7 @@ import MovementsPage from "./pages/Movements";
 import TransportsPage from "./pages/Transports";
 import RequireRole from "./auth/RequireRole";
 import DashboardPage from "./pages/Dashboard";
+import { AuthProvider } from "./auth/AuthContext";
 
 const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -21,8 +22,8 @@ const router = createBrowserRouter([
     element: <AppLayout />,
     children: [
 
-      { index: true, element: <Navigate to="/products" replace /> },
       { index: true, element: <DashboardPage /> },
+
 
       { path: "products", element: <RequireRole module="products"><ProductsPage /></RequireRole> },
       { path: "warehouses", element: <RequireRole module="warehouses"><WarehousesPage /></RequireRole> },
@@ -41,6 +42,8 @@ const router = createBrowserRouter([
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <RouterProvider router={router} />
-  </React.StrictMode>,
+    <AuthProvider>
+      <RouterProvider router={router} />
+    </AuthProvider>
+  </React.StrictMode>
 );

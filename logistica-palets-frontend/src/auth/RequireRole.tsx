@@ -1,5 +1,6 @@
 import { Navigate } from "react-router-dom";
-import { getUserRole, canRead } from "./rbac";
+import { canRead } from "./rbac";
+import { useAuth } from "./AuthContext";
 
 export default function RequireRole({
   module,
@@ -8,8 +9,12 @@ export default function RequireRole({
   module: "products" | "lots" | "warehouses" | "locations" | "pallets" | "movements" | "transports";
   children: React.ReactNode;
 }) {
-  const role = getUserRole();
-  if (!role) return <Navigate to="/login" replace />;
+  const { user, isReady } = useAuth();
+
+  if (!isReady) return null; // evita parpadeo/redirect por timing
+  if (!user) return <Navigate to="/login" replace />;
+
+  const role = user.role;
 
   if (!canRead(module, role)) {
     return (

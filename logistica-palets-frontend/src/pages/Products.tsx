@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { createProduct, listProducts } from "../api/products";
 import type { Product } from "../api/products";
 import { getUserRole, canWrite } from "../auth/rbac";
+import { EmptyState } from "../components/EmptyState";
 
 export default function ProductsPage() {
   const role = getUserRole();
@@ -61,12 +62,14 @@ export default function ProductsPage() {
         style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}
       >
         <input
+          className="input"
           disabled={!canCreate}
           value={code}
           onChange={(e) => setCode(e.target.value)}
           placeholder="code"
         />
         <input
+          className="input"
           disabled={!canCreate}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
@@ -74,50 +77,58 @@ export default function ProductsPage() {
           style={{ minWidth: 280 }}
         />
         <input
+          className="input"
           disabled={!canCreate}
           value={unitOfMeasure}
           onChange={(e) => setUnitOfMeasure(e.target.value)}
           placeholder="unitOfMeasure"
           style={{ width: 140 }}
         />
-        <button type="submit" disabled={!canCreate || loading}>
+        <button className="btn btn--primary" type="submit" disabled={!canCreate || loading}>
           {loading ? "Creando..." : "Crear"}
         </button>
       </form>
 
       {error && <p style={{ color: "red" }}>{error}</p>}
 
-      <table border={1} cellPadding={8}>
-        <thead>
-          <tr>
-            <th>code</th>
-            <th>description</th>
-            <th>uom</th>
-            <th>active</th>
-            <th>id</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((p) => (
-            <tr key={p.id}>
-              <td>{p.code}</td>
-              <td>{p.description}</td>
-              <td>{p.unitOfMeasure}</td>
-              <td>{String(p.active)}</td>
-              <td
-                style={{
-                  maxWidth: 260,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {p.id}
-              </td>
+      {items.length === 0 ? (
+        <EmptyState
+          title="Sin productos"
+          description="Todavía no hay productos cargados. Crea el primero para comenzar."
+        />
+      ) : (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>code</th>
+              <th>description</th>
+              <th>uom</th>
+              <th>active</th>
+              <th>id</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {items.map((p) => (
+              <tr key={p.id}>
+                <td>{p.code}</td>
+                <td>{p.description}</td>
+                <td>{p.unitOfMeasure}</td>
+                <td>{String(p.active)}</td>
+                <td
+                  style={{
+                    maxWidth: 260,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {p.id}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

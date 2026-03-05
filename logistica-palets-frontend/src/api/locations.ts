@@ -4,6 +4,7 @@ export type Location = {
   id: string;
   code: string;
   warehouseId?: string;
+  warehouse?: { id: string; name: string };
   active?: boolean;
 };
 
@@ -18,4 +19,8 @@ export async function createLocation(payload: {
 }) {
   const { data } = await api.post<Location>("/locations", payload);
   return data;
+}
+
+export async function deleteLocation(id: string) {
+  await api.delete(`/locations/${id}`);
 }

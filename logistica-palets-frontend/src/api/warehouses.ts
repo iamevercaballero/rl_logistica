@@ -20,3 +20,7 @@ export async function createWarehouse(payload: {
   const { data } = await api.post<Warehouse>("/warehouses", payload);
   return data;
 }
+
+export async function deleteWarehouse(id: string) {
+  await api.delete(`/warehouses/${id}`);
+}

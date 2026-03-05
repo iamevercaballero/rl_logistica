@@ -13,6 +13,7 @@ import TransportsPage from "./pages/Transports";
 import RequireRole from "./auth/RequireRole";
 import DashboardPage from "./pages/Dashboard";
 import { AuthProvider } from "./auth/AuthContext";
+import "./index.css";
 
 const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },

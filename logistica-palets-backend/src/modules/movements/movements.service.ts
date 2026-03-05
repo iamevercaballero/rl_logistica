@@ -6,6 +6,7 @@ import { Pallet } from '../pallets/entities/pallet.entity';
 import { CreateEntryDto } from './dto/create-entry.dto';
 import { CreateExitDto } from './dto/create-exit.dto';
 import { CreateTransferDto } from './dto/create-transfer.dto';
+import { MovementsQueryDto } from './dto/movements-query.dto';
 
 @Injectable()
 export class MovementsService {
@@ -14,14 +15,13 @@ export class MovementsService {
   async createEntry(dto: CreateEntryDto) {
     return this.dataSource.transaction(async (manager: import('typeorm').EntityManager) => {
       const movement = manager.create(Movement, {
-        type: 'ENTRADA',
+        type: 'ENTRY',
         reference: dto.reference,
         notes: dto.notes,
       });
       await manager.save(movement);
 
       for (const item of dto.items) {
-        // crear pallet
         const pallet = manager.create(Pallet, {
           code: item.palletCode,
           lotId: item.lotId,
@@ -31,7 +31,6 @@ export class MovementsService {
         });
         await manager.save(pallet);
 
-        // detalle
         const detail = manager.create(MovementDetail, {
           movementId: movement.id,
           palletId: pallet.id,
@@ -49,7 +48,7 @@ export class MovementsService {
   async createExit(dto: CreateExitDto) {
     return this.dataSource.transaction(async (manager: import('typeorm').EntityManager) => {
       const movement = manager.create(Movement, {
-        type: 'SALIDA',
+        type: 'EXIT',
         reference: dto.reference,
         notes: dto.notes,
       });
@@ -63,7 +62,6 @@ export class MovementsService {
           throw new BadRequestException(`Cantidad insuficiente en pallet ${pallet.code}`);
         }
 
-        // detalle salida
         const detail = manager.create(MovementDetail, {
           movementId: movement.id,
           palletId: pallet.id,
@@ -73,7 +71,6 @@ export class MovementsService {
         });
         await manager.save(detail);
 
-        // actualizar pallet
         if (pallet.quantity === item.quantity) {
           await manager.remove(pallet);
         } else {
@@ -96,13 +93,12 @@ export class MovementsService {
       }
 
       const movement = manager.create(Movement, {
-        type: 'TRANSFERENCIA',
+        type: 'TRANSFER',
         reference: dto.reference,
         notes: dto.notes,
       });
       await manager.save(movement);
 
-      // detalle origen
       await manager.save(
         manager.create(MovementDetail, {
           movementId: movement.id,
@@ -113,7 +109,6 @@ export class MovementsService {
         }),
       );
 
-      // total
       if (pallet.quantity === dto.quantity) {
         pallet.currentLocationId = dto.destinationLocationId;
         await manager.save(pallet);
@@ -131,7 +126,6 @@ export class MovementsService {
         return { movementId: movement.id };
       }
 
-      // parcial: reduce original + crea nuevo
       pallet.quantity -= dto.quantity;
       await manager.save(pallet);
 
@@ -157,24 +151,60 @@ export class MovementsService {
       return { movementId: movement.id, newPalletId: newPallet.id };
     });
   }
-    async findAll() {
-    return this.dataSource.getRepository(Movement).find({
-      order: { date: 'DESC' }, // si tu entidad usa "date"
-    });
+
+
+  private toStartDate(value: string) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return new Date(`${value}T00:00:00.000Z`);
+    return new Date(value);
+  }
+
+  private toEndDate(value: string) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return new Date(`${value}T23:59:59.999Z`);
+    return new Date(value);
+  }
+
+  async findAll(query: MovementsQueryDto) {
+    const page = query.page ?? 1;
+    const limit = Math.min(query.limit ?? 20, 100);
+
+    const qb = this.dataSource
+      .getRepository(Movement)
+      .createQueryBuilder('movement')
+      .leftJoin('movement_details', 'detail', 'detail.movementId = movement.id')
+      .leftJoin('locations', 'location', 'location.id = detail.locationId')
+      .leftJoin('warehouses', 'warehouse', 'warehouse.id = location.warehouseId')
+      .leftJoin('pallets', 'pallet', 'pallet.id = detail.palletId')
+      .leftJoin('lots', 'lot', 'lot.id = detail.lotId')
+      .leftJoin('products', 'product', 'product.id = lot.productId')
+      .orderBy('movement.date', 'DESC')
+      .distinct(true);
+
+    if (query.warehouseId) qb.andWhere('warehouse.id = :warehouseId', { warehouseId: query.warehouseId });
+    if (query.type) qb.andWhere('movement.type = :type', { type: query.type });
+    if (query.dateFrom) qb.andWhere('movement.date >= :dateFrom', { dateFrom: this.toStartDate(query.dateFrom) });
+    if (query.dateTo) qb.andWhere('movement.date <= :dateTo', { dateTo: this.toEndDate(query.dateTo) });
+    if (query.search?.trim()) {
+      const search = `%${query.search.trim().toLowerCase()}%`;
+      qb.andWhere(
+        '(LOWER(movement.reference) LIKE :search OR LOWER(movement.notes) LIKE :search OR LOWER(pallet.code) LIKE :search OR CAST(detail.palletId as text) LIKE :search OR LOWER(lot.lotCode) LIKE :search OR LOWER(product.code) LIKE :search OR LOWER(product.description) LIKE :search)',
+        { search },
+      );
+    }
+
+    qb.skip((page - 1) * limit).take(limit);
+    const [data, total] = await qb.getManyAndCount();
+
+    return {
+      data,
+      meta: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
+    };
   }
 
   async findOne(id: string) {
-    const movement = await this.dataSource.getRepository(Movement).findOne({
-      where: { id },
-    });
-
+    const movement = await this.dataSource.getRepository(Movement).findOne({ where: { id } });
     if (!movement) throw new NotFoundException('Movimiento no encontrado');
 
-    const details = await this.dataSource.getRepository(MovementDetail).find({
-      where: { movementId: id },
-    });
-
+    const details = await this.dataSource.getRepository(MovementDetail).find({ where: { movementId: id } });
     return { ...movement, details };
   }
-
 }

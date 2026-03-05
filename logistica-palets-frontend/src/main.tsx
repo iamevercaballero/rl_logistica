@@ -14,6 +14,7 @@ import RequireRole from "./auth/RequireRole";
 import DashboardPage from "./pages/Dashboard";
 import { AuthProvider } from "./auth/AuthContext";
 import "./index.css";
+import { ToastProvider } from "./components/ToastProvider";
 
 const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -44,7 +45,9 @@ const router = createBrowserRouter([
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <AuthProvider>
-      <RouterProvider router={router} />
+      <ToastProvider>
+        <RouterProvider router={router} />
+      </ToastProvider>
     </AuthProvider>
   </React.StrictMode>
 );

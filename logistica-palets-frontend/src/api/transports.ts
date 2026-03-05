@@ -21,3 +21,7 @@ export async function createTransport(payload: {
   const { data } = await api.post<Transport>("/transports", payload);
   return data;
 }
+
+export async function deleteTransport(id: string) {
+  await api.delete(`/transports/${id}`);
+}

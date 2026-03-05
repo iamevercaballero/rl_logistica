@@ -7,7 +7,7 @@ export default function LoginPage() {
   const nav = useNavigate();
   const { login: authLogin } = useAuth();
   const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("admin");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
   async function handleSubmit(e: React.FormEvent) {

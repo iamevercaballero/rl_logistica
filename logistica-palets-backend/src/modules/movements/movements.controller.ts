@@ -4,12 +4,14 @@ import {
   Body,
   Get,
   Param,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { MovementsService } from './movements.service';
 import { CreateEntryDto } from './dto/create-entry.dto';
 import { CreateExitDto } from './dto/create-exit.dto';
 import { CreateTransferDto } from './dto/create-transfer.dto';
+import { MovementsQueryDto } from './dto/movements-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles/roles.guard';
 import { Roles } from '../auth/roles/roles.decorator';
@@ -43,8 +45,8 @@ export class MovementsController {
   // 📊 LISTADO
   @Get()
   @Roles('ADMIN', 'MANAGER', 'AUDITOR')
-  findAll() {
-    return this.service.findAll();
+  findAll(@Query() query: MovementsQueryDto) {
+    return this.service.findAll(query);
   }
 
   // 🔍 DETALLE

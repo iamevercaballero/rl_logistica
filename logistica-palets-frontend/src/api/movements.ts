@@ -1,5 +1,35 @@
 import { api } from "./client";
 
+export type MovementType = "ENTRY" | "EXIT" | "TRANSFER";
+
+export type Movement = {
+  id: string;
+  type: MovementType;
+  date: string;
+  reference?: string;
+  notes?: string;
+};
+
+export type MovementsMeta = {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+};
+
+export async function getMovements(params: {
+  page?: number;
+  limit?: number;
+  warehouseId?: string;
+  type?: MovementType;
+  dateFrom?: string;
+  dateTo?: string;
+  search?: string;
+}) {
+  const { data } = await api.get<{ data: Movement[]; meta: MovementsMeta }>("/movements", { params });
+  return data;
+}
+
 export async function movementEntry(payload: {
   reference?: string;
   notes?: string;

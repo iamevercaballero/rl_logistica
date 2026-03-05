@@ -24,13 +24,13 @@ export default function LoginPage() {
   }
 
   return (
-    <div style={{ maxWidth: 420, margin: "80px auto" }}>
-      <h2>Login</h2>
+    <div className="card" style={{ maxWidth: 420, margin: "80px auto" }}>
+      <h2>Iniciar sesión</h2>
 
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="username" />
-        <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" type="password" />
-        <button type="submit">Entrar</button>
+        <input className="input" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="username" />
+        <input className="input" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" type="password" />
+        <button className="btn btn--primary" type="submit">Entrar</button>
       </form>
 
       {error && <p style={{ color: "red" }}>{error}</p>}

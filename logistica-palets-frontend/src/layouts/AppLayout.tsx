@@ -19,18 +19,16 @@ const linkStyle = ({ isActive }: { isActive: boolean }) => ({
 const shell: Record<string, React.CSSProperties> = {
   app: {
     minHeight: "100vh",
-    background: "#fafafa",
     display: "grid",
     gridTemplateColumns: "280px 1fr",
   },
   sidebar: {
-    background: "#ffffff",
-    borderRight: "1px solid #e5e7eb",
     padding: 16,
     position: "sticky",
     top: 0,
     height: "100vh",
     overflow: "auto",
+    borderRight: "1px solid var(--border)",
   },
   brandRow: {
     display: "flex",
@@ -40,34 +38,11 @@ const shell: Record<string, React.CSSProperties> = {
     marginBottom: 14,
   },
   brand: { fontSize: 14, fontWeight: 900, letterSpacing: "-0.2px", margin: 0 },
-  pill: {
-    border: "1px solid #e5e7eb",
-    borderRadius: 999,
-    padding: "6px 10px",
-    fontSize: 12,
-    fontWeight: 700,
-    color: "#111827",
-    background: "#fff",
-    whiteSpace: "nowrap",
-  },
   nav: { display: "flex", flexDirection: "column", gap: 6, marginTop: 10 },
   sectionTitle: { fontSize: 11, fontWeight: 800, color: "#6b7280", margin: "14px 8px 8px" },
-  footer: { marginTop: 14, paddingTop: 14, borderTop: "1px solid #e5e7eb" },
-  btn: {
-    width: "100%",
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #e5e7eb",
-    background: "#fff",
-    cursor: "pointer",
-    fontWeight: 800,
-  },
+  footer: { marginTop: 14, paddingTop: 14 },
   main: { padding: "22px 22px 40px" },
   topbar: {
-    background: "#ffffff",
-    border: "1px solid #e5e7eb",
-    borderRadius: 14,
-    padding: "10px 14px",
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
@@ -76,7 +51,6 @@ const shell: Record<string, React.CSSProperties> = {
   topbarTitle: { fontSize: 12, fontWeight: 800, color: "#6b7280" },
   topbarRight: { display: "flex", alignItems: "center", gap: 10 },
 };
-
 
 const modules = [
   { key: "dashboard", label: "Dashboard", path: "/" },
@@ -94,7 +68,7 @@ export default function AppLayout() {
   const nav = useNavigate();
   const role = user?.role;
 
-  if (!isReady) return null; // o un loader
+  if (!isReady) return null;
   if (!user) return <Navigate to="/login" replace />;
 
   function handleLogout() {
@@ -102,22 +76,16 @@ export default function AppLayout() {
     nav("/login", { replace: true });
   }
 
-
   const visible = role
     ? modules.filter((m) => m.key === "dashboard" || canRead(m.key as any, role))
     : [modules[0]];
 
   return (
     <div style={shell.app}>
-      {/* Sidebar */}
-      <aside style={shell.sidebar}>
+      <aside className="card" style={shell.sidebar}>
         <div style={shell.brandRow}>
           <h3 style={shell.brand}>Logística Palets</h3>
-          <span style={shell.pill}>{role ?? "SIN_ROLE"}</span>
-        </div>
-
-        <div style={{ color: "#6b7280", fontSize: 12, marginLeft: 2 }}>
-          {/*Accesos por permisos · UI estilo Linear*/}
+          <span className="badge">{role ?? "SIN_ROLE"}</span>
         </div>
 
         <div style={shell.sectionTitle}>Navegación</div>
@@ -132,20 +100,18 @@ export default function AppLayout() {
         </nav>
 
         <div style={shell.footer}>
-          <button onClick={handleLogout} style={shell.btn}>
+          <hr className="divider" />
+          <button className="btn btn--secondary" onClick={handleLogout} style={{ width: "100%", marginTop: 14 }}>
             Cerrar Sesion
           </button>
         </div>
       </aside>
 
-      {/* Main */}
       <main style={shell.main}>
-        <div style={shell.topbar}>
+        <div className="card" style={shell.topbar}>
           <div style={shell.topbarTitle}>Panel</div>
           <div style={shell.topbarRight}>
-            <span style={{ ...shell.pill, background: "#f9fafb" }}>
-              {role ?? "SIN_ROLE"}
-            </span>
+            <span className="badge">{role ?? "SIN_ROLE"}</span>
           </div>
         </div>
 

@@ -3,7 +3,7 @@ import { api } from "./client";
 export type Lot = {
   id: string;
   lotCode: string;
-  product?: any; // después lo tipamos mejor
+  product?: { id: string; code: string };
 };
 
 export async function listLots() {
@@ -14,4 +14,8 @@ export async function listLots() {
 export async function createLot(payload: { lotCode: string; productId: string }) {
   const { data } = await api.post<Lot>("/lots", payload);
   return data;
+}
+
+export async function deleteLot(id: string) {
+  await api.delete(`/lots/${id}`);
 }

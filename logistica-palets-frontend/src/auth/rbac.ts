@@ -6,7 +6,8 @@ export type ModuleKey =
   | "locations"
   | "pallets"
   | "movements"
-  | "transports";
+  | "transports"
+  | "reports";
 
 export function getUserRole(): Role | null {
   const raw = localStorage.getItem("user");
@@ -48,6 +49,10 @@ export const PERMS: Record<ModuleKey, { read: Role[]; write: Role[] }> = {
   transports: {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
     write: ["ADMIN", "MANAGER"],
+  },
+  reports: {
+    read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
+    write: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
   },
 };
 

@@ -61,6 +61,7 @@ const modules = [
   { key: "pallets", label: "Palets", path: "/pallets" },
   { key: "movements", label: "Movimientos", path: "/movements" },
   { key: "transports", label: "Transportes", path: "/transports" },
+  { key: "reports", label: "Reportes", path: "/reports" },
 ] as const;
 
 export default function AppLayout() {

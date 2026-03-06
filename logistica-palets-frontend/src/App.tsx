@@ -9,6 +9,7 @@ import Lots from "./pages/Lots";
 import Pallets from "./pages/Pallets";
 import Movements from "./pages/Movements";
 import Transports from "./pages/Transports";
+import Reports from "./pages/Reports";
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
         <Route path="pallets" element={<Pallets />} />
         <Route path="movements" element={<Movements />} />
         <Route path="transports" element={<Transports />} />
+        <Route path="reports" element={<Reports />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -1,7 +1,7 @@
+import type React from "react";
 import { Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { canRead } from "../auth/rbac";
 import { useAuth } from "../auth/AuthContext";
-import type React from "react";
 
 const linkStyle = ({ isActive }: { isActive: boolean }) => ({
   display: "flex",
@@ -52,7 +52,7 @@ const shell: Record<string, React.CSSProperties> = {
   topbarRight: { display: "flex", alignItems: "center", gap: 10 },
 };
 
-const modules = [
+const modules: Array<{ key: "dashboard" | "products" | "warehouses" | "locations" | "lots" | "pallets" | "movements" | "transports" | "reports"; label: string; path: string }> = [
   { key: "dashboard", label: "Dashboard", path: "/" },
   { key: "products", label: "Productos", path: "/products" },
   { key: "warehouses", label: "Depósitos", path: "/warehouses" },
@@ -65,37 +65,44 @@ const modules = [
 ] as const;
 
 export default function AppLayout() {
-  const { user, isReady, logout: authLogout } = useAuth();
-  const nav = useNavigate();
-  const role = user?.role;
+  const { user, isReady, logout } = useAuth();
+  const navigate = useNavigate();
 
-  if (!isReady) return null;
-  if (!user) return <Navigate to="/login" replace />;
-
-  function handleLogout() {
-    authLogout();
-    nav("/login", { replace: true });
+  if (!isReady) {
+    return null;
   }
 
-  const visible = role
-    ? modules.filter((m) => m.key === "dashboard" || canRead(m.key as any, role))
-    : [modules[0]];
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  const visible = modules.filter((module) => {
+    if (module.key === "dashboard") {
+      return true;
+    }
+    return canRead(module.key, user.role);
+  });
+
+  function handleLogout() {
+    logout();
+    navigate("/login", { replace: true });
+  }
 
   return (
     <div style={shell.app}>
       <aside className="card" style={shell.sidebar}>
         <div style={shell.brandRow}>
           <h3 style={shell.brand}>Logística Palets</h3>
-          <span className="badge">{role ?? "SIN_ROLE"}</span>
+          <span className="badge">{user.role}</span>
         </div>
 
         <div style={shell.sectionTitle}>Navegación</div>
 
         <nav style={shell.nav}>
-          {visible.map((m) => (
-            <NavLink key={m.key} to={m.path} style={linkStyle}>
+          {visible.map((module) => (
+            <NavLink key={module.key} to={module.path} style={linkStyle}>
               <span style={{ width: 10, height: 10, borderRadius: 4, background: "#e5e7eb" }} />
-              {m.label}
+              {module.label}
             </NavLink>
           ))}
         </nav>
@@ -103,16 +110,17 @@ export default function AppLayout() {
         <div style={shell.footer}>
           <hr className="divider" />
           <button className="btn btn--secondary" onClick={handleLogout} style={{ width: "100%", marginTop: 14 }}>
-            Cerrar Sesion
+            Cerrar sesión
           </button>
         </div>
       </aside>
 
       <main style={shell.main}>
         <div className="card" style={shell.topbar}>
-          <div style={shell.topbarTitle}>Panel</div>
+          <div style={shell.topbarTitle}>Panel operativo</div>
           <div style={shell.topbarRight}>
-            <span className="badge">{role ?? "SIN_ROLE"}</span>
+            <span className="badge">{user.username}</span>
+            <span className="badge">{user.role}</span>
           </div>
         </div>
 

@@ -1,29 +1,151 @@
-import { useEffect, useMemo, useState } from "react";
-import { createLocation, deleteLocation, listLocations } from "../api/locations";
-import type { Location } from "../api/locations";
-import { listWarehouses } from "../api/warehouses";
-import type { Warehouse } from "../api/warehouses";
-import { getUserRole, canWrite } from "../auth/rbac";
-import { ConfirmDialog } from "../components/ConfirmDialog";
-import { useToast } from "../components/ToastProvider";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { createLocation, deleteLocation, listLocations, type Location } from "../api/locations";
+import { listWarehouses, type Warehouse } from "../api/warehouses";
+import { useAuth } from "../auth/AuthContext";
+import { canCreate, canDelete } from "../auth/rbac";
 import { getFriendlyApiError } from "../utils/apiError";
 
 export default function LocationsPage() {
-  const role = getUserRole();
-  const canCreate = role ? canWrite("locations", role) : false;
-  const { pushToast } = useToast();
+  const { user } = useAuth();
+  const role = user?.role;
+  const allowCreate = role ? canCreate("locations", role) : false;
+  const allowDelete = role ? canDelete("locations", role) : false;
+
   const [items, setItems] = useState<Location[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [code, setCode] = useState("");
   const [warehouseId, setWarehouseId] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [confirmItem, setConfirmItem] = useState<Location | null>(null);
-  const codeError = useMemo(() => { const v = code.trim(); if (!v) return "Código requerido"; if (v.length < 2 || v.length > 80) return "Debe tener entre 2 y 80 caracteres"; return ""; }, [code]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [formError, setFormError] = useState("");
+  const [submitted, setSubmitted] = useState(false);
 
-  async function refresh() { const [locs, whs] = await Promise.all([listLocations(), listWarehouses()]); setItems(locs); setWarehouses(whs); if (!warehouseId && whs.length) setWarehouseId(whs[0].id); }
-  useEffect(() => { refresh().catch((e) => pushToast(getFriendlyApiError(e), "error")); }, []);
-  async function handleCreate(e: React.FormEvent) { e.preventDefault(); if (!canCreate || codeError || !warehouseId) return; setLoading(true); try { await createLocation({ code: code.trim(), warehouseId }); pushToast("Ubicación creada", "success"); setCode(""); await refresh(); } catch (e) { pushToast(getFriendlyApiError(e), "error"); } finally { setLoading(false); } }
-  async function handleDelete() { if (!confirmItem) return; setLoading(true); try { await deleteLocation(confirmItem.id); pushToast("Eliminado correctamente", "success"); setConfirmItem(null); await refresh(); } catch (e) { pushToast(getFriendlyApiError(e), "error"); } finally { setLoading(false); } }
+  const codeError = useMemo(() => {
+    const value = code.trim();
+    if (!value) return "Ingresá un código.";
+    if (value.length < 2 || value.length > 80) return "El código debe tener entre 2 y 80 caracteres.";
+    return "";
+  }, [code]);
 
-  return <div><h2>Locations</h2><form onSubmit={handleCreate} style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}><div><input className="input" disabled={!canCreate} value={code} onChange={(e) => setCode(e.target.value)} placeholder="code" />{codeError && <small style={{ color: "#b91c1c" }}>{codeError}</small>}</div><select className="input" disabled={!canCreate} value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>{warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}</select><button className="btn btn--primary" type="submit" disabled={!canCreate || loading || !!codeError || !warehouseId}>{loading ? "Guardando..." : "Guardar"}</button></form><table className="table"><thead><tr><th>code</th><th>warehouse</th><th>id</th><th /></tr></thead><tbody>{items.map((loc) => <tr key={loc.id}><td>{loc.code}</td><td>{loc.warehouse?.name ?? loc.warehouseId}</td><td style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{loc.id}</td><td><button className="btn" disabled={!canCreate} onClick={() => setConfirmItem(loc)}>Eliminar</button></td></tr>)}</tbody></table><ConfirmDialog open={!!confirmItem} title="Confirmar eliminación" description={`¿Eliminar ubicación ${confirmItem?.code}?`} confirmText="Eliminar" cancelText="Cancelar" onConfirm={handleDelete} onCancel={() => setConfirmItem(null)} loading={loading} /></div>;
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const [locations, warehouseData] = await Promise.all([listLocations(), listWarehouses()]);
+      setItems(locations);
+      setWarehouses(warehouseData);
+      setWarehouseId((current) => current || warehouseData[0]?.id || "");
+    } catch (err) {
+      setError(getFriendlyApiError(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh().catch(() => undefined);
+  }, [refresh]);
+
+  async function handleCreate(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSubmitted(true);
+    setFormError("");
+
+    if (!allowCreate || codeError || !warehouseId) {
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await createLocation({ code: code.trim(), warehouseId });
+      setCode("");
+      setSubmitted(false);
+      await refresh();
+    } catch (err) {
+      setFormError(getFriendlyApiError(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(item: Location) {
+    if (!allowDelete || !window.confirm(`Eliminar ubicación ${item.code}?`)) {
+      return;
+    }
+
+    setSaving(true);
+    setFormError("");
+    try {
+      await deleteLocation(item.id);
+      await refresh();
+    } catch (err) {
+      setFormError(getFriendlyApiError(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div>
+      <h2>Ubicaciones</h2>
+      {!allowCreate ? <p style={{ color: "#6b7280" }}>Modo lectura.</p> : null}
+
+      <form onSubmit={handleCreate} style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+        <input className="input" disabled={!allowCreate || saving} value={code} onChange={(event) => setCode(event.target.value)} placeholder="Código" />
+        <select className="input" disabled={!allowCreate || saving || warehouses.length === 0} value={warehouseId} onChange={(event) => setWarehouseId(event.target.value)}>
+          <option value="">Seleccionar depósito</option>
+          {warehouses.map((warehouse) => (
+            <option key={warehouse.id} value={warehouse.id}>
+              {warehouse.name}
+            </option>
+          ))}
+        </select>
+        <button className="btn btn--primary" type="submit" disabled={!allowCreate || saving || warehouses.length === 0}>
+          {saving ? "Guardando..." : "Guardar"}
+        </button>
+      </form>
+
+      {submitted && codeError ? <p style={{ color: "#b91c1c", marginTop: -4 }}>{codeError}</p> : null}
+      {submitted && !warehouseId ? <p style={{ color: "#b91c1c", marginTop: -4 }}>Seleccioná un depósito.</p> : null}
+      {formError ? <p style={{ color: "#b91c1c" }}>{formError}</p> : null}
+
+      {loading ? <p>Cargando...</p> : null}
+      {error ? (
+        <div>
+          <p style={{ color: "#b91c1c", marginBottom: 8 }}>No se pudo cargar.</p>
+          <button className="btn" onClick={refresh}>
+            Reintentar
+          </button>
+        </div>
+      ) : null}
+
+      {!loading && !error ? (
+        items.length === 0 ? (
+          <p>No hay registros</p>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Depósito</th>
+                <th>ID</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={item.id}>
+                  <td>{item.code}</td>
+                  <td>{item.warehouse?.name ?? item.warehouseId ?? "-"}</td>
+                  <td style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.id}</td>
+                  <td>{allowDelete ? <button className="btn" onClick={() => handleDelete(item)}>Eliminar</button> : null}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      ) : null}
+    </div>
+  );
 }

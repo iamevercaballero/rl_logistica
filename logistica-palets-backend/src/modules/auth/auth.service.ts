@@ -12,16 +12,24 @@ export class AuthService {
 
   async login(username: string, password: string) {
     const user = await this.usersService.findByUsername(username);
-    if (!user || !user.active) throw new UnauthorizedException('Credenciales inválidas');
+    if (!user || !user.active) {
+      throw new UnauthorizedException('Credenciales inválidas');
+    }
 
     const ok = await bcrypt.compare(password, user.passwordHash);
-    if (!ok) throw new UnauthorizedException('Credenciales inválidas');
+    if (!ok) {
+      throw new UnauthorizedException('Credenciales inválidas');
+    }
 
     const payload = { sub: user.id, username: user.username, role: user.role };
 
     return {
       access_token: await this.jwt.signAsync(payload),
-      user: { id: user.id, username: user.username, role: user.role },
+      user: {
+        userId: user.id,
+        username: user.username,
+        role: user.role,
+      },
     };
   }
 }

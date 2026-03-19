@@ -1,6 +1,14 @@
+/* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
-import { getToken, setToken, clearAuthStorage, getStoredUser, setStoredUser } from "./authStorage";
+import {
+  clearAuthStorage,
+  getStoredUser,
+  getToken,
+  normalizeAuthUser,
+  setStoredUser,
+  setToken,
+} from "./authStorage";
 
 export type Role = "ADMIN" | "MANAGER" | "OPERATOR" | "AUDITOR";
 
@@ -12,72 +20,69 @@ export type AuthUser = {
 
 type AuthState = {
   user: AuthUser | null;
-  isReady: boolean; // para no parpadear rutas hasta verificar
-  login: (payload: { access_token: string; user?: AuthUser }) => void;
+  isReady: boolean;
+  login: (payload: { access_token: string; user?: Partial<AuthUser> & { id?: string } }) => void;
   logout: () => void;
-  canRead: () => boolean;
-  canWrite: () => boolean;
 };
 
+const initialUser = getStoredUser();
+const initialReady = !getToken() || !!initialUser;
 const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(getStoredUser());
-  const [isReady, setIsReady] = useState(false);
+  const [user, setUser] = useState<AuthUser | null>(initialUser);
+  const [isReady, setIsReady] = useState(initialReady);
 
   const logout = () => {
     clearAuthStorage();
     setUser(null);
+    setIsReady(true);
   };
 
-  const login = (payload: { access_token: string; user?: AuthUser }) => {
+  const login = (payload: { access_token: string; user?: Partial<AuthUser> & { id?: string } }) => {
     setToken(payload.access_token);
-    if (payload.user) {
-      setStoredUser(payload.user);
-      setUser(payload.user);
+
+    const normalizedUser = normalizeAuthUser(payload.user);
+    if (normalizedUser) {
+      setStoredUser(normalizedUser);
+      setUser(normalizedUser);
     }
+
+    setIsReady(true);
   };
 
   useEffect(() => {
-    // Rehidratar: si hay token pero no user, pedir /auth/me
     const token = getToken();
-    if (!token) {
-      setIsReady(true);
-      return;
-    }
-
-    if (user) {
-      setIsReady(true);
+    if (!token || user) {
       return;
     }
 
     api
-      .get<AuthUser>("/auth/me")
-      .then((res) => {
-        setStoredUser(res.data);
-        setUser(res.data);
+      .get("/auth/me")
+      .then((response) => {
+        const normalizedUser = normalizeAuthUser(response.data);
+        if (!normalizedUser) {
+          throw new Error("Invalid /auth/me response");
+        }
+        setStoredUser(normalizedUser);
+        setUser(normalizedUser);
       })
       .catch(() => {
-        // token inválido/expirado
-        logout();
+        clearAuthStorage();
+        setUser(null);
       })
       .finally(() => setIsReady(true));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [user]);
 
-  const value = useMemo<AuthState>(() => {
-    const role = user?.role;
-
-    const canRead = () => !!role; // cualquiera logueado lee
-    const canWrite = () => role === "ADMIN" || role === "MANAGER";
-    return { user, isReady, login, logout, canRead, canWrite };
-  }, [user, isReady]);
+  const value = useMemo<AuthState>(() => ({ user, isReady, login, logout }), [isReady, user]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  if (!ctx) {
+    throw new Error("useAuth must be used within AuthProvider");
+  }
   return ctx;
 }

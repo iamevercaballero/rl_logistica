@@ -3,6 +3,30 @@ import type { AuthUser } from "./AuthContext";
 const TOKEN_KEY = "access_token";
 const USER_KEY = "user";
 
+type RawAuthUser = Partial<AuthUser> & {
+  id?: string;
+  userId?: string;
+  username?: string;
+  role?: AuthUser["role"];
+};
+
+export function normalizeAuthUser(user: RawAuthUser | null | undefined): AuthUser | null {
+  if (!user) {
+    return null;
+  }
+
+  const userId = user.userId ?? user.id;
+  if (!userId || !user.username || !user.role) {
+    return null;
+  }
+
+  return {
+    userId,
+    username: user.username,
+    role: user.role,
+  };
+}
+
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY) || "";
 }
@@ -17,9 +41,12 @@ export function setStoredUser(user: AuthUser) {
 
 export function getStoredUser(): AuthUser | null {
   const raw = localStorage.getItem(USER_KEY);
-  if (!raw) return null;
+  if (!raw) {
+    return null;
+  }
+
   try {
-    return JSON.parse(raw) as AuthUser;
+    return normalizeAuthUser(JSON.parse(raw));
   } catch {
     return null;
   }

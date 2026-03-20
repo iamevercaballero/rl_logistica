@@ -1,36 +1,64 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import { login } from "../api/auth";
+import { useAuth } from "../auth/AuthContext";
+import { getFriendlyApiError } from "../utils/apiError";
 
 export default function LoginPage() {
-  const nav = useNavigate();
+  const navigate = useNavigate();
+  const { login: authLogin, isReady, user } = useAuth();
   const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("admin");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  if (isReady && user) {
+    return <Navigate to="/" replace />;
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSubmitting(true);
     setError("");
 
     try {
-      await login(username, password); 
-      nav("/", { replace: true });
-    } catch (e: any) {
-      setError(e?.response?.data?.message || "Login inválido");
+      const payload = await login(username.trim(), password);
+      authLogin(payload);
+      navigate("/", { replace: true });
+    } catch (err) {
+      setError(getFriendlyApiError(err));
+    } finally {
+      setSubmitting(false);
     }
   }
 
   return (
-    <div style={{ maxWidth: 420, margin: "80px auto" }}>
-      <h2>Login</h2>
+    <div className="card" style={{ maxWidth: 420, margin: "80px auto" }}>
+      <h2>Iniciar sesión</h2>
+      <p style={{ color: "#6b7280", marginBottom: 16 }}>Ingresá con un usuario válido para operar el sistema.</p>
 
-      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="username" />
-        <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" type="password" />
-        <button type="submit">Entrar</button>
+      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <input
+          className="input"
+          value={username}
+          onChange={(event) => setUsername(event.target.value)}
+          placeholder="Usuario"
+          autoComplete="username"
+        />
+        <input
+          className="input"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          placeholder="Contraseña"
+          type="password"
+          autoComplete="current-password"
+        />
+        <button className="btn btn--primary" type="submit" disabled={submitting || !username.trim() || !password}>
+          {submitting ? "Ingresando..." : "Entrar"}
+        </button>
       </form>
 
-      {error && <p style={{ color: "red" }}>{error}</p>}
+      {error ? <p style={{ color: "#b91c1c", marginBottom: 0, marginTop: 12 }}>{error}</p> : null}
     </div>
   );
 }

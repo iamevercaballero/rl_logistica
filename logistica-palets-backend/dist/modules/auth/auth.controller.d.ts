@@ -11,4 +11,5 @@ export declare class AuthController {
             role: import("../users/entities/user.entity").UserRole;
         };
     }>;
+    me(req: any): any;
 }

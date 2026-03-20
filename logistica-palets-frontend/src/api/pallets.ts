@@ -24,3 +24,7 @@ export async function createPallet(payload: {
   const { data } = await api.post<Pallet>("/pallets", payload);
   return data;
 }
+
+export async function deletePallet(id: string) {
+  await api.delete(`/pallets/${id}`);
+}

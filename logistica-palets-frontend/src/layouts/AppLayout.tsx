@@ -1,7 +1,7 @@
-import { Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { logout } from "../api/auth";
-import { getUserRole, canRead } from "../auth/rbac";
 import type React from "react";
+import { Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
+import { canRead } from "../auth/rbac";
+import { useAuth } from "../auth/AuthContext";
 
 const linkStyle = ({ isActive }: { isActive: boolean }) => ({
   display: "flex",
@@ -19,18 +19,16 @@ const linkStyle = ({ isActive }: { isActive: boolean }) => ({
 const shell: Record<string, React.CSSProperties> = {
   app: {
     minHeight: "100vh",
-    background: "#fafafa",
     display: "grid",
     gridTemplateColumns: "280px 1fr",
   },
   sidebar: {
-    background: "#ffffff",
-    borderRight: "1px solid #e5e7eb",
     padding: 16,
     position: "sticky",
     top: 0,
     height: "100vh",
     overflow: "auto",
+    borderRight: "1px solid var(--border)",
   },
   brandRow: {
     display: "flex",
@@ -40,34 +38,11 @@ const shell: Record<string, React.CSSProperties> = {
     marginBottom: 14,
   },
   brand: { fontSize: 14, fontWeight: 900, letterSpacing: "-0.2px", margin: 0 },
-  pill: {
-    border: "1px solid #e5e7eb",
-    borderRadius: 999,
-    padding: "6px 10px",
-    fontSize: 12,
-    fontWeight: 700,
-    color: "#111827",
-    background: "#fff",
-    whiteSpace: "nowrap",
-  },
   nav: { display: "flex", flexDirection: "column", gap: 6, marginTop: 10 },
   sectionTitle: { fontSize: 11, fontWeight: 800, color: "#6b7280", margin: "14px 8px 8px" },
-  footer: { marginTop: 14, paddingTop: 14, borderTop: "1px solid #e5e7eb" },
-  btn: {
-    width: "100%",
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #e5e7eb",
-    background: "#fff",
-    cursor: "pointer",
-    fontWeight: 800,
-  },
+  footer: { marginTop: 14, paddingTop: 14 },
   main: { padding: "22px 22px 40px" },
   topbar: {
-    background: "#ffffff",
-    border: "1px solid #e5e7eb",
-    borderRadius: 14,
-    padding: "10px 14px",
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
@@ -77,8 +52,7 @@ const shell: Record<string, React.CSSProperties> = {
   topbarRight: { display: "flex", alignItems: "center", gap: 10 },
 };
 
-
-const modules = [
+const modules: Array<{ key: "dashboard" | "products" | "warehouses" | "locations" | "lots" | "pallets" | "movements" | "transports" | "reports"; label: string; path: string }> = [
   { key: "dashboard", label: "Dashboard", path: "/" },
   { key: "products", label: "Productos", path: "/products" },
   { key: "warehouses", label: "Depósitos", path: "/warehouses" },
@@ -87,63 +61,66 @@ const modules = [
   { key: "pallets", label: "Palets", path: "/pallets" },
   { key: "movements", label: "Movimientos", path: "/movements" },
   { key: "transports", label: "Transportes", path: "/transports" },
+  { key: "reports", label: "Reportes", path: "/reports" },
 ] as const;
 
 export default function AppLayout() {
-  const token = localStorage.getItem("token");
-  const nav = useNavigate();
-  const role = getUserRole();
+  const { user, isReady, logout } = useAuth();
+  const navigate = useNavigate();
 
-  if (!token) return <Navigate to="/login" replace />;
+  if (!isReady) {
+    return null;
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  const visible = modules.filter((module) => {
+    if (module.key === "dashboard") {
+      return true;
+    }
+    return canRead(module.key, user.role);
+  });
 
   function handleLogout() {
     logout();
-    nav("/login", { replace: true });
+    navigate("/login", { replace: true });
   }
-
-  const visible = role
-    ? modules.filter((m) => m.key === "dashboard" || canRead(m.key as any, role))
-    : [modules[0]];
 
   return (
     <div style={shell.app}>
-      {/* Sidebar */}
-      <aside style={shell.sidebar}>
+      <aside className="card" style={shell.sidebar}>
         <div style={shell.brandRow}>
           <h3 style={shell.brand}>Logística Palets</h3>
-          <span style={shell.pill}>{role ?? "SIN_ROLE"}</span>
-        </div>
-
-        <div style={{ color: "#6b7280", fontSize: 12, marginLeft: 2 }}>
-          {/*Accesos por permisos · UI estilo Linear*/}
+          <span className="badge">{user.role}</span>
         </div>
 
         <div style={shell.sectionTitle}>Navegación</div>
 
         <nav style={shell.nav}>
-          {visible.map((m) => (
-            <NavLink key={m.key} to={m.path} style={linkStyle}>
+          {visible.map((module) => (
+            <NavLink key={module.key} to={module.path} style={linkStyle}>
               <span style={{ width: 10, height: 10, borderRadius: 4, background: "#e5e7eb" }} />
-              {m.label}
+              {module.label}
             </NavLink>
           ))}
         </nav>
 
         <div style={shell.footer}>
-          <button onClick={handleLogout} style={shell.btn}>
-            Cerrar Sesion
+          <hr className="divider" />
+          <button className="btn btn--secondary" onClick={handleLogout} style={{ width: "100%", marginTop: 14 }}>
+            Cerrar sesión
           </button>
         </div>
       </aside>
 
-      {/* Main */}
       <main style={shell.main}>
-        <div style={shell.topbar}>
-          <div style={shell.topbarTitle}>Workspace</div>
+        <div className="card" style={shell.topbar}>
+          <div style={shell.topbarTitle}>Panel operativo</div>
           <div style={shell.topbarRight}>
-            <span style={{ ...shell.pill, background: "#f9fafb" }}>
-              {role ?? "SIN_ROLE"}
-            </span>
+            <span className="badge">{user.username}</span>
+            <span className="badge">{user.role}</span>
           </div>
         </div>
 

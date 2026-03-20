@@ -1,20 +1,16 @@
-import { Controller, Get, Post, Body, Param, Patch, Delete } from '@nestjs/common';
-import { TransportsService } from './transports.service';
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/roles/roles.decorator';
+import { RolesGuard } from '../auth/roles/roles.guard';
 import { CreateTransportDto } from './dto/create-transport.dto';
 import { UpdateTransportDto } from './dto/update-transport.dto';
-import { UseGuards } from '@nestjs/common';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/roles/roles.guard';
-import { Roles } from '../auth/roles/roles.decorator';
+import { TransportsService } from './transports.service';
 
-@Controller('transports')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('transports')
-
 export class TransportsController {
   constructor(private readonly service: TransportsService) {}
 
-  // ✅ Ver: cualquier usuario autenticado
   @Get()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
   findAll() {
@@ -27,7 +23,6 @@ export class TransportsController {
     return this.service.findOne(id);
   }
 
-  // ✅ Crear/editar/eliminar: solo ADMIN/MANAGER
   @Post()
   @Roles('ADMIN', 'MANAGER')
   create(@Body() dto: CreateTransportDto) {

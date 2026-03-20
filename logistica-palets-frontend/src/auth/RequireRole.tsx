@@ -1,21 +1,30 @@
+import type { ReactNode } from "react";
 import { Navigate } from "react-router-dom";
-import { getUserRole, canRead } from "./rbac";
+import { useAuth } from "./AuthContext";
+import { canRead, type ModuleKey } from "./rbac";
 
 export default function RequireRole({
   module,
   children,
 }: {
-  module: "products" | "lots" | "warehouses" | "locations" | "pallets" | "movements" | "transports";
-  children: React.ReactNode;
+  module: ModuleKey;
+  children: ReactNode;
 }) {
-  const role = getUserRole();
-  if (!role) return <Navigate to="/login" replace />;
+  const { user, isReady } = useAuth();
 
-  if (!canRead(module, role)) {
+  if (!isReady) {
+    return null;
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (!canRead(module, user.role)) {
     return (
       <div>
         <h2>Sin permisos</h2>
-        <p>Tu rol ({role}) no tiene acceso a este módulo.</p>
+        <p>No tenés acceso a este módulo.</p>
       </div>
     );
   }

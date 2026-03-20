@@ -6,48 +6,64 @@ export type ModuleKey =
   | "locations"
   | "pallets"
   | "movements"
-  | "transports";
+  | "transports"
+  | "reports";
 
-export function getUserRole(): Role | null {
-  const raw = localStorage.getItem("user");
-  if (!raw) return null;
-  try {
-    const u = JSON.parse(raw);
-    return (u?.role as Role) ?? null;
-  } catch {
-    return null;
-  }
-}
+type ModulePermissions = {
+  read: Role[];
+  create: Role[];
+  update: Role[];
+  remove: Role[];
+};
 
-// ✅ Tipado fuerte para evitar el error TS2345
-export const PERMS: Record<ModuleKey, { read: Role[]; write: Role[] }> = {
+export const PERMS: Record<ModuleKey, ModulePermissions> = {
   products: {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
-    write: ["ADMIN", "MANAGER"],
+    create: ["ADMIN", "MANAGER"],
+    update: ["ADMIN", "MANAGER"],
+    remove: ["ADMIN", "MANAGER"],
   },
   lots: {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
-    write: ["ADMIN", "MANAGER", "OPERATOR"],
+    create: ["ADMIN", "MANAGER"],
+    update: ["ADMIN", "MANAGER"],
+    remove: ["ADMIN", "MANAGER"],
   },
   warehouses: {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
-    write: ["ADMIN", "MANAGER"],
+    create: ["ADMIN", "MANAGER"],
+    update: ["ADMIN", "MANAGER"],
+    remove: ["ADMIN", "MANAGER"],
   },
   locations: {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
-    write: ["ADMIN", "MANAGER"],
+    create: ["ADMIN", "MANAGER"],
+    update: ["ADMIN", "MANAGER"],
+    remove: ["ADMIN", "MANAGER"],
   },
   pallets: {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
-    write: ["ADMIN", "MANAGER", "OPERATOR"],
+    create: ["ADMIN", "MANAGER", "OPERATOR"],
+    update: ["ADMIN", "MANAGER", "OPERATOR"],
+    remove: ["ADMIN", "MANAGER"],
   },
   movements: {
-    read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
-    write: ["ADMIN", "MANAGER", "OPERATOR"],
+    read: ["ADMIN", "MANAGER", "AUDITOR"],
+    create: ["ADMIN", "MANAGER", "OPERATOR"],
+    update: ["ADMIN", "MANAGER"],
+    remove: [],
   },
   transports: {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
-    write: ["ADMIN", "MANAGER"],
+    create: ["ADMIN", "MANAGER"],
+    update: ["ADMIN", "MANAGER"],
+    remove: ["ADMIN", "MANAGER"],
+  },
+  reports: {
+    read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
+    create: [],
+    update: [],
+    remove: [],
   },
 };
 
@@ -55,6 +71,18 @@ export function canRead(module: ModuleKey, role: Role) {
   return PERMS[module].read.includes(role);
 }
 
+export function canCreate(module: ModuleKey, role: Role) {
+  return PERMS[module].create.includes(role);
+}
+
+export function canUpdate(module: ModuleKey, role: Role) {
+  return PERMS[module].update.includes(role);
+}
+
+export function canDelete(module: ModuleKey, role: Role) {
+  return PERMS[module].remove.includes(role);
+}
+
 export function canWrite(module: ModuleKey, role: Role) {
-  return PERMS[module].write.includes(role);
+  return canCreate(module, role) || canUpdate(module, role) || canDelete(module, role);
 }

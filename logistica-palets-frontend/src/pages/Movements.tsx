@@ -1,221 +1,164 @@
-import { useEffect, useState } from "react";
-import { movementEntry, movementExit, movementTransfer } from "../api/movements";
-import { listLots } from "../api/lots";
-import type { Lot } from "../api/lots";
-import { listLocations } from "../api/locations";
-import type { Location } from "../api/locations";
-import { listPallets } from "../api/pallets";
-import type { Pallet } from "../api/pallets";
-import { getUserRole, canWrite } from "../auth/rbac";
+import { useCallback, useEffect, useState } from "react";
+import { getMovements, type Movement, type MovementType } from "../api/movements";
+import { listWarehouses, type Warehouse } from "../api/warehouses";
+import { getFriendlyApiError } from "../utils/apiError";
+
+type Filters = {
+  type: "" | MovementType;
+  warehouseId: string;
+  dateFrom: string;
+  dateTo: string;
+  search: string;
+};
+
+const initialFilters: Filters = {
+  type: "",
+  warehouseId: "",
+  dateFrom: "",
+  dateTo: "",
+  search: "",
+};
 
 export default function MovementsPage() {
-  const role = getUserRole();
-  const canCreate = role ? canWrite("movements", role) : false;
-
-  const [lots, setLots] = useState<Lot[]>([]);
-  const [locations, setLocations] = useState<Location[]>([]);
-  const [pallets, setPallets] = useState<Pallet[]>([]);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [data, setData] = useState<Movement[]>([]);
+  const [meta, setMeta] = useState({ page: 1, limit: 20, total: 0, totalPages: 1 });
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [msg, setMsg] = useState("");
+  const [filters, setFilters] = useState<Filters>(initialFilters);
+  const [appliedFilters, setAppliedFilters] = useState<Filters>(initialFilters);
 
-  // ENTRY
-  const [entryRef, setEntryRef] = useState("Ingreso UI");
-  const [entryLotId, setEntryLotId] = useState("");
-  const [entryLocId, setEntryLocId] = useState("");
-  const [entryPalletCode, setEntryPalletCode] = useState("PAL-UI-001");
-  const [entryQty, setEntryQty] = useState(10);
+  const refresh = useCallback(async (page = 1, limit = 20, current = initialFilters) => {
+    setLoading(true);
+    setError("");
 
-  // EXIT
-  const [exitRef, setExitRef] = useState("Salida UI");
-  const [exitPalletId, setExitPalletId] = useState("");
-  const [exitQty, setExitQty] = useState(1);
+    try {
+      const response = await getMovements({
+        page,
+        limit,
+        type: current.type || undefined,
+        warehouseId: current.warehouseId || undefined,
+        dateFrom: current.dateFrom || undefined,
+        dateTo: current.dateTo || undefined,
+        search: current.search.trim() || undefined,
+      });
 
-  // TRANSFER
-  const [trRef, setTrRef] = useState("Transfer UI");
-  const [trPalletId, setTrPalletId] = useState("");
-  const [trDestLocId, setTrDestLocId] = useState("");
-  const [trQty, setTrQty] = useState(1);
-
-  async function refresh() {
-    const [lotsData, locsData, palletsData] = await Promise.all([
-      listLots(),
-      listLocations(),
-      listPallets(),
-    ]);
-
-    setLots(lotsData);
-    setLocations(locsData);
-    setPallets(palletsData);
-
-    if (!entryLotId && lotsData.length > 0) setEntryLotId(lotsData[0].id);
-    if (!entryLocId && locsData.length > 0) setEntryLocId(locsData[0].id);
-
-    if (!exitPalletId && palletsData.length > 0) setExitPalletId(palletsData[0].id);
-    if (!trPalletId && palletsData.length > 0) setTrPalletId(palletsData[0].id);
-    if (!trDestLocId && locsData.length > 0) setTrDestLocId(locsData[0].id);
-  }
-
-  useEffect(() => {
-    refresh().catch((e: any) => setError(e?.response?.data?.message || "Error cargando datos"));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      setData(response.data);
+      setMeta(response.meta);
+    } catch (err) {
+      setError(getFriendlyApiError(err));
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  function clearAlerts() {
-    setError("");
-    setMsg("");
+  useEffect(() => {
+    listWarehouses().then(setWarehouses).catch(() => setWarehouses([]));
+    refresh(1, 20, initialFilters).catch(() => undefined);
+  }, [refresh]);
+
+  function applyFilters() {
+    setAppliedFilters(filters);
+    refresh(1, meta.limit, filters).catch(() => undefined);
   }
 
-  async function handleEntry(e: React.FormEvent) {
-    e.preventDefault();
-    if (!canCreate) return;
-    clearAlerts();
-    try {
-      const res = await movementEntry({
-        reference: entryRef,
-        notes: "Entry desde UI",
-        items: [
-          {
-            palletCode: entryPalletCode,
-            lotId: entryLotId,
-            locationId: entryLocId,
-            quantity: entryQty,
-          },
-        ],
-      });
-      setMsg(`✅ Entrada OK. movementId=${res.movementId}`);
-      await refresh();
-    } catch (e: any) {
-      setError(e?.response?.data?.message || "Error en entrada");
-    }
-  }
-
-  async function handleExit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!canCreate) return;
-    clearAlerts();
-    try {
-      const res = await movementExit({
-        reference: exitRef,
-        notes: "Exit desde UI",
-        items: [{ palletId: exitPalletId, quantity: exitQty }],
-      });
-      setMsg(`✅ Salida OK. movementId=${res.movementId}`);
-      await refresh();
-    } catch (e: any) {
-      setError(e?.response?.data?.message || "Error en salida");
-    }
-  }
-
-  async function handleTransfer(e: React.FormEvent) {
-    e.preventDefault();
-    if (!canCreate) return;
-    clearAlerts();
-    try {
-      const res = await movementTransfer({
-        palletId: trPalletId,
-        destinationLocationId: trDestLocId,
-        quantity: trQty,
-        reference: trRef,
-        notes: "Transfer desde UI",
-      });
-      setMsg(
-        `✅ Transfer OK. movementId=${res.movementId}${
-          res.newPalletId ? ` newPalletId=${res.newPalletId}` : ""
-        }`,
-      );
-      await refresh();
-    } catch (e: any) {
-      setError(e?.response?.data?.message || "Error en transferencia");
-    }
+  function clearFilters() {
+    setFilters(initialFilters);
+    setAppliedFilters(initialFilters);
+    refresh(1, meta.limit, initialFilters).catch(() => undefined);
   }
 
   return (
     <div>
-      <h2>Movements</h2>
+      <h2>Movimientos</h2>
+      <section className="card" style={{ marginBottom: 12 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <select className="input" value={filters.type} onChange={(event) => setFilters((prev) => ({ ...prev, type: event.target.value as Filters["type"] }))}>
+            <option value="">Todos</option>
+            <option value="ENTRY">ENTRY</option>
+            <option value="EXIT">EXIT</option>
+            <option value="TRANSFER">TRANSFER</option>
+          </select>
+          <select className="input" value={filters.warehouseId} onChange={(event) => setFilters((prev) => ({ ...prev, warehouseId: event.target.value }))}>
+            <option value="">Todos los depósitos</option>
+            {warehouses.map((warehouse) => (
+              <option key={warehouse.id} value={warehouse.id}>
+                {warehouse.name}
+              </option>
+            ))}
+          </select>
+          <input className="input" type="date" value={filters.dateFrom} onChange={(event) => setFilters((prev) => ({ ...prev, dateFrom: event.target.value }))} />
+          <input className="input" type="date" value={filters.dateTo} onChange={(event) => setFilters((prev) => ({ ...prev, dateTo: event.target.value }))} />
+          <input
+            className="input"
+            placeholder="Buscar (pallet, referencia...)"
+            value={filters.search}
+            onChange={(event) => setFilters((prev) => ({ ...prev, search: event.target.value }))}
+            style={{ minWidth: 250 }}
+          />
+          <button className="btn btn--primary" onClick={applyFilters}>
+            Aplicar
+          </button>
+          <button className="btn" onClick={clearFilters}>
+            Limpiar
+          </button>
+        </div>
+      </section>
 
-      {!canCreate && (
-        <p style={{ background: "#fff3cd", padding: 8, borderRadius: 8 }}>
-          Solo lectura: tu rol <strong>{role ?? "SIN_ROLE"}</strong> no puede registrar movimientos.
-        </p>
-      )}
+      {loading ? <p>Cargando...</p> : null}
+      {error ? (
+        <div style={{ marginBottom: 12 }}>
+          <p style={{ color: "#b91c1c", marginBottom: 8 }}>No se pudo cargar.</p>
+          <button className="btn" onClick={() => refresh(meta.page, meta.limit, appliedFilters)}>
+            Reintentar
+          </button>
+        </div>
+      ) : null}
 
-      {error && <p style={{ color: "red" }}>{error}</p>}
-      {msg && <p style={{ color: "green" }}>{msg}</p>}
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16 }}>
-        {/* ENTRY */}
-        <section style={{ border: "1px solid #ddd", padding: 12, borderRadius: 8 }}>
-          <h3>Entrada</h3>
-          <form onSubmit={handleEntry} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <input disabled={!canCreate} value={entryRef} onChange={(e) => setEntryRef(e.target.value)} placeholder="reference" />
-            <input disabled={!canCreate} value={entryPalletCode} onChange={(e) => setEntryPalletCode(e.target.value)} placeholder="palletCode" />
-            <input disabled={!canCreate} type="number" value={entryQty} onChange={(e) => setEntryQty(Number(e.target.value))} style={{ width: 120 }} />
-
-            <select disabled={!canCreate} value={entryLotId} onChange={(e) => setEntryLotId(e.target.value)}>
-              {lots.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.lotCode} {l.product?.code ? `(${l.product.code})` : ""}
-                </option>
+      {!loading && !error ? (
+        data.length === 0 ? (
+          <p>No hay registros</p>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Tipo</th>
+                <th>Referencia</th>
+                <th>Notas</th>
+                <th>ID</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.map((movement) => (
+                <tr key={movement.id}>
+                  <td>{new Date(movement.date).toLocaleString()}</td>
+                  <td>{movement.type}</td>
+                  <td>{movement.reference || "-"}</td>
+                  <td>{movement.notes || "-"}</td>
+                  <td>{movement.id}</td>
+                </tr>
               ))}
-            </select>
+            </tbody>
+          </table>
+        )
+      ) : null}
 
-            <select disabled={!canCreate} value={entryLocId} onChange={(e) => setEntryLocId(e.target.value)}>
-              {locations.map((loc) => (
-                <option key={loc.id} value={loc.id}>
-                  {loc.code}
-                </option>
-              ))}
-            </select>
-
-            <button type="submit" disabled={!canCreate}>Registrar entrada</button>
-          </form>
-        </section>
-
-        {/* EXIT */}
-        <section style={{ border: "1px solid #ddd", padding: 12, borderRadius: 8 }}>
-          <h3>Salida</h3>
-          <form onSubmit={handleExit} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <input disabled={!canCreate} value={exitRef} onChange={(e) => setExitRef(e.target.value)} placeholder="reference" />
-            <input disabled={!canCreate} type="number" value={exitQty} onChange={(e) => setExitQty(Number(e.target.value))} style={{ width: 120 }} />
-
-            <select disabled={!canCreate} value={exitPalletId} onChange={(e) => setExitPalletId(e.target.value)}>
-              {pallets.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.code} (qty={p.quantity})
-                </option>
-              ))}
-            </select>
-
-            <button type="submit" disabled={!canCreate}>Registrar salida</button>
-          </form>
-        </section>
-
-        {/* TRANSFER */}
-        <section style={{ border: "1px solid #ddd", padding: 12, borderRadius: 8 }}>
-          <h3>Transferencia</h3>
-          <form onSubmit={handleTransfer} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <input disabled={!canCreate} value={trRef} onChange={(e) => setTrRef(e.target.value)} placeholder="reference" />
-            <input disabled={!canCreate} type="number" value={trQty} onChange={(e) => setTrQty(Number(e.target.value))} style={{ width: 120 }} />
-
-            <select disabled={!canCreate} value={trPalletId} onChange={(e) => setTrPalletId(e.target.value)}>
-              {pallets.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.code} (qty={p.quantity})
-                </option>
-              ))}
-            </select>
-
-            <select disabled={!canCreate} value={trDestLocId} onChange={(e) => setTrDestLocId(e.target.value)}>
-              {locations.map((loc) => (
-                <option key={loc.id} value={loc.id}>
-                  {loc.code}
-                </option>
-              ))}
-            </select>
-
-            <button type="submit" disabled={!canCreate}>Registrar transferencia</button>
-          </form>
-        </section>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
+        <button className="btn" disabled={loading || meta.page <= 1} onClick={() => refresh(meta.page - 1, meta.limit, appliedFilters)}>
+          Anterior
+        </button>
+        <span>
+          Página {meta.page} de {meta.totalPages}
+        </span>
+        <button className="btn" disabled={loading || meta.page >= meta.totalPages} onClick={() => refresh(meta.page + 1, meta.limit, appliedFilters)}>
+          Siguiente
+        </button>
+        <select className="input" value={meta.limit} onChange={(event) => refresh(1, Number(event.target.value), appliedFilters)}>
+          <option value={10}>10</option>
+          <option value={20}>20</option>
+          <option value={50}>50</option>
+        </select>
       </div>
     </div>
   );

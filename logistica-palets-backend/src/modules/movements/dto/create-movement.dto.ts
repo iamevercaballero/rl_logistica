@@ -1,32 +1,89 @@
-import { IsString, IsOptional, IsArray, ValidateNested, IsUUID, IsInt, Min } from 'class-validator';
 import { Type } from 'class-transformer';
+import {
+  IsDateString,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  Min,
+} from 'class-validator';
+import { movementTypes, MovementType } from '../entities/movement.entity';
 
-class EntryItemDto {
-  @IsString()
-  palletCode: string;
+export class CreateMovementDto {
+  @IsIn(movementTypes)
+  type: MovementType;
+
+  @IsOptional()
+  @IsDateString()
+  date?: string;
 
   @IsUUID()
-  lotId: string;
+  productId: string;
 
-  @IsUUID()
-  locationId: string;
-
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   quantity: number;
-}
-
-export class CreateEntryDto {
-  @IsOptional()
-  @IsString()
-  reference?: string;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  pallets?: number;
+
+  @IsOptional()
+  @IsUUID()
+  warehouseId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  locationId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  fromLocationId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  toLocationId?: string;
+
+  @IsOptional()
   @IsString()
+  @MaxLength(80)
+  documentNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  supplier?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  carrier?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  driver?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  destination?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
   notes?: string;
 
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => EntryItemDto)
-  items: EntryItemDto[];
+  @IsOptional()
+  @IsUUID()
+  palletId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  lotId?: string;
 }

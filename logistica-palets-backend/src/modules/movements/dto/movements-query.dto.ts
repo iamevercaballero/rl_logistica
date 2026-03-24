@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import { IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
+import { movementTypes, MovementType } from '../entities/movement.entity';
 
 export class MovementsQueryDto {
   @IsOptional()
@@ -20,8 +21,16 @@ export class MovementsQueryDto {
   warehouseId?: string;
 
   @IsOptional()
-  @IsIn(['ENTRY', 'EXIT', 'TRANSFER'])
-  type?: 'ENTRY' | 'EXIT' | 'TRANSFER';
+  @IsUUID()
+  locationId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  productId?: string;
+
+  @IsOptional()
+  @IsIn(movementTypes)
+  type?: MovementType;
 
   @IsOptional()
   @IsDateString()

@@ -1,32 +1,63 @@
-import { IsArray, ValidateNested, IsUUID, IsInt, Min, IsOptional, IsString } from 'class-validator';
 import { Type } from 'class-transformer';
-
-export class EntryItemDto {
-  @IsString()
-  palletCode: string;
-
-  @IsUUID()
-  lotId: string;
-
-  @IsUUID()
-  locationId: string;
-
-  @IsInt()
-  @Min(1)
-  quantity: number;
-}
+import { IsDateString, IsInt, IsOptional, IsString, IsUUID, MaxLength, Min } from 'class-validator';
 
 export class CreateEntryDto {
   @IsOptional()
-  @IsString()
-  reference?: string;
+  @IsDateString()
+  date?: string;
+
+  @IsUUID()
+  productId: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  quantity: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  pallets?: number;
+
+  @IsOptional()
+  @IsUUID()
+  warehouseId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  locationId?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(80)
+  documentNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  supplier?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  carrier?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  driver?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
   notes?: string;
 
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => EntryItemDto)
-  items: EntryItemDto[];
+  @IsOptional()
+  @IsUUID()
+  palletId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  lotId?: string;
 }

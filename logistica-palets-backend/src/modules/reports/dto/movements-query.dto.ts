@@ -1,7 +1,6 @@
 import { Type } from 'class-transformer';
 import { IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
-
-const movementTypes = ['ENTRY', 'EXIT', 'TRANSFER'] as const;
+import { movementTypes, MovementType } from '../../movements/entities/movement.entity';
 
 export class ReportsMovementsQueryDto {
   @IsOptional()
@@ -9,8 +8,16 @@ export class ReportsMovementsQueryDto {
   warehouseId?: string;
 
   @IsOptional()
+  @IsUUID()
+  locationId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  productId?: string;
+
+  @IsOptional()
   @IsIn(movementTypes)
-  type?: (typeof movementTypes)[number];
+  type?: MovementType;
 
   @IsOptional()
   @IsDateString()

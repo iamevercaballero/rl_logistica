@@ -61,7 +61,7 @@ export default function DashboardPage() {
   }, [loadDashboard, range, warehouseId]);
 
   const chartData = useMemo(
-    () => (state.kpis?.stockByWarehouse ?? []).map((item) => ({ name: item.warehouseName, units: Number(item.units) || 0 })),
+    () => (state.kpis?.stockByWarehouse ?? []).map((item) => ({ name: item.warehouseName || "Sin depósito", quantity: Number(item.quantity) || 0 })),
     [state.kpis],
   );
 
@@ -70,7 +70,7 @@ export default function DashboardPage() {
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
         <div>
           <h1 style={{ fontSize: 28, fontWeight: 900, letterSpacing: -0.4, marginBottom: 6 }}>Dashboard</h1>
-          <p style={{ color: "#6b7280", marginBottom: 0 }}>Resumen operativo para pruebas y seguimiento diario.</p>
+          <p style={{ color: "#6b7280", marginBottom: 0 }}>Resumen operativo material-centric para seguimiento diario.</p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <select className="input" value={range} onChange={(event) => setRange(event.target.value as ReportRange)}>
@@ -93,9 +93,7 @@ export default function DashboardPage() {
       {error ? (
         <div style={{ marginTop: 16 }}>
           <p style={{ color: "#b91c1c", marginBottom: 8 }}>No se pudo cargar.</p>
-          <button className="btn" onClick={() => loadDashboard(range, warehouseId)}>
-            Reintentar
-          </button>
+          <button className="btn" onClick={() => loadDashboard(range, warehouseId)}>Reintentar</button>
         </div>
       ) : null}
 
@@ -103,8 +101,8 @@ export default function DashboardPage() {
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12, marginTop: 16 }}>
             {[
-              { label: "Palets en stock", value: state.kpis.totalPallets },
-              { label: "Unidades en stock", value: state.kpis.totalUnits },
+              { label: "Materiales con stock", value: state.kpis.totalMaterials },
+              { label: "Cantidad total", value: state.kpis.totalQuantity },
               { label: "Movimientos del rango", value: state.kpis.movementsInRange },
             ].map((card) => (
               <div key={card.label} className="card">
@@ -126,7 +124,7 @@ export default function DashboardPage() {
                       <XAxis dataKey="name" />
                       <YAxis />
                       <Tooltip />
-                      <Bar dataKey="units" />
+                      <Bar dataKey="quantity" />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -140,13 +138,13 @@ export default function DashboardPage() {
               ) : (
                 <div style={{ display: "grid", gap: 8 }}>
                   {state.moves.map((movement) => (
-                    <div key={`${movement.id}-${movement.createdAt}-${movement.palletId ?? ""}`} style={{ border: "1px solid #f1f5f9", borderRadius: 12, padding: 10 }}>
+                    <div key={`${movement.id}-${movement.date}`} style={{ border: "1px solid #f1f5f9", borderRadius: 12, padding: 10 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                         <strong>{movement.type}</strong>
-                        <span style={{ color: "#6b7280", fontSize: 12 }}>{formatDate(movement.createdAt)}</span>
+                        <span style={{ color: "#6b7280", fontSize: 12 }}>{formatDate(movement.date)}</span>
                       </div>
                       <div style={{ marginTop: 4, color: "#6b7280", fontSize: 12 }}>
-                        Palet: {movement.palletCode || "-"} · Ref: {movement.reference || "-"} · Cantidad: {movement.quantity ?? "-"}
+                        {movement.material.code} · {movement.material.description} · Doc: {movement.documentNumber || "-"} · Cantidad: {movement.quantity}
                       </div>
                     </div>
                   ))}

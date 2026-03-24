@@ -1,8 +1,4 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-} from 'typeorm';
+import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 
 @Entity('products')
 export class Product {
@@ -10,7 +6,7 @@ export class Product {
   id: string;
 
   @Column({ unique: true })
-  code: string; // SKU / código interno
+  code: string;
 
   @Column()
   description: string;
@@ -20,5 +16,4 @@ export class Product {
 
   @Column({ default: true })
   active: boolean;
-  lots: any;
 }

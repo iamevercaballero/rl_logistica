@@ -1,21 +1,56 @@
-import { IsUUID, IsInt, Min, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsDateString, IsInt, IsOptional, IsString, IsUUID, MaxLength, Min } from 'class-validator';
 
 export class CreateTransferDto {
-  @IsUUID()
-  palletId: string;
+  @IsOptional()
+  @IsDateString()
+  date?: string;
 
   @IsUUID()
-  destinationLocationId: string;
+  productId: string;
 
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   quantity: number;
 
   @IsOptional()
-  @IsString()
-  reference?: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  pallets?: number;
+
+  @IsUUID()
+  fromLocationId: string;
+
+  @IsUUID()
+  toLocationId: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(80)
+  documentNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  carrier?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  driver?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
   notes?: string;
+
+  @IsOptional()
+  @IsUUID()
+  palletId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  lotId?: string;
 }

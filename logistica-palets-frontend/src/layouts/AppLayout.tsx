@@ -54,7 +54,7 @@ const shell: Record<string, React.CSSProperties> = {
 
 const modules: Array<{ key: "dashboard" | "products" | "warehouses" | "locations" | "lots" | "pallets" | "movements" | "transports" | "reports"; label: string; path: string }> = [
   { key: "dashboard", label: "Dashboard", path: "/" },
-  { key: "products", label: "Productos", path: "/products" },
+  { key: "products", label: "Materiales", path: "/products" },
   { key: "warehouses", label: "Depósitos", path: "/warehouses" },
   { key: "locations", label: "Ubicaciones", path: "/locations" },
   { key: "lots", label: "Lotes", path: "/lots" },
@@ -92,7 +92,7 @@ export default function AppLayout() {
     <div style={shell.app}>
       <aside className="card" style={shell.sidebar}>
         <div style={shell.brandRow}>
-          <h3 style={shell.brand}>Logística Palets</h3>
+          <h3 style={shell.brand}>RL LOGISTICA</h3>
           <span className="badge">{user.role}</span>
         </div>
 
@@ -117,7 +117,7 @@ export default function AppLayout() {
 
       <main style={shell.main}>
         <div className="card" style={shell.topbar}>
-          <div style={shell.topbarTitle}>Panel operativo</div>
+          <div style={shell.topbarTitle}>Panel operativo material-centric</div>
           <div style={shell.topbarRight}>
             <span className="badge">{user.username}</span>
             <span className="badge">{user.role}</span>

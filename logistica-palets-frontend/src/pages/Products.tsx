@@ -22,7 +22,7 @@ export default function ProductsPage() {
 
   const codeError = useMemo(() => {
     const value = code.trim();
-    if (!value) return "Ingresá un código.";
+    if (!value) return "Ingresá un código de material.";
     if (value.length < 2 || value.length > 80) return "El código debe tener entre 2 y 80 caracteres.";
     return "";
   }, [code]);
@@ -30,7 +30,7 @@ export default function ProductsPage() {
   const descriptionError = useMemo(() => {
     const value = description.trim();
     if (!value) return "Ingresá una descripción.";
-    if (value.length < 2 || value.length > 80) return "La descripción debe tener entre 2 y 80 caracteres.";
+    if (value.length < 2 || value.length > 160) return "La descripción debe tener entre 2 y 160 caracteres.";
     return "";
   }, [description]);
 
@@ -55,9 +55,7 @@ export default function ProductsPage() {
     setSubmitted(true);
     setFormError("");
 
-    if (!allowCreate || codeError || descriptionError) {
-      return;
-    }
+    if (!allowCreate || codeError || descriptionError) return;
 
     setSaving(true);
     try {
@@ -80,9 +78,7 @@ export default function ProductsPage() {
   }
 
   async function handleDelete(item: Product) {
-    if (!allowDelete || !window.confirm(`Eliminar producto ${item.code}?`)) {
-      return;
-    }
+    if (!allowDelete || !window.confirm(`Eliminar material ${item.code}?`)) return;
 
     setFormError("");
     setSaving(true);
@@ -98,56 +94,54 @@ export default function ProductsPage() {
 
   return (
     <div>
-      <h2>Productos</h2>
+      <h2>Materiales</h2>
+      <p style={{ color: "#6b7280" }}>Se reutiliza el módulo técnico de productos, pero ahora modela materiales operativos.</p>
       {!allowCreate ? <p style={{ color: "#6b7280" }}>Modo lectura.</p> : null}
 
       <form onSubmit={handleCreate} style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-        <input className="input" disabled={!allowCreate || saving} value={code} onChange={(event) => setCode(event.target.value)} placeholder="Código" />
+        <input className="input" disabled={!allowCreate || saving} value={code} onChange={(event) => setCode(event.target.value)} placeholder="Código material" />
         <input
           className="input"
           disabled={!allowCreate || saving}
           value={description}
           onChange={(event) => setDescription(event.target.value)}
           placeholder="Descripción"
-          style={{ minWidth: 280 }}
+          style={{ minWidth: 320 }}
         />
         <input
           className="input"
           disabled={!allowCreate || saving}
           value={unitOfMeasure}
           onChange={(event) => setUnitOfMeasure(event.target.value)}
-          placeholder="Unidad"
-          style={{ width: 140 }}
+          placeholder="UM"
+          style={{ width: 120 }}
         />
         <button className="btn btn--primary" type="submit" disabled={!allowCreate || saving}>
-          {saving ? "Guardando..." : "Guardar"}
+          {saving ? "Guardando..." : "Guardar material"}
         </button>
       </form>
 
       {submitted && codeError ? <p style={{ color: "#b91c1c", marginTop: -4 }}>{codeError}</p> : null}
       {submitted && descriptionError ? <p style={{ color: "#b91c1c", marginTop: -4 }}>{descriptionError}</p> : null}
       {formError ? <p style={{ color: "#b91c1c" }}>{formError}</p> : null}
-
       {loading ? <p>Cargando...</p> : null}
       {error ? (
         <div>
           <p style={{ color: "#b91c1c", marginBottom: 8 }}>No se pudo cargar.</p>
-          <button className="btn" onClick={refresh}>
-            Reintentar
-          </button>
+          <button className="btn" onClick={refresh}>Reintentar</button>
         </div>
       ) : null}
 
       {!loading && !error ? (
         items.length === 0 ? (
-          <p>No hay registros</p>
+          <p>No hay materiales registrados</p>
         ) : (
           <table className="table">
             <thead>
               <tr>
                 <th>Código</th>
                 <th>Descripción</th>
-                <th>Unidad</th>
+                <th>UM</th>
                 <th>Activo</th>
                 <th>ID</th>
                 <th />
@@ -158,8 +152,8 @@ export default function ProductsPage() {
                 <tr key={item.id}>
                   <td>{item.code}</td>
                   <td>{item.description}</td>
-                  <td>{item.unitOfMeasure}</td>
-                  <td>{String(item.active)}</td>
+                  <td>{item.unitOfMeasure ?? "-"}</td>
+                  <td>{item.active ? "Sí" : "No"}</td>
                   <td style={{ maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.id}</td>
                   <td>{allowDelete ? <button className="btn" onClick={() => handleDelete(item)}>Eliminar</button> : null}</td>
                 </tr>

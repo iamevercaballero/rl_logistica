@@ -1,43 +1,67 @@
 import { api } from "./client";
+import type { MovementType } from "./movements";
 
 export type ReportRange = "today" | "week" | "month";
 
 export type StockByWarehouseRow = {
   warehouseId: string;
   warehouseName: string;
-  pallets: number;
-  units: number;
+  quantity: number;
+};
+
+export type StockByMaterialRow = {
+  productId: string;
+  code: string;
+  description: string;
+  unitOfMeasure?: string | null;
+  quantity: number;
 };
 
 export type StockItemRow = {
-  palletId: string;
-  palletCode: string;
-  quantity: number;
-  status: string;
-  locationId: string;
-  locationCode: string;
-  warehouseId: string;
-  warehouseName: string;
+  id: string;
+  currentQuantity: number;
+  updatedAt: string;
+  material: {
+    id: string;
+    code: string;
+    description: string;
+    unitOfMeasure?: string | null;
+  };
+  warehouse?: { id: string; name: string } | null;
+  location?: { id: string; code: string } | null;
 };
 
 export type StockReportResponse = {
-  totalPallets: number;
-  totalUnits: number;
+  totalMaterials: number;
+  stockRows: number;
+  totalQuantity: number;
   byWarehouse: StockByWarehouseRow[];
+  byMaterial: StockByMaterialRow[];
   items: StockItemRow[];
 };
 
 export type ReportMovementRow = {
   id: string;
-  type: "ENTRY" | "EXIT" | "TRANSFER";
-  createdAt: string;
-  reference?: string | null;
+  type: MovementType;
+  date: string;
+  quantity: number;
+  pallets?: number | null;
+  documentNumber?: string | null;
+  supplier?: string | null;
+  carrier?: string | null;
+  driver?: string | null;
+  destination?: string | null;
   notes?: string | null;
-  warehouseId?: string | null;
-  warehouseName?: string | null;
-  palletId?: string | null;
-  palletCode?: string | null;
-  quantity?: number;
+  material: {
+    id: string;
+    code: string;
+    description: string;
+    unitOfMeasure?: string | null;
+  };
+  warehouse?: { id: string; name: string } | null;
+  location?: { id: string; code: string } | null;
+  from?: { warehouseName?: string | null; locationCode?: string | null } | null;
+  to?: { warehouseName?: string | null; locationCode?: string | null } | null;
 };
 
 export type ReportMovementsResponse = {
@@ -46,38 +70,57 @@ export type ReportMovementsResponse = {
 };
 
 export type ReportTraceEvent = {
+  movementId: string;
   at: string;
-  type: "ENTRY" | "EXIT" | "TRANSFER";
-  fromWarehouse?: string;
-  toWarehouse?: string;
-  ref?: string;
-  userId?: string | null;
-  username?: string | null;
-  quantity?: number;
+  type: MovementType;
+  quantity: number;
+  documentNumber?: string | null;
+  supplier?: string | null;
+  destination?: string | null;
+  notes?: string | null;
+  warehouseName?: string | null;
+  locationCode?: string | null;
+  fromWarehouseName?: string | null;
+  fromLocationCode?: string | null;
+  toWarehouseName?: string | null;
+  toLocationCode?: string | null;
 };
 
 export type TraceReportResponse = {
-  palletId: string;
+  material: { id: string; code: string; description: string };
   history: ReportTraceEvent[];
+};
+
+export type DailyStockRow = {
+  date: string;
+  material: { id: string; code: string; description: string; unitOfMeasure?: string | null };
+  stockInicial: number;
+  entradas: number;
+  salidas: number;
+  stockFinal: number;
+  stockSAP: number;
+  diferencia: number;
 };
 
 export type KpisResponse = {
   range: ReportRange;
-  totalPallets: number;
-  totalUnits: number;
+  totalMaterials: number;
+  totalQuantity: number;
   movementsCount: number;
   movementsInRange: number;
   stockByWarehouse: StockByWarehouseRow[];
 };
 
-export async function getStockReport(warehouseId?: string) {
-  const { data } = await api.get<StockReportResponse>("/reports/stock", { params: { warehouseId } });
+export async function getStockReport(warehouseId?: string, locationId?: string) {
+  const { data } = await api.get<StockReportResponse>("/reports/stock", { params: { warehouseId, locationId } });
   return data;
 }
 
 export async function getMovementsReport(params?: {
   warehouseId?: string;
-  type?: "ENTRY" | "EXIT" | "TRANSFER";
+  locationId?: string;
+  productId?: string;
+  type?: MovementType;
   dateFrom?: string;
   dateTo?: string;
   search?: string;
@@ -88,8 +131,23 @@ export async function getMovementsReport(params?: {
   return data;
 }
 
-export async function getTraceReport(palletId: string) {
-  const { data } = await api.get<TraceReportResponse>("/reports/trace", { params: { palletId } });
+export async function getTraceReport(materialId: string) {
+  const { data } = await api.get<TraceReportResponse>("/reports/trace", { params: { materialId } });
+  return data;
+}
+
+export async function getDailyStockReport(params?: { date?: string; productId?: string; warehouseId?: string; locationId?: string }) {
+  const { data } = await api.get<DailyStockRow[]>("/reports/daily-stock", { params });
+  return data;
+}
+
+export async function getDifferencesSapReport(params?: { date?: string; productId?: string; warehouseId?: string; locationId?: string }) {
+  const { data } = await api.get<DailyStockRow[]>("/reports/differences-sap", { params });
+  return data;
+}
+
+export async function upsertSapStock(payload: { date: string; productId: string; warehouseId?: string; locationId?: string; sapQuantity: number }) {
+  const { data } = await api.post("/reports/sap-stock", payload);
   return data;
 }
 

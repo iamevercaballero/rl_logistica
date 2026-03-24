@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
+import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 
 @Entity('movement_details')
 export class MovementDetail {
@@ -8,15 +8,18 @@ export class MovementDetail {
   @Column({ type: 'uuid' })
   movementId: string;
 
-  @Column({ type: 'uuid' })
-  palletId: string;
+  @Column({ type: 'uuid', nullable: true })
+  palletId?: string | null;
 
-  @Column({ type: 'uuid' })
-  lotId: string;
+  @Column({ type: 'uuid', nullable: true })
+  lotId?: string | null;
 
-  @Column({ type: 'uuid' })
-  locationId: string;
+  @Column({ type: 'uuid', nullable: true })
+  locationId?: string | null;
 
-  @Column('int')
+  @Column({ type: 'int' })
   quantity: number;
+
+  @Column({ type: 'varchar', nullable: true })
+  role?: string | null;
 }

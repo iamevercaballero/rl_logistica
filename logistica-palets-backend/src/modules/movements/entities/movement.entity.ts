@@ -29,49 +29,49 @@ export class Movement {
   quantity: number;
 
   @Column({ type: 'int', nullable: true })
-  pallets?: number | null;
+  pallets?: number;
 
   @Column({ type: 'uuid', nullable: true })
-  warehouseId?: string | null;
+  warehouseId?: string;
 
   @Column({ type: 'uuid', nullable: true })
-  locationId?: string | null;
+  locationId?: string;
 
   @Column({ type: 'uuid', nullable: true })
-  fromWarehouseId?: string | null;
+  fromWarehouseId?: string;
 
   @Column({ type: 'uuid', nullable: true })
-  fromLocationId?: string | null;
+  fromLocationId?: string;
 
   @Column({ type: 'uuid', nullable: true })
-  toWarehouseId?: string | null;
+  toWarehouseId?: string;
 
   @Column({ type: 'uuid', nullable: true })
-  toLocationId?: string | null;
+  toLocationId?: string;
 
-  @Column({ nullable: true })
-  documentNumber?: string | null;
+  @Column({ type: 'varchar', nullable: true })
+  documentNumber?: string;
 
-  @Column({ nullable: true })
-  supplier?: string | null;
+  @Column({ type: 'varchar', nullable: true })
+  supplier?: string;
 
-  @Column({ nullable: true })
-  carrier?: string | null;
+  @Column({ type: 'varchar', nullable: true })
+  carrier?: string;
 
-  @Column({ nullable: true })
-  driver?: string | null;
+  @Column({ type: 'varchar', nullable: true })
+  driver?: string;
 
-  @Column({ nullable: true })
-  destination?: string | null;
+  @Column({ type: 'varchar', nullable: true })
+  destination?: string;
 
-  @Column({ nullable: true })
-  notes?: string | null;
-
-  @Column({ type: 'uuid', nullable: true })
-  palletId?: string | null;
+  @Column({ type: 'text', nullable: true })
+  notes?: string;
 
   @Column({ type: 'uuid', nullable: true })
-  lotId?: string | null;
+  palletId?: string;
+
+  @Column({ type: 'uuid', nullable: true })
+  lotId?: string;
 
   @Column({ type: 'uuid' })
   createdById: string;

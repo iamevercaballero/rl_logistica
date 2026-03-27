@@ -7,6 +7,7 @@ import { Product } from '../products/entities/product.entity';
 import { Location } from '../locations/entities/location.entity';
 import { Warehouse } from '../warehouses/entities/warehouse.entity';
 import { Stock } from '../stocks/entities/stock.entity';
+import { DeepPartial } from 'typeorm/common/DeepPartial';
 
 @Injectable()
 export class MovementsService {
@@ -40,28 +41,30 @@ export class MovementsService {
           break;
       }
 
-      const movement = manager.create(Movement, {
-        type: dto.type,
-        date: dto.date ? new Date(dto.date) : new Date(),
-        productId: dto.productId,
-        quantity: dto.quantity,
-        pallets: dto.pallets,
-        warehouseId: resolved.warehouseId,
-        locationId: resolved.locationId,
-        fromWarehouseId: resolved.fromWarehouseId,
-        fromLocationId: dto.fromLocationId,
-        toWarehouseId: resolved.toWarehouseId,
-        toLocationId: dto.toLocationId,
-        documentNumber: dto.documentNumber?.trim(),
-        supplier: dto.supplier?.trim(),
-        carrier: dto.carrier?.trim(),
-        driver: dto.driver?.trim(),
-        destination: dto.destination?.trim(),
-        notes: dto.notes?.trim(),
-        palletId: dto.palletId,
-        lotId: dto.lotId,
-        createdById: userId,
-      });
+    const movementData: DeepPartial<Movement> = {
+      type: dto.type,
+      date: dto.date ? new Date(dto.date) : new Date(),
+      productId: dto.productId,
+      quantity: dto.quantity,
+      pallets: dto.pallets ?? undefined,
+      warehouseId: resolved.warehouseId ?? undefined,
+      locationId: resolved.locationId ?? undefined,
+      fromWarehouseId: resolved.fromWarehouseId ?? undefined,
+      fromLocationId: dto.fromLocationId ?? undefined,
+      toWarehouseId: resolved.toWarehouseId ?? undefined,
+      toLocationId: dto.toLocationId ?? undefined,
+      documentNumber: dto.documentNumber?.trim() || undefined,
+      supplier: dto.supplier?.trim() || undefined,
+      carrier: dto.carrier?.trim() || undefined,
+      driver: dto.driver?.trim() || undefined,
+      destination: dto.destination?.trim() || undefined,
+      notes: dto.notes?.trim() || undefined,
+      palletId: dto.palletId ?? undefined,
+      lotId: dto.lotId ?? undefined,
+      createdById: userId,
+    };
+
+    const movement = manager.create(Movement, movementData);
 
       await manager.save(movement);
 

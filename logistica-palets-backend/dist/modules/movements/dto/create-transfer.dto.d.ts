@@ -1,7 +1,14 @@
 export declare class CreateTransferDto {
-    palletId: string;
-    destinationLocationId: string;
+    date?: string;
+    productId: string;
     quantity: number;
-    reference?: string;
+    pallets?: number;
+    fromLocationId: string;
+    toLocationId: string;
+    documentNumber?: string;
+    carrier?: string;
+    driver?: string;
     notes?: string;
+    palletId?: string;
+    lotId?: string;
 }

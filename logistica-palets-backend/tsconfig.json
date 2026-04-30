@@ -9,18 +9,19 @@
     "target": "es2019",
     "sourceMap": true,
     "outDir": "./dist",
-    "baseUrl": "src",
-      "paths": {
-      "@modules/*": ["modules/*"]
+    "rootDir": "./src",
+    "paths": {
+      "@modules/*": ["./src/modules/*"]
     },
     "incremental": true,
+    "tsBuildInfoFile": "./dist/tsconfig.build.tsbuildinfo",
     "skipLibCheck": true,
     "strictNullChecks": true,
     "strictBindCallApply": true,
     "noImplicitAny": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "moduleResolution": "node",
+    "moduleResolution": "node10",
     "esModuleInterop": true
   },
   "include": ["src"],

@@ -5,6 +5,24 @@ import { listLocations, type Location } from "../api/locations";
 import { listProducts, type Product } from "../api/products";
 import { getFriendlyApiError } from "../utils/apiError";
 
+const MOVE_LABEL: Record<string, string> = {
+  ENTRY: "Entrada",
+  EXIT: "Salida",
+  TRANSFER: "Transferencia",
+  ADJUSTMENT_IN: "Ajuste entrada",
+  ADJUSTMENT_OUT: "Ajuste salida",
+  REPROCESS: "Reproceso",
+};
+
+const MOVE_BADGE: Record<string, string> = {
+  ENTRY: "badge badge--entry",
+  EXIT: "badge badge--exit",
+  TRANSFER: "badge badge--transfer",
+  ADJUSTMENT_IN: "badge badge--adj-in",
+  ADJUSTMENT_OUT: "badge badge--adj-out",
+  REPROCESS: "badge badge--reprocess",
+};
+
 type Filters = {
   type: "" | MovementType;
   warehouseId: string;
@@ -32,29 +50,13 @@ type FormState = {
 };
 
 const initialFilters: Filters = {
-  type: "",
-  warehouseId: "",
-  productId: "",
-  dateFrom: "",
-  dateTo: "",
-  search: "",
+  type: "", warehouseId: "", productId: "", dateFrom: "", dateTo: "", search: "",
 };
 
 const initialForm: FormState = {
-  type: "ENTRY",
-  productId: "",
-  quantity: "",
-  pallets: "",
-  warehouseId: "",
-  locationId: "",
-  fromLocationId: "",
-  toLocationId: "",
-  documentNumber: "",
-  supplier: "",
-  carrier: "",
-  driver: "",
-  destination: "",
-  notes: "",
+  type: "ENTRY", productId: "", quantity: "", pallets: "",
+  warehouseId: "", locationId: "", fromLocationId: "", toLocationId: "",
+  documentNumber: "", supplier: "", carrier: "", driver: "", destination: "", notes: "",
 };
 
 export default function MovementsPage() {
@@ -74,17 +76,15 @@ export default function MovementsPage() {
   const filteredLocations = useMemo(() => {
     if (form.type === "TRANSFER") return locations;
     if (!form.warehouseId) return locations;
-    return locations.filter((location) => location.warehouse?.id === form.warehouseId || location.warehouseId === form.warehouseId);
+    return locations.filter((l) => l.warehouse?.id === form.warehouseId || l.warehouseId === form.warehouseId);
   }, [form.type, form.warehouseId, locations]);
 
   const refresh = useCallback(async (page = 1, limit = 20, current = initialFilters) => {
     setLoading(true);
     setError("");
-
     try {
       const response = await getMovements({
-        page,
-        limit,
+        page, limit,
         type: current.type || undefined,
         warehouseId: current.warehouseId || undefined,
         productId: current.productId || undefined,
@@ -92,7 +92,6 @@ export default function MovementsPage() {
         dateTo: current.dateTo || undefined,
         search: current.search.trim() || undefined,
       });
-
       setData(response.data);
       setMeta(response.meta);
     } catch (err) {
@@ -104,13 +103,8 @@ export default function MovementsPage() {
 
   useEffect(() => {
     Promise.all([listWarehouses(), listLocations(), listProducts()])
-      .then(([warehouseData, locationData, productData]) => {
-        setWarehouses(warehouseData);
-        setLocations(locationData);
-        setProducts(productData);
-      })
+      .then(([w, l, p]) => { setWarehouses(w); setLocations(l); setProducts(p); })
       .catch(() => undefined);
-
     refresh(1, 20, initialFilters).catch(() => undefined);
   }, [refresh]);
 
@@ -129,7 +123,6 @@ export default function MovementsPage() {
     event.preventDefault();
     setSaving(true);
     setFormError("");
-
     try {
       await createMovement({
         type: form.type,
@@ -156,156 +149,220 @@ export default function MovementsPage() {
     }
   }
 
+  const isTransfer = form.type === "TRANSFER";
+
   return (
     <div>
-      <h2>Movimientos operativos</h2>
-      <p style={{ color: "#6b7280" }}>El flujo ahora se registra por material, cantidad y ubicación, no por pallet como eje principal.</p>
+      <div style={{ marginBottom: 20 }}>
+        <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.5, marginBottom: 4 }}>Movimientos</h1>
+        <p style={{ color: "var(--muted)", fontSize: 14, marginBottom: 0 }}>
+          Registrá entradas, salidas, transferencias y ajustes de materiales.
+        </p>
+      </div>
 
+      {/* ── Formulario ── */}
       <section className="card" style={{ marginBottom: 12 }}>
-        <h3 style={{ marginTop: 0 }}>Registrar movimiento</h3>
-        <form onSubmit={handleCreate} style={{ display: "grid", gap: 10 }}>
+        <h3 style={{ marginTop: 0, fontSize: 15, fontWeight: 800 }}>Registrar movimiento</h3>
+        <form onSubmit={handleCreate} style={{ display: "grid", gap: 14 }}>
+
+          <div className="form-section-title">Tipo y material</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
-            <select className="input" value={form.type} onChange={(event) => setForm((prev) => ({ ...prev, type: event.target.value as MovementType }))}>
-              <option value="ENTRY">ENTRY</option>
-              <option value="EXIT">EXIT</option>
-              <option value="TRANSFER">TRANSFER</option>
-              <option value="ADJUSTMENT_IN">ADJUSTMENT_IN</option>
-              <option value="ADJUSTMENT_OUT">ADJUSTMENT_OUT</option>
-              <option value="REPROCESS">REPROCESS</option>
+            <select className="input" value={form.type} onChange={(e) => setForm((p) => ({ ...p, type: e.target.value as MovementType, locationId: "", fromLocationId: "", toLocationId: "" }))}>
+              <option value="ENTRY">Entrada</option>
+              <option value="EXIT">Salida</option>
+              <option value="TRANSFER">Transferencia</option>
+              <option value="ADJUSTMENT_IN">Ajuste entrada</option>
+              <option value="ADJUSTMENT_OUT">Ajuste salida</option>
+              <option value="REPROCESS">Reproceso</option>
             </select>
-            <select className="input" value={form.productId} onChange={(event) => setForm((prev) => ({ ...prev, productId: event.target.value }))}>
-              <option value="">Material</option>
-              {products.map((product) => (
-                <option key={product.id} value={product.id}>{product.code} · {product.description}</option>
+            <select className="input" value={form.productId} onChange={(e) => setForm((p) => ({ ...p, productId: e.target.value }))}>
+              <option value="">Seleccionar material</option>
+              {products.map((p) => (
+                <option key={p.id} value={p.id}>{p.code} · {p.description}</option>
               ))}
             </select>
-            <input className="input" type="number" min={1} placeholder="Cantidad" value={form.quantity} onChange={(event) => setForm((prev) => ({ ...prev, quantity: event.target.value }))} />
-            <input className="input" type="number" min={1} placeholder="Paletas (opcional)" value={form.pallets} onChange={(event) => setForm((prev) => ({ ...prev, pallets: event.target.value }))} />
+            <input className="input" type="number" min={1} placeholder="Cantidad *" value={form.quantity} onChange={(e) => setForm((p) => ({ ...p, quantity: e.target.value }))} />
+            <input className="input" type="number" min={1} placeholder="Paletas (opcional)" value={form.pallets} onChange={(e) => setForm((p) => ({ ...p, pallets: e.target.value }))} />
           </div>
 
-          {form.type === "TRANSFER" ? (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 8 }}>
-              <select className="input" value={form.fromLocationId} onChange={(event) => setForm((prev) => ({ ...prev, fromLocationId: event.target.value }))}>
+          <div className="form-section-title">
+            {isTransfer ? "Origen y destino" : "Depósito y ubicación"}
+          </div>
+          {isTransfer ? (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <select className="input" value={form.fromLocationId} onChange={(e) => setForm((p) => ({ ...p, fromLocationId: e.target.value }))}>
                 <option value="">Ubicación origen</option>
-                {locations.map((location) => <option key={location.id} value={location.id}>{location.code} · {location.warehouse?.name}</option>)}
+                {locations.map((l) => <option key={l.id} value={l.id}>{l.code} · {l.warehouse?.name}</option>)}
               </select>
-              <select className="input" value={form.toLocationId} onChange={(event) => setForm((prev) => ({ ...prev, toLocationId: event.target.value }))}>
+              <select className="input" value={form.toLocationId} onChange={(e) => setForm((p) => ({ ...p, toLocationId: e.target.value }))}>
                 <option value="">Ubicación destino</option>
-                {locations.map((location) => <option key={location.id} value={location.id}>{location.code} · {location.warehouse?.name}</option>)}
+                {locations.map((l) => <option key={l.id} value={l.id}>{l.code} · {l.warehouse?.name}</option>)}
               </select>
             </div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 8 }}>
-              <select className="input" value={form.warehouseId} onChange={(event) => setForm((prev) => ({ ...prev, warehouseId: event.target.value, locationId: "" }))}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <select className="input" value={form.warehouseId} onChange={(e) => setForm((p) => ({ ...p, warehouseId: e.target.value, locationId: "" }))}>
                 <option value="">Depósito</option>
-                {warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}
+                {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
-              <select className="input" value={form.locationId} onChange={(event) => setForm((prev) => ({ ...prev, locationId: event.target.value }))}>
-                <option value="">Ubicación</option>
-                {filteredLocations.map((location) => <option key={location.id} value={location.id}>{location.code} · {location.warehouse?.name}</option>)}
+              <select className="input" value={form.locationId} onChange={(e) => setForm((p) => ({ ...p, locationId: e.target.value }))}>
+                <option value="">Ubicación (opcional)</option>
+                {filteredLocations.map((l) => <option key={l.id} value={l.id}>{l.code} · {l.warehouse?.name}</option>)}
               </select>
             </div>
           )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
-            <input className="input" placeholder="Documento / remito" value={form.documentNumber} onChange={(event) => setForm((prev) => ({ ...prev, documentNumber: event.target.value }))} />
-            <input className="input" placeholder="Proveedor" value={form.supplier} onChange={(event) => setForm((prev) => ({ ...prev, supplier: event.target.value }))} />
-            <input className="input" placeholder="Transportadora" value={form.carrier} onChange={(event) => setForm((prev) => ({ ...prev, carrier: event.target.value }))} />
-            <input className="input" placeholder="Conductor" value={form.driver} onChange={(event) => setForm((prev) => ({ ...prev, driver: event.target.value }))} />
-            <input className="input" placeholder="Destino" value={form.destination} onChange={(event) => setForm((prev) => ({ ...prev, destination: event.target.value }))} />
+          <div className="form-section-title">Datos logísticos</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 8 }}>
+            <input className="input" placeholder="N° remito / documento" value={form.documentNumber} onChange={(e) => setForm((p) => ({ ...p, documentNumber: e.target.value }))} />
+            <input className="input" placeholder="Proveedor" value={form.supplier} onChange={(e) => setForm((p) => ({ ...p, supplier: e.target.value }))} />
+            <input className="input" placeholder="Transportadora" value={form.carrier} onChange={(e) => setForm((p) => ({ ...p, carrier: e.target.value }))} />
+            <input className="input" placeholder="Conductor" value={form.driver} onChange={(e) => setForm((p) => ({ ...p, driver: e.target.value }))} />
+            <input className="input" placeholder="Destino" value={form.destination} onChange={(e) => setForm((p) => ({ ...p, destination: e.target.value }))} />
           </div>
 
-          <textarea className="input" placeholder="Notas / observación" value={form.notes} onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))} rows={3} />
+          <textarea
+            className="input"
+            placeholder="Observaciones (opcional)"
+            value={form.notes}
+            onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))}
+            rows={2}
+          />
 
-          {formError ? <p style={{ color: "#b91c1c", margin: 0 }}>{formError}</p> : null}
-          <div>
-            <button className="btn btn--primary" type="submit" disabled={saving}>{saving ? "Guardando..." : "Registrar movimiento"}</button>
+          {formError && (
+            <div style={{ background: "#fef2f2", border: "1.5px solid #fecaca", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+              <span style={{ color: "#dc2626", fontSize: 13, fontWeight: 600 }}>{formError}</span>
+            </div>
+          )}
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button className="btn btn--primary" type="submit" disabled={saving || !form.productId || !form.quantity}>
+              {saving ? "Guardando..." : "Registrar movimiento"}
+            </button>
+            <button type="button" className="btn" onClick={() => { setForm(initialForm); setFormError(""); }}>
+              Limpiar
+            </button>
           </div>
         </form>
       </section>
 
+      {/* ── Filtros ── */}
       <section className="card" style={{ marginBottom: 12 }}>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <select className="input" value={filters.type} onChange={(event) => setFilters((prev) => ({ ...prev, type: event.target.value as Filters["type"] }))}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <select className="input" value={filters.type} onChange={(e) => setFilters((p) => ({ ...p, type: e.target.value as Filters["type"] }))}>
             <option value="">Todos los tipos</option>
-            <option value="ENTRY">ENTRY</option>
-            <option value="EXIT">EXIT</option>
-            <option value="TRANSFER">TRANSFER</option>
-            <option value="ADJUSTMENT_IN">ADJUSTMENT_IN</option>
-            <option value="ADJUSTMENT_OUT">ADJUSTMENT_OUT</option>
-            <option value="REPROCESS">REPROCESS</option>
+            <option value="ENTRY">Entrada</option>
+            <option value="EXIT">Salida</option>
+            <option value="TRANSFER">Transferencia</option>
+            <option value="ADJUSTMENT_IN">Ajuste entrada</option>
+            <option value="ADJUSTMENT_OUT">Ajuste salida</option>
+            <option value="REPROCESS">Reproceso</option>
           </select>
-          <select className="input" value={filters.warehouseId} onChange={(event) => setFilters((prev) => ({ ...prev, warehouseId: event.target.value }))}>
+          <select className="input" value={filters.warehouseId} onChange={(e) => setFilters((p) => ({ ...p, warehouseId: e.target.value }))}>
             <option value="">Todos los depósitos</option>
-            {warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}
+            {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
-          <select className="input" value={filters.productId} onChange={(event) => setFilters((prev) => ({ ...prev, productId: event.target.value }))}>
+          <select className="input" value={filters.productId} onChange={(e) => setFilters((p) => ({ ...p, productId: e.target.value }))}>
             <option value="">Todos los materiales</option>
-            {products.map((product) => <option key={product.id} value={product.id}>{product.code}</option>)}
+            {products.map((p) => <option key={p.id} value={p.id}>{p.code}</option>)}
           </select>
-          <input className="input" type="date" value={filters.dateFrom} onChange={(event) => setFilters((prev) => ({ ...prev, dateFrom: event.target.value }))} />
-          <input className="input" type="date" value={filters.dateTo} onChange={(event) => setFilters((prev) => ({ ...prev, dateTo: event.target.value }))} />
-          <input className="input" placeholder="Buscar por material, documento, proveedor..." value={filters.search} onChange={(event) => setFilters((prev) => ({ ...prev, search: event.target.value }))} style={{ minWidth: 260 }} />
-          <button className="btn btn--primary" onClick={applyFilters}>Aplicar</button>
+          <input className="input" type="date" value={filters.dateFrom} onChange={(e) => setFilters((p) => ({ ...p, dateFrom: e.target.value }))} />
+          <input className="input" type="date" value={filters.dateTo} onChange={(e) => setFilters((p) => ({ ...p, dateTo: e.target.value }))} />
+          <input
+            className="input"
+            placeholder="Buscar por material, documento, proveedor..."
+            value={filters.search}
+            onChange={(e) => setFilters((p) => ({ ...p, search: e.target.value }))}
+            style={{ minWidth: 240 }}
+          />
+          <button className="btn btn--primary" onClick={applyFilters}>Buscar</button>
           <button className="btn" onClick={clearFilters}>Limpiar</button>
         </div>
       </section>
 
-      {loading ? <p>Cargando...</p> : null}
-      {error ? (
-        <div style={{ marginBottom: 12 }}>
-          <p style={{ color: "#b91c1c", marginBottom: 8 }}>No se pudo cargar.</p>
-          <button className="btn" onClick={() => refresh(meta.page, meta.limit, appliedFilters)}>Reintentar</button>
+      {/* ── Tabla ── */}
+      {loading && <p style={{ color: "var(--muted)", fontSize: 14 }}>Cargando...</p>}
+      {error && (
+        <div style={{ background: "#fef2f2", border: "1.5px solid #fecaca", borderRadius: 12, padding: "12px 16px", marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ color: "#dc2626", fontSize: 14, fontWeight: 600 }}>{error}</span>
+          <button className="btn btn--primary" onClick={() => refresh(meta.page, meta.limit, appliedFilters)}>Reintentar</button>
         </div>
-      ) : null}
+      )}
 
-      {!loading && !error ? (
+      {!loading && !error && (
         data.length === 0 ? (
-          <p>No hay registros</p>
+          <div className="empty">
+            <p className="empty__title">Sin movimientos registrados</p>
+            <p className="empty__desc">Registrá el primer movimiento con el formulario de arriba.</p>
+          </div>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Fecha</th>
-                <th>Tipo</th>
-                <th>Material</th>
-                <th>Cantidad</th>
-                <th>Ubicación</th>
-                <th>Documento</th>
-                <th>Extra</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.map((movement) => (
-                <tr key={movement.id}>
-                  <td>{new Date(movement.date).toLocaleString()}</td>
-                  <td>{movement.type}</td>
-                  <td>{movement.material.code} · {movement.material.description}</td>
-                  <td>{movement.quantity} {movement.material.unitOfMeasure ?? ""}</td>
-                  <td>
-                    {movement.type === "TRANSFER"
-                      ? `${movement.from?.locationCode ?? "-"} → ${movement.to?.locationCode ?? "-"}`
-                      : `${movement.warehouse?.name ?? "-"} / ${movement.location?.code ?? "-"}`}
-                  </td>
-                  <td>{movement.documentNumber || "-"}</td>
-                  <td>{movement.destination || movement.supplier || movement.notes || "-"}</td>
+          <>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Tipo</th>
+                  <th>Material</th>
+                  <th>Cantidad</th>
+                  <th>Ubicación</th>
+                  <th>Documento</th>
+                  <th>Info extra</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )
-      ) : null}
+              </thead>
+              <tbody>
+                {data.map((m) => (
+                  <tr key={m.id}>
+                    <td style={{ color: "var(--muted)", fontSize: 12, whiteSpace: "nowrap" }}>
+                      {new Date(m.date).toLocaleString("es-AR")}
+                    </td>
+                    <td>
+                      <span className={MOVE_BADGE[m.type] ?? "badge"}>
+                        {MOVE_LABEL[m.type] ?? m.type}
+                      </span>
+                    </td>
+                    <td>
+                      <strong>{m.material.code}</strong>
+                      <span style={{ color: "var(--muted)", fontSize: 12 }}> · {m.material.description}</span>
+                    </td>
+                    <td style={{ fontWeight: 700 }}>
+                      {m.quantity.toLocaleString("es-AR")} {m.material.unitOfMeasure ?? ""}
+                    </td>
+                    <td style={{ fontSize: 12 }}>
+                      {m.type === "TRANSFER"
+                        ? <span>{m.from?.locationCode ?? "-"} <span style={{ color: "var(--primary)" }}>→</span> {m.to?.locationCode ?? "-"}</span>
+                        : `${m.warehouse?.name ?? "-"} / ${m.location?.code ?? "-"}`}
+                    </td>
+                    <td style={{ fontSize: 12, color: "var(--muted)" }}>{m.documentNumber || "-"}</td>
+                    <td style={{ fontSize: 12, color: "var(--muted)" }}>
+                      {m.destination || m.supplier || m.notes || "-"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
 
-      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
-        <button className="btn" disabled={loading || meta.page <= 1} onClick={() => refresh(meta.page - 1, meta.limit, appliedFilters)}>Anterior</button>
-        <span>Página {meta.page} de {meta.totalPages}</span>
-        <button className="btn" disabled={loading || meta.page >= meta.totalPages} onClick={() => refresh(meta.page + 1, meta.limit, appliedFilters)}>Siguiente</button>
-        <select className="input" value={meta.limit} onChange={(event) => refresh(1, Number(event.target.value), appliedFilters)}>
-          <option value={10}>10</option>
-          <option value={20}>20</option>
-          <option value={50}>50</option>
-        </select>
-      </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
+              <button className="btn" disabled={loading || meta.page <= 1} onClick={() => refresh(meta.page - 1, meta.limit, appliedFilters)}>
+                Anterior
+              </button>
+              <span style={{ fontSize: 13, color: "var(--muted)" }}>
+                Página {meta.page} de {meta.totalPages} · {meta.total} registros
+              </span>
+              <button className="btn" disabled={loading || meta.page >= meta.totalPages} onClick={() => refresh(meta.page + 1, meta.limit, appliedFilters)}>
+                Siguiente
+              </button>
+              <select className="input" value={meta.limit} onChange={(e) => refresh(1, Number(e.target.value), appliedFilters)}>
+                <option value={10}>10 / pág.</option>
+                <option value={20}>20 / pág.</option>
+                <option value={50}>50 / pág.</option>
+              </select>
+            </div>
+          </>
+        )
+      )}
     </div>
   );
 }

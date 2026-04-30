@@ -21,27 +21,48 @@ let ProductsService = class ProductsService {
     constructor(productRepo) {
         this.productRepo = productRepo;
     }
-    create(dto) {
-        const product = this.productRepo.create(dto);
+    async create(dto) {
+        var _a;
+        await this.ensureCodeAvailable(dto.code);
+        const product = this.productRepo.create({
+            ...dto,
+            code: dto.code.trim().toUpperCase(),
+            description: dto.description.trim(),
+            unitOfMeasure: (_a = dto.unitOfMeasure) === null || _a === void 0 ? void 0 : _a.trim().toUpperCase(),
+        });
         return this.productRepo.save(product);
     }
     findAll() {
-        return this.productRepo.find();
+        return this.productRepo.find({ order: { code: 'ASC' } });
     }
     async findOne(id) {
         const product = await this.productRepo.findOne({ where: { id } });
         if (!product)
-            throw new common_1.NotFoundException('Product not found');
+            throw new common_1.NotFoundException('Material no encontrado');
         return product;
     }
     async update(id, dto) {
         const product = await this.findOne(id);
-        Object.assign(product, dto);
+        if (dto.code && dto.code.trim().toUpperCase() !== product.code) {
+            await this.ensureCodeAvailable(dto.code, id);
+        }
+        Object.assign(product, {
+            ...dto,
+            code: dto.code ? dto.code.trim().toUpperCase() : product.code,
+            description: dto.description ? dto.description.trim() : product.description,
+            unitOfMeasure: dto.unitOfMeasure ? dto.unitOfMeasure.trim().toUpperCase() : product.unitOfMeasure,
+        });
         return this.productRepo.save(product);
     }
     async remove(id) {
         const product = await this.findOne(id);
         return this.productRepo.remove(product);
+    }
+    async ensureCodeAvailable(code, excludeId) {
+        const existing = await this.productRepo.findOne({ where: { code: code.trim().toUpperCase() } });
+        if (existing && existing.id !== excludeId) {
+            throw new common_1.BadRequestException('Ya existe un material con ese código');
+        }
     }
 };
 exports.ProductsService = ProductsService;

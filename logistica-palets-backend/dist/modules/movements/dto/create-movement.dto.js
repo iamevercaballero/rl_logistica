@@ -9,45 +9,103 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CreateEntryDto = void 0;
-const class_validator_1 = require("class-validator");
+exports.CreateMovementDto = void 0;
 const class_transformer_1 = require("class-transformer");
-class EntryItemDto {
+const class_validator_1 = require("class-validator");
+const movement_entity_1 = require("../entities/movement.entity");
+class CreateMovementDto {
 }
+exports.CreateMovementDto = CreateMovementDto;
 __decorate([
-    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsIn)(movement_entity_1.movementTypes),
     __metadata("design:type", String)
-], EntryItemDto.prototype, "palletCode", void 0);
+], CreateMovementDto.prototype, "type", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsDateString)(),
+    __metadata("design:type", String)
+], CreateMovementDto.prototype, "date", void 0);
 __decorate([
     (0, class_validator_1.IsUUID)(),
     __metadata("design:type", String)
-], EntryItemDto.prototype, "lotId", void 0);
+], CreateMovementDto.prototype, "productId", void 0);
 __decorate([
-    (0, class_validator_1.IsUUID)(),
-    __metadata("design:type", String)
-], EntryItemDto.prototype, "locationId", void 0);
-__decorate([
+    (0, class_transformer_1.Type)(() => Number),
     (0, class_validator_1.IsInt)(),
     (0, class_validator_1.Min)(1),
     __metadata("design:type", Number)
-], EntryItemDto.prototype, "quantity", void 0);
-class CreateEntryDto {
-}
-exports.CreateEntryDto = CreateEntryDto;
+], CreateMovementDto.prototype, "quantity", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_transformer_1.Type)(() => Number),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    __metadata("design:type", Number)
+], CreateMovementDto.prototype, "pallets", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsUUID)(),
+    __metadata("design:type", String)
+], CreateMovementDto.prototype, "warehouseId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsUUID)(),
+    __metadata("design:type", String)
+], CreateMovementDto.prototype, "locationId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsUUID)(),
+    __metadata("design:type", String)
+], CreateMovementDto.prototype, "fromLocationId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsUUID)(),
+    __metadata("design:type", String)
+], CreateMovementDto.prototype, "toLocationId", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(80),
     __metadata("design:type", String)
-], CreateEntryDto.prototype, "reference", void 0);
+], CreateMovementDto.prototype, "documentNumber", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
     __metadata("design:type", String)
-], CreateEntryDto.prototype, "notes", void 0);
+], CreateMovementDto.prototype, "supplier", void 0);
 __decorate([
-    (0, class_validator_1.IsArray)(),
-    (0, class_validator_1.ValidateNested)({ each: true }),
-    (0, class_transformer_1.Type)(() => EntryItemDto),
-    __metadata("design:type", Array)
-], CreateEntryDto.prototype, "items", void 0);
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], CreateMovementDto.prototype, "carrier", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], CreateMovementDto.prototype, "driver", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], CreateMovementDto.prototype, "destination", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
+    __metadata("design:type", String)
+], CreateMovementDto.prototype, "notes", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsUUID)(),
+    __metadata("design:type", String)
+], CreateMovementDto.prototype, "palletId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsUUID)(),
+    __metadata("design:type", String)
+], CreateMovementDto.prototype, "lotId", void 0);
 //# sourceMappingURL=create-movement.dto.js.map

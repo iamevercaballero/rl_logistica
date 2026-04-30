@@ -4,5 +4,4 @@ export declare class Product {
     description: string;
     unitOfMeasure: string;
     active: boolean;
-    lots: any;
 }

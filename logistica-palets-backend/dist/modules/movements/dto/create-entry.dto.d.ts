@@ -1,11 +1,15 @@
-export declare class EntryItemDto {
-    palletCode: string;
-    lotId: string;
-    locationId: string;
-    quantity: number;
-}
 export declare class CreateEntryDto {
-    reference?: string;
+    date?: string;
+    productId: string;
+    quantity: number;
+    pallets?: number;
+    warehouseId?: string;
+    locationId?: string;
+    documentNumber?: string;
+    supplier?: string;
+    carrier?: string;
+    driver?: string;
     notes?: string;
-    items: EntryItemDto[];
+    palletId?: string;
+    lotId?: string;
 }

@@ -18,6 +18,8 @@ const movements_service_1 = require("./movements.service");
 const create_entry_dto_1 = require("./dto/create-entry.dto");
 const create_exit_dto_1 = require("./dto/create-exit.dto");
 const create_transfer_dto_1 = require("./dto/create-transfer.dto");
+const create_movement_dto_1 = require("./dto/create-movement.dto");
+const movements_query_dto_1 = require("./dto/movements-query.dto");
 const jwt_auth_guard_1 = require("../auth/guards/jwt-auth.guard");
 const roles_guard_1 = require("../auth/roles/roles.guard");
 const roles_decorator_1 = require("../auth/roles/roles.decorator");
@@ -25,17 +27,29 @@ let MovementsController = class MovementsController {
     constructor(service) {
         this.service = service;
     }
-    createEntry(dto) {
-        return this.service.createEntry(dto);
+    create(dto, req) {
+        return this.service.create(dto, req.user.userId);
     }
-    createExit(dto) {
-        return this.service.createExit(dto);
+    createEntry(dto, req) {
+        return this.service.create({ ...dto, type: 'ENTRY' }, req.user.userId);
     }
-    createTransfer(dto) {
-        return this.service.createTransfer(dto);
+    createExit(dto, req) {
+        return this.service.create({ ...dto, type: 'EXIT' }, req.user.userId);
     }
-    findAll() {
-        return this.service.findAll();
+    createTransfer(dto, req) {
+        return this.service.create({ ...dto, type: 'TRANSFER' }, req.user.userId);
+    }
+    createAdjustmentIn(dto, req) {
+        return this.service.create({ ...dto, type: 'ADJUSTMENT_IN' }, req.user.userId);
+    }
+    createAdjustmentOut(dto, req) {
+        return this.service.create({ ...dto, type: 'ADJUSTMENT_OUT' }, req.user.userId);
+    }
+    createReprocess(dto, req) {
+        return this.service.create({ ...dto, type: 'REPROCESS' }, req.user.userId);
+    }
+    findAll(query) {
+        return this.service.findAll(query);
     }
     findOne(id) {
         return this.service.findOne(id);
@@ -43,34 +57,74 @@ let MovementsController = class MovementsController {
 };
 exports.MovementsController = MovementsController;
 __decorate([
+    (0, common_1.Post)(),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR'),
+    __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [create_movement_dto_1.CreateMovementDto, Object]),
+    __metadata("design:returntype", void 0)
+], MovementsController.prototype, "create", null);
+__decorate([
     (0, common_1.Post)('entry'),
     (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR'),
     __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_1.Req)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [create_entry_dto_1.CreateEntryDto]),
+    __metadata("design:paramtypes", [create_entry_dto_1.CreateEntryDto, Object]),
     __metadata("design:returntype", void 0)
 ], MovementsController.prototype, "createEntry", null);
 __decorate([
     (0, common_1.Post)('exit'),
     (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR'),
     __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_1.Req)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [create_exit_dto_1.CreateExitDto]),
+    __metadata("design:paramtypes", [create_exit_dto_1.CreateExitDto, Object]),
     __metadata("design:returntype", void 0)
 ], MovementsController.prototype, "createExit", null);
 __decorate([
     (0, common_1.Post)('transfer'),
-    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR'),
     __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_1.Req)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [create_transfer_dto_1.CreateTransferDto]),
+    __metadata("design:paramtypes", [create_transfer_dto_1.CreateTransferDto, Object]),
     __metadata("design:returntype", void 0)
 ], MovementsController.prototype, "createTransfer", null);
 __decorate([
+    (0, common_1.Post)('adjustment-in'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER'),
+    __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [create_entry_dto_1.CreateEntryDto, Object]),
+    __metadata("design:returntype", void 0)
+], MovementsController.prototype, "createAdjustmentIn", null);
+__decorate([
+    (0, common_1.Post)('adjustment-out'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER'),
+    __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [create_exit_dto_1.CreateExitDto, Object]),
+    __metadata("design:returntype", void 0)
+], MovementsController.prototype, "createAdjustmentOut", null);
+__decorate([
+    (0, common_1.Post)('reprocess'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR'),
+    __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [create_entry_dto_1.CreateEntryDto, Object]),
+    __metadata("design:returntype", void 0)
+], MovementsController.prototype, "createReprocess", null);
+__decorate([
     (0, common_1.Get)(),
     (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'AUDITOR'),
+    __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [movements_query_dto_1.MovementsQueryDto]),
     __metadata("design:returntype", void 0)
 ], MovementsController.prototype, "findAll", null);
 __decorate([

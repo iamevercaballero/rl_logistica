@@ -15,50 +15,101 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ReportsController = void 0;
 const common_1 = require("@nestjs/common");
 const reports_service_1 = require("./reports.service");
+const stock_query_dto_1 = require("./dto/stock-query.dto");
+const movements_query_dto_1 = require("./dto/movements-query.dto");
+const trace_query_dto_1 = require("./dto/trace-query.dto");
+const kpis_query_dto_1 = require("./dto/kpis-query.dto");
+const daily_stock_query_dto_1 = require("./dto/daily-stock-query.dto");
+const differences_sap_query_dto_1 = require("./dto/differences-sap-query.dto");
+const upsert_sap_stock_dto_1 = require("./dto/upsert-sap-stock.dto");
+const jwt_auth_guard_1 = require("../auth/guards/jwt-auth.guard");
+const roles_guard_1 = require("../auth/roles/roles.guard");
+const roles_decorator_1 = require("../auth/roles/roles.decorator");
 let ReportsController = class ReportsController {
     constructor(service) {
         this.service = service;
     }
-    stock() {
-        return this.service.stock();
+    stock(query) {
+        return this.service.stock(query);
     }
-    movements() {
-        return this.service.movements();
+    movements(query) {
+        return this.service.movements(query);
     }
-    trace(palletId) {
-        return this.service.trace(palletId);
+    trace(query) {
+        return this.service.trace(query.materialId);
     }
-    kpis() {
-        return this.service.kpis();
+    dailyStock(query) {
+        return this.service.dailyStock(query);
+    }
+    upsertSapStock(dto) {
+        return this.service.upsertSapStock(dto);
+    }
+    differencesSap(query) {
+        return this.service.differencesSap(query);
+    }
+    kpis(query) {
+        return this.service.kpis(query);
     }
 };
 exports.ReportsController = ReportsController;
 __decorate([
     (0, common_1.Get)('stock'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR'),
+    __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [stock_query_dto_1.StockQueryDto]),
     __metadata("design:returntype", void 0)
 ], ReportsController.prototype, "stock", null);
 __decorate([
     (0, common_1.Get)('movements'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR'),
+    __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [movements_query_dto_1.ReportsMovementsQueryDto]),
     __metadata("design:returntype", void 0)
 ], ReportsController.prototype, "movements", null);
 __decorate([
     (0, common_1.Get)('trace'),
-    __param(0, (0, common_1.Query)('palletId')),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR'),
+    __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [trace_query_dto_1.TraceQueryDto]),
     __metadata("design:returntype", void 0)
 ], ReportsController.prototype, "trace", null);
 __decorate([
-    (0, common_1.Get)('kpis'),
+    (0, common_1.Get)('daily-stock'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR'),
+    __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [daily_stock_query_dto_1.DailyStockQueryDto]),
+    __metadata("design:returntype", void 0)
+], ReportsController.prototype, "dailyStock", null);
+__decorate([
+    (0, common_1.Post)('sap-stock'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER'),
+    __param(0, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [upsert_sap_stock_dto_1.UpsertSapStockDto]),
+    __metadata("design:returntype", void 0)
+], ReportsController.prototype, "upsertSapStock", null);
+__decorate([
+    (0, common_1.Get)('differences-sap'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'AUDITOR'),
+    __param(0, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [differences_sap_query_dto_1.DifferencesSapQueryDto]),
+    __metadata("design:returntype", void 0)
+], ReportsController.prototype, "differencesSap", null);
+__decorate([
+    (0, common_1.Get)('kpis'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'AUDITOR'),
+    __param(0, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [kpis_query_dto_1.KpisQueryDto]),
     __metadata("design:returntype", void 0)
 ], ReportsController.prototype, "kpis", null);
 exports.ReportsController = ReportsController = __decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
     (0, common_1.Controller)('reports'),
     __metadata("design:paramtypes", [reports_service_1.ReportsService])
 ], ReportsController);

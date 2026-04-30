@@ -108,10 +108,28 @@ export default function PalletsPage() {
     }
   }
 
+  const STATUS_LABEL: Record<string, string> = {
+    AVAILABLE: "Disponible",
+    BLOCKED: "Bloqueado",
+    DAMAGED: "Dañado",
+    IN_TRANSIT: "En tránsito",
+  };
+
+  const STATUS_BADGE: Record<string, string> = {
+    AVAILABLE: "badge badge--entry",
+    BLOCKED: "badge badge--adj-out",
+    DAMAGED: "badge badge--exit",
+    IN_TRANSIT: "badge badge--transfer",
+  };
+
   return (
     <div>
-      <h2>Palets</h2>
-      {!allowCreate ? <p style={{ color: "#6b7280" }}>Modo lectura.</p> : null}
+      <div style={{ marginBottom: 20 }}>
+        <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.5, marginBottom: 4 }}>Palets</h1>
+        <p style={{ color: "var(--muted)", fontSize: 14, marginBottom: 0 }}>
+          Gestión de palets individuales. {!allowCreate ? "Modo lectura." : ""}
+        </p>
+      </div>
 
       <form onSubmit={handleCreate} style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
         <input className="input" disabled={!allowCreate || saving} value={code} onChange={(event) => setCode(event.target.value)} placeholder="Código" />
@@ -125,10 +143,10 @@ export default function PalletsPage() {
           placeholder="Cantidad"
         />
         <select className="input" disabled={!allowCreate || saving} value={status} onChange={(event) => setStatus(event.target.value)}>
-          <option value="AVAILABLE">AVAILABLE</option>
-          <option value="BLOCKED">BLOCKED</option>
-          <option value="DAMAGED">DAMAGED</option>
-          <option value="IN_TRANSIT">IN_TRANSIT</option>
+          <option value="AVAILABLE">Disponible</option>
+          <option value="BLOCKED">Bloqueado</option>
+          <option value="DAMAGED">Dañado</option>
+          <option value="IN_TRANSIT">En tránsito</option>
         </select>
         <select className="input" disabled={!allowCreate || saving || lots.length === 0} value={lotId} onChange={(event) => setLotId(event.target.value)}>
           <option value="">Seleccionar lote</option>
@@ -177,18 +195,22 @@ export default function PalletsPage() {
                 <th>Código</th>
                 <th>Cantidad</th>
                 <th>Estado</th>
-                <th>ID</th>
                 <th />
               </tr>
             </thead>
             <tbody>
               {items.map((item) => (
                 <tr key={item.id}>
-                  <td>{item.code}</td>
-                  <td>{item.quantity}</td>
-                  <td>{item.status}</td>
-                  <td style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.id}</td>
-                  <td>{allowDelete ? <button className="btn" onClick={() => handleDelete(item)}>Eliminar</button> : null}</td>
+                  <td><strong>{item.code}</strong></td>
+                  <td>{item.quantity.toLocaleString("es-AR")}</td>
+                  <td>
+                    <span className={STATUS_BADGE[item.status] ?? "badge"}>
+                      {STATUS_LABEL[item.status] ?? item.status}
+                    </span>
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    {allowDelete ? <button className="btn btn--danger" onClick={() => handleDelete(item)}>Eliminar</button> : null}
+                  </td>
                 </tr>
               ))}
             </tbody>

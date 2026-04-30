@@ -1,9 +1,15 @@
-export declare class ExitItemDto {
-    palletId: string;
-    quantity: number;
-}
 export declare class CreateExitDto {
-    reference?: string;
+    date?: string;
+    productId: string;
+    quantity: number;
+    pallets?: number;
+    warehouseId?: string;
+    locationId?: string;
+    documentNumber?: string;
+    carrier?: string;
+    driver?: string;
+    destination?: string;
     notes?: string;
-    items: ExitItemDto[];
+    palletId?: string;
+    lotId?: string;
 }

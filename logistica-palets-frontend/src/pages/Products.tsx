@@ -94,9 +94,12 @@ export default function ProductsPage() {
 
   return (
     <div>
-      <h2>Materiales</h2>
-      <p style={{ color: "#6b7280" }}>Se reutiliza el módulo técnico de productos, pero ahora modela materiales operativos.</p>
-      {!allowCreate ? <p style={{ color: "#6b7280" }}>Modo lectura.</p> : null}
+      <div style={{ marginBottom: 20 }}>
+        <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.5, marginBottom: 4 }}>Materiales</h1>
+        <p style={{ color: "var(--muted)", fontSize: 14, marginBottom: 0 }}>
+          Catálogo de materiales operativos. {!allowCreate ? "Modo lectura." : ""}
+        </p>
+      </div>
 
       <form onSubmit={handleCreate} style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
         <input className="input" disabled={!allowCreate || saving} value={code} onChange={(event) => setCode(event.target.value)} placeholder="Código material" />
@@ -121,14 +124,14 @@ export default function ProductsPage() {
         </button>
       </form>
 
-      {submitted && codeError ? <p style={{ color: "#b91c1c", marginTop: -4 }}>{codeError}</p> : null}
-      {submitted && descriptionError ? <p style={{ color: "#b91c1c", marginTop: -4 }}>{descriptionError}</p> : null}
-      {formError ? <p style={{ color: "#b91c1c" }}>{formError}</p> : null}
-      {loading ? <p>Cargando...</p> : null}
+      {submitted && codeError ? <p style={{ color: "#dc2626", marginTop: -4, fontSize: 13 }}>{codeError}</p> : null}
+      {submitted && descriptionError ? <p style={{ color: "#dc2626", marginTop: -4, fontSize: 13 }}>{descriptionError}</p> : null}
+      {formError ? <p style={{ color: "#dc2626", fontSize: 13 }}>{formError}</p> : null}
+      {loading ? <p style={{ color: "var(--muted)", fontSize: 14 }}>Cargando...</p> : null}
       {error ? (
-        <div>
-          <p style={{ color: "#b91c1c", marginBottom: 8 }}>No se pudo cargar.</p>
-          <button className="btn" onClick={refresh}>Reintentar</button>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <p style={{ color: "#dc2626", marginBottom: 0, fontSize: 13 }}>No se pudo cargar.</p>
+          <button className="btn btn--primary" onClick={refresh}>Reintentar</button>
         </div>
       ) : null}
 
@@ -142,20 +145,24 @@ export default function ProductsPage() {
                 <th>Código</th>
                 <th>Descripción</th>
                 <th>UM</th>
-                <th>Activo</th>
-                <th>ID</th>
+                <th>Estado</th>
                 <th />
               </tr>
             </thead>
             <tbody>
               {items.map((item) => (
                 <tr key={item.id}>
-                  <td>{item.code}</td>
+                  <td><strong>{item.code}</strong></td>
                   <td>{item.description}</td>
-                  <td>{item.unitOfMeasure ?? "-"}</td>
-                  <td>{item.active ? "Sí" : "No"}</td>
-                  <td style={{ maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.id}</td>
-                  <td>{allowDelete ? <button className="btn" onClick={() => handleDelete(item)}>Eliminar</button> : null}</td>
+                  <td><span className="badge">{item.unitOfMeasure ?? "-"}</span></td>
+                  <td>
+                    <span className={item.active ? "badge badge--entry" : "badge"}>
+                      {item.active ? "Activo" : "Inactivo"}
+                    </span>
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    {allowDelete ? <button className="btn btn--danger" onClick={() => handleDelete(item)}>Eliminar</button> : null}
+                  </td>
                 </tr>
               ))}
             </tbody>

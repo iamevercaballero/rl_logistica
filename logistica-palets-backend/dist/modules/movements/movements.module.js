@@ -13,15 +13,19 @@ const movements_service_1 = require("./movements.service");
 const movements_controller_1 = require("./movements.controller");
 const movement_entity_1 = require("./entities/movement.entity");
 const movement_detail_entity_1 = require("./entities/movement-detail.entity");
-const pallet_entity_1 = require("../pallets/entities/pallet.entity");
+const product_entity_1 = require("../products/entities/product.entity");
+const location_entity_1 = require("../locations/entities/location.entity");
+const warehouse_entity_1 = require("../warehouses/entities/warehouse.entity");
+const stock_entity_1 = require("../stocks/entities/stock.entity");
 let MovementsModule = class MovementsModule {
 };
 exports.MovementsModule = MovementsModule;
 exports.MovementsModule = MovementsModule = __decorate([
     (0, common_1.Module)({
-        imports: [typeorm_1.TypeOrmModule.forFeature([movement_entity_1.Movement, movement_detail_entity_1.MovementDetail, pallet_entity_1.Pallet])],
+        imports: [typeorm_1.TypeOrmModule.forFeature([movement_entity_1.Movement, movement_detail_entity_1.MovementDetail, product_entity_1.Product, location_entity_1.Location, warehouse_entity_1.Warehouse, stock_entity_1.Stock])],
         controllers: [movements_controller_1.MovementsController],
         providers: [movements_service_1.MovementsService],
+        exports: [movements_service_1.MovementsService],
     })
 ], MovementsModule);
 //# sourceMappingURL=movements.module.js.map

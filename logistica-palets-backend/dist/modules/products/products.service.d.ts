@@ -10,4 +10,5 @@ export declare class ProductsService {
     findOne(id: string): Promise<Product>;
     update(id: string, dto: UpdateProductDto): Promise<Product>;
     remove(id: string): Promise<Product>;
+    private ensureCodeAvailable;
 }

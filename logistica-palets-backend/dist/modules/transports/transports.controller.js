@@ -14,13 +14,12 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TransportsController = void 0;
 const common_1 = require("@nestjs/common");
-const transports_service_1 = require("./transports.service");
+const jwt_auth_guard_1 = require("../auth/guards/jwt-auth.guard");
+const roles_decorator_1 = require("../auth/roles/roles.decorator");
+const roles_guard_1 = require("../auth/roles/roles.guard");
 const create_transport_dto_1 = require("./dto/create-transport.dto");
 const update_transport_dto_1 = require("./dto/update-transport.dto");
-const common_2 = require("@nestjs/common");
-const jwt_auth_guard_1 = require("../auth/guards/jwt-auth.guard");
-const roles_guard_1 = require("../auth/roles/roles.guard");
-const roles_decorator_1 = require("../auth/roles/roles.decorator");
+const transports_service_1 = require("./transports.service");
 let TransportsController = class TransportsController {
     constructor(service) {
         this.service = service;
@@ -83,8 +82,7 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], TransportsController.prototype, "remove", null);
 exports.TransportsController = TransportsController = __decorate([
-    (0, common_1.Controller)('transports'),
-    (0, common_2.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
     (0, common_1.Controller)('transports'),
     __metadata("design:paramtypes", [transports_service_1.TransportsService])
 ], TransportsController);

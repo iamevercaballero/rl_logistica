@@ -7,7 +7,7 @@ export declare class AuthService {
     login(username: string, password: string): Promise<{
         access_token: string;
         user: {
-            id: string;
+            userId: string;
             username: string;
             role: import("../users/entities/user.entity").UserRole;
         };

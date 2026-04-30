@@ -10,31 +10,73 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CreateTransferDto = void 0;
+const class_transformer_1 = require("class-transformer");
 const class_validator_1 = require("class-validator");
 class CreateTransferDto {
 }
 exports.CreateTransferDto = CreateTransferDto;
 __decorate([
-    (0, class_validator_1.IsUUID)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsDateString)(),
     __metadata("design:type", String)
-], CreateTransferDto.prototype, "palletId", void 0);
+], CreateTransferDto.prototype, "date", void 0);
 __decorate([
     (0, class_validator_1.IsUUID)(),
     __metadata("design:type", String)
-], CreateTransferDto.prototype, "destinationLocationId", void 0);
+], CreateTransferDto.prototype, "productId", void 0);
 __decorate([
+    (0, class_transformer_1.Type)(() => Number),
     (0, class_validator_1.IsInt)(),
     (0, class_validator_1.Min)(1),
     __metadata("design:type", Number)
 ], CreateTransferDto.prototype, "quantity", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.IsString)(),
+    (0, class_transformer_1.Type)(() => Number),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    __metadata("design:type", Number)
+], CreateTransferDto.prototype, "pallets", void 0);
+__decorate([
+    (0, class_validator_1.IsUUID)(),
     __metadata("design:type", String)
-], CreateTransferDto.prototype, "reference", void 0);
+], CreateTransferDto.prototype, "fromLocationId", void 0);
+__decorate([
+    (0, class_validator_1.IsUUID)(),
+    __metadata("design:type", String)
+], CreateTransferDto.prototype, "toLocationId", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(80),
+    __metadata("design:type", String)
+], CreateTransferDto.prototype, "documentNumber", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], CreateTransferDto.prototype, "carrier", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], CreateTransferDto.prototype, "driver", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(500),
     __metadata("design:type", String)
 ], CreateTransferDto.prototype, "notes", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsUUID)(),
+    __metadata("design:type", String)
+], CreateTransferDto.prototype, "palletId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsUUID)(),
+    __metadata("design:type", String)
+], CreateTransferDto.prototype, "lotId", void 0);
 //# sourceMappingURL=create-transfer.dto.js.map

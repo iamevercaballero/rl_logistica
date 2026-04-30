@@ -23,21 +23,25 @@ __decorate([
     __metadata("design:type", String)
 ], MovementDetail.prototype, "movementId", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'uuid' }),
-    __metadata("design:type", String)
+    (0, typeorm_1.Column)({ type: 'uuid', nullable: true }),
+    __metadata("design:type", Object)
 ], MovementDetail.prototype, "palletId", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'uuid' }),
-    __metadata("design:type", String)
+    (0, typeorm_1.Column)({ type: 'uuid', nullable: true }),
+    __metadata("design:type", Object)
 ], MovementDetail.prototype, "lotId", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'uuid' }),
-    __metadata("design:type", String)
+    (0, typeorm_1.Column)({ type: 'uuid', nullable: true }),
+    __metadata("design:type", Object)
 ], MovementDetail.prototype, "locationId", void 0);
 __decorate([
-    (0, typeorm_1.Column)('int'),
+    (0, typeorm_1.Column)({ type: 'int' }),
     __metadata("design:type", Number)
 ], MovementDetail.prototype, "quantity", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', nullable: true }),
+    __metadata("design:type", Object)
+], MovementDetail.prototype, "role", void 0);
 exports.MovementDetail = MovementDetail = __decorate([
     (0, typeorm_1.Entity)('movement_details')
 ], MovementDetail);

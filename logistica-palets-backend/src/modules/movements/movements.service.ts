@@ -154,7 +154,7 @@ export class MovementsService {
 
     const [data, totalRow] = await Promise.all([
       qb.clone().offset((page - 1) * limit).limit(limit).getRawMany(),
-      qb.clone().select('COUNT(movement.id)', 'total').getRawOne(),
+      qb.clone().select('COUNT(movement.id)', 'total').orderBy().getRawOne(),
     ]);
 
     return {

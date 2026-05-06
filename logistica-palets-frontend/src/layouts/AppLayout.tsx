@@ -69,6 +69,19 @@ const Icons: Record<string, React.ReactElement> = {
       <line x1="6" y1="20" x2="6" y2="14" />
     </svg>
   ),
+  billing: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="5" width="20" height="14" rx="2" />
+      <line x1="2" y1="10" x2="22" y2="10" />
+    </svg>
+  ),
+  seed: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="16 16 12 12 8 16" />
+      <line x1="12" y1="12" x2="12" y2="21" />
+      <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
+    </svg>
+  ),
 };
 
 const modules = [
@@ -81,6 +94,7 @@ const modules = [
   { key: "movements" as const, label: "Movimientos", path: "/movements" },
   { key: "transports" as const, label: "Transportes", path: "/transports" },
   { key: "reports" as const, label: "Reportes", path: "/reports" },
+  { key: "billing" as const, label: "Facturación", path: "/billing" },
 ];
 
 export default function AppLayout() {
@@ -125,6 +139,18 @@ export default function AppLayout() {
               {m.label}
             </NavLink>
           ))}
+          {user.role === "ADMIN" && (
+            <NavLink
+              to="/seed"
+              className={({ isActive }) =>
+                `sidebar-link${isActive ? " sidebar-link--active" : ""}`
+              }
+              style={{ opacity: 0.7, borderTop: "1px solid rgba(255,255,255,.08)", marginTop: 8, paddingTop: 12 }}
+            >
+              {Icons["seed"]}
+              Carga masiva
+            </NavLink>
+          )}
         </nav>
 
         <div className="sidebar-footer">

@@ -20,6 +20,8 @@ const pallets_module_1 = require("./modules/pallets/pallets.module");
 const movements_module_1 = require("./modules/movements/movements.module");
 const transports_module_1 = require("./modules/transports/transports.module");
 const reports_module_1 = require("./modules/reports/reports.module");
+const billing_module_1 = require("./modules/billing/billing.module");
+const seed_module_1 = require("./modules/seed/seed.module");
 const app_controller_1 = require("./app.controller");
 let AppModule = class AppModule {
 };
@@ -51,7 +53,9 @@ exports.AppModule = AppModule = __decorate([
             pallets_module_1.PalletsModule,
             movements_module_1.MovementsModule,
             transports_module_1.TransportsModule,
-            reports_module_1.ReportsModule
+            reports_module_1.ReportsModule,
+            billing_module_1.BillingModule,
+            seed_module_1.SeedModule,
         ],
         controllers: [app_controller_1.AppController],
     })

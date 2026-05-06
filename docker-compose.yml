@@ -36,8 +36,26 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN}
       NODE_ENV: production
+      ALLOW_SEED: "true"
+      # Datos del emisor (RL Logística) para facturación electrónica
+      EMISOR_RUC: ${EMISOR_RUC:-80000000}
+      EMISOR_DV: ${EMISOR_DV:-0}
+      EMISOR_RAZON_SOCIAL: ${EMISOR_RAZON_SOCIAL:-RL SERVICIO LOGISTICO SRL}
+      EMISOR_NOMBRE_FANTASIA: ${EMISOR_NOMBRE_FANTASIA:-RL Logística}
+      EMISOR_DIRECCION: ${EMISOR_DIRECCION:-Asunción, Paraguay}
+      EMISOR_RESPONSABLE: ${EMISOR_RESPONSABLE:-Gerente General}
+      # Timbrado asignado por la DNIT
+      FACTURA_TIMBRADO: ${FACTURA_TIMBRADO:-12345678}
+      FACTURA_VIGENCIA: ${FACTURA_VIGENCIA:-2026-12-31}
+      FACTURA_ESTABLECIMIENTO: ${FACTURA_ESTABLECIMIENTO:-001}
+      FACTURA_PUNTO_EXPEDICION: ${FACTURA_PUNTO_EXPEDICION:-001}
+      # SIFEN endpoints (dejar vacío para modo simulación)
+      SIFEN_URL: ${SIFEN_URL:-}
+      SIFEN_URL_CONSULTA: ${SIFEN_URL_CONSULTA:-}
     ports:
       - "3000:3000"
+    volumes:
+      - ./CONTROL DE STOCK RL LOG Actualizado.xlsx:/app/CONTROL DE STOCK RL LOG Actualizado.xlsx:ro
 
   frontend:
     build:

@@ -180,6 +180,13 @@ textarea.input {
 .badge--role-operator { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }
 .badge--role-auditor  { background: #f5f3ff; color: #7c3aed; border-color: #ddd6fe; }
 
+/* Invoice estado badges */
+.badge--estado-borrador  { background: #f8fafc; color: #64748b; border-color: #e2e8f0; }
+.badge--estado-pendiente { background: #fefce8; color: #ca8a04; border-color: #fef08a; }
+.badge--estado-aprobado  { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; }
+.badge--estado-rechazado { background: #fef2f2; color: #dc2626; border-color: #fecaca; }
+.badge--estado-cancelado { background: #f1f5f9; color: #94a3b8; border-color: #cbd5e1; text-decoration: line-through; }
+
 /* ── Tabs ── */
 .tabs {
   display: flex;
@@ -477,3 +484,53 @@ textarea.input {
 /* ── Diff color ── */
 .diff-positive { color: #16a34a; font-weight: 700; }
 .diff-negative { color: #dc2626; font-weight: 700; }
+
+/* ── Alerts / form feedback ── */
+.form-error {
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 13px;
+}
+.form-success {
+  background: #f0fdf4;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+/* ── Empty state (alias) ── */
+.empty-state {
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 40px;
+  text-align: center;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+/* ── Modal ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+}
+.modal {
+  background: var(--panel);
+  border-radius: calc(var(--radius) * 1.5);
+  padding: 28px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.25);
+}

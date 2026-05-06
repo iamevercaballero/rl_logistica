@@ -15,6 +15,8 @@ import ProductsPage from "./pages/Products";
 import ReportsPage from "./pages/Reports";
 import TransportsPage from "./pages/Transports";
 import WarehousesPage from "./pages/Warehouses";
+import BillingPage from "./pages/Billing";
+import SeedPage from "./pages/Seed";
 
 const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -87,6 +89,15 @@ const router = createBrowserRouter([
           </RequireRole>
         ),
       },
+      {
+        path: "billing",
+        element: (
+          <RequireRole module="billing">
+            <BillingPage />
+          </RequireRole>
+        ),
+      },
+      { path: "seed", element: <SeedPage /> },
       { path: "*", element: <Navigate to="/" replace /> },
     ],
   },

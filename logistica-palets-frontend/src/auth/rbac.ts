@@ -7,7 +7,8 @@ export type ModuleKey =
   | "pallets"
   | "movements"
   | "transports"
-  | "reports";
+  | "reports"
+  | "billing";
 
 type ModulePermissions = {
   read: Role[];
@@ -64,6 +65,12 @@ export const PERMS: Record<ModuleKey, ModulePermissions> = {
     create: [],
     update: [],
     remove: [],
+  },
+  billing: {
+    read: ["ADMIN", "MANAGER", "AUDITOR"],
+    create: ["ADMIN", "MANAGER"],
+    update: ["ADMIN", "MANAGER"],
+    remove: ["ADMIN"],
   },
 };
 

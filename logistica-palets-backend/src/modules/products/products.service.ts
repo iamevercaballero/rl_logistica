@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { ILike, Repository } from 'typeorm';
 import { Product } from './entities/product.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -23,7 +23,15 @@ export class ProductsService {
     return this.productRepo.save(product);
   }
 
-  findAll() {
+  findAll(search?: string) {
+    if (search?.trim()) {
+      const q = `%${search.trim()}%`;
+      return this.productRepo.find({
+        where: [{ code: ILike(q) }, { description: ILike(q) }],
+        order: { code: 'ASC' },
+        take: 50,
+      });
+    }
     return this.productRepo.find({ order: { code: 'ASC' } });
   }
 
@@ -53,6 +61,19 @@ export class ProductsService {
   async remove(id: string) {
     const product = await this.findOne(id);
     return this.productRepo.remove(product);
+  }
+
+  /** Productos con stock por debajo del mínimo configurado */
+  async findBelowMinimum() {
+    return this.productRepo
+      .createQueryBuilder('p')
+      .innerJoin('stocks', 's', 's."productId" = p.id')
+      .where('p."stockMinimo" IS NOT NULL')
+      .groupBy('p.id')
+      .having('SUM(s."currentQuantity") < p."stockMinimo"')
+      .select(['p.id AS id', 'p.code AS code', 'p.description AS description',
+               'p."stockMinimo" AS "stockMinimo"', 'SUM(s."currentQuantity") AS "stockActual"'])
+      .getRawMany();
   }
 
   private async ensureCodeAvailable(code: string, excludeId?: string) {

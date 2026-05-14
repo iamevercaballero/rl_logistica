@@ -24,8 +24,11 @@ let LotsController = class LotsController {
     constructor(service) {
         this.service = service;
     }
-    findAll() {
-        return this.service.findAll();
+    findAll(productId, sapLot) {
+        return this.service.findAll(productId, sapLot);
+    }
+    fefo(productId, sapLot, locationId) {
+        return this.service.findFefo(productId, sapLot, locationId);
     }
     findOne(id) {
         return this.service.findOne(id);
@@ -44,10 +47,22 @@ exports.LotsController = LotsController;
 __decorate([
     (0, common_1.Get)(),
     (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR'),
+    __param(0, (0, common_1.Query)('productId')),
+    __param(1, (0, common_1.Query)('sapLot')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [String, String]),
     __metadata("design:returntype", void 0)
 ], LotsController.prototype, "findAll", null);
+__decorate([
+    (0, common_1.Get)('fefo'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR'),
+    __param(0, (0, common_1.Query)('productId')),
+    __param(1, (0, common_1.Query)('sapLot')),
+    __param(2, (0, common_1.Query)('locationId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, String]),
+    __metadata("design:returntype", void 0)
+], LotsController.prototype, "fefo", null);
 __decorate([
     (0, common_1.Get)(':id'),
     (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR'),

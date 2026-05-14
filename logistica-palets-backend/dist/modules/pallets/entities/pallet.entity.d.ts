@@ -3,6 +3,6 @@ export declare class Pallet {
     code: string;
     lotId: string;
     quantity: number;
-    currentLocationId: string;
+    currentLocationId?: string | null;
     status: string;
 }

@@ -9,7 +9,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Movement = exports.movementTypes = void 0;
+exports.Movement = exports.adjustmentReasons = exports.movementStatuses = exports.movementTypes = void 0;
 const typeorm_1 = require("typeorm");
 exports.movementTypes = [
     'ENTRY',
@@ -17,7 +17,16 @@ exports.movementTypes = [
     'TRANSFER',
     'ADJUSTMENT_IN',
     'ADJUSTMENT_OUT',
-    'REPROCESS',
+];
+exports.movementStatuses = ['NORMAL', 'PENDING_REGULARIZATION'];
+exports.adjustmentReasons = [
+    'DIFERENCIA_INVENTARIO',
+    'CONTEO_FISICO',
+    'MERMA',
+    'PERDIDA',
+    'ROTURA',
+    'SOBRANTE',
+    'OTRO',
 ];
 let Movement = class Movement {
 };
@@ -106,6 +115,22 @@ __decorate([
     (0, typeorm_1.Column)({ type: 'uuid' }),
     __metadata("design:type", String)
 ], Movement.prototype, "createdById", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'uuid', nullable: true }),
+    __metadata("design:type", Object)
+], Movement.prototype, "encargadoRecepcionId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', default: 'NORMAL' }),
+    __metadata("design:type", String)
+], Movement.prototype, "status", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', nullable: true }),
+    __metadata("design:type", Object)
+], Movement.prototype, "adjustmentReason", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', nullable: true }),
+    __metadata("design:type", Object)
+], Movement.prototype, "adjustmentCategory", void 0);
 __decorate([
     (0, typeorm_1.Column)({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' }),
     __metadata("design:type", Date)

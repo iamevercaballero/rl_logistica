@@ -6,10 +6,23 @@ export const movementTypes = [
   'TRANSFER',
   'ADJUSTMENT_IN',
   'ADJUSTMENT_OUT',
-  'REPROCESS',
 ] as const;
 
 export type MovementType = (typeof movementTypes)[number];
+
+export const movementStatuses = ['NORMAL', 'PENDING_REGULARIZATION'] as const;
+export type MovementStatus = (typeof movementStatuses)[number];
+
+export const adjustmentReasons = [
+  'DIFERENCIA_INVENTARIO',
+  'CONTEO_FISICO',
+  'MERMA',
+  'PERDIDA',
+  'ROTURA',
+  'SOBRANTE',
+  'OTRO',
+] as const;
+export type AdjustmentReason = (typeof adjustmentReasons)[number];
 
 @Entity('movements')
 export class Movement {
@@ -75,6 +88,18 @@ export class Movement {
 
   @Column({ type: 'uuid' })
   createdById: string;
+
+  @Column({ type: 'uuid', nullable: true })
+  encargadoRecepcionId?: string | null;
+
+  @Column({ type: 'varchar', default: 'NORMAL' })
+  status: MovementStatus;
+
+  @Column({ type: 'varchar', nullable: true })
+  adjustmentReason?: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  adjustmentCategory?: string | null;
 
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   createdAt: Date;

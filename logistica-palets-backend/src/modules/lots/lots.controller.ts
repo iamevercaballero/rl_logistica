@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Delete,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { LotsService } from './lots.service';
@@ -20,11 +21,25 @@ import { Roles } from '../auth/roles/roles.decorator';
 export class LotsController {
   constructor(private readonly service: LotsService) {}
 
-  // ✅ READ: todos
   @Get()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
-  findAll() {
-    return this.service.findAll();
+  findAll(
+    @Query('productId') productId?: string,
+    @Query('sapLot') sapLot?: string,
+  ) {
+    return this.service.findAll(productId, sapLot);
+  }
+
+  /** FEFO: lotes con stock disponible ordenados por vencimiento próximo.
+   *  Filtra por productId, sapLot, o locationId (para selección de pallets en transferencias). */
+  @Get('fefo')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  fefo(
+    @Query('productId') productId?: string,
+    @Query('sapLot') sapLot?: string,
+    @Query('locationId') locationId?: string,
+  ) {
+    return this.service.findFefo(productId, sapLot, locationId);
   }
 
   @Get(':id')

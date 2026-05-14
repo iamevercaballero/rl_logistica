@@ -24,8 +24,8 @@ let PalletsController = class PalletsController {
     constructor(service) {
         this.service = service;
     }
-    findAll() {
-        return this.service.findAll();
+    findAll(lotId, status) {
+        return this.service.findAll(lotId, status);
     }
     findOne(id) {
         return this.service.findOne(id);
@@ -44,8 +44,10 @@ exports.PalletsController = PalletsController;
 __decorate([
     (0, common_1.Get)(),
     (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR'),
+    __param(0, (0, common_1.Query)('lotId')),
+    __param(1, (0, common_1.Query)('status')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [String, String]),
     __metadata("design:returntype", void 0)
 ], PalletsController.prototype, "findAll", null);
 __decorate([

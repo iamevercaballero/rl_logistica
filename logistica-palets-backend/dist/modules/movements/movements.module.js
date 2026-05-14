@@ -13,16 +13,19 @@ const movements_service_1 = require("./movements.service");
 const movements_controller_1 = require("./movements.controller");
 const movement_entity_1 = require("./entities/movement.entity");
 const movement_detail_entity_1 = require("./entities/movement-detail.entity");
+const regularization_log_entity_1 = require("./entities/regularization-log.entity");
 const product_entity_1 = require("../products/entities/product.entity");
 const location_entity_1 = require("../locations/entities/location.entity");
 const warehouse_entity_1 = require("../warehouses/entities/warehouse.entity");
 const stock_entity_1 = require("../stocks/entities/stock.entity");
+const lot_entity_1 = require("../lots/entities/lot.entity");
+const pallet_entity_1 = require("../pallets/entities/pallet.entity");
 let MovementsModule = class MovementsModule {
 };
 exports.MovementsModule = MovementsModule;
 exports.MovementsModule = MovementsModule = __decorate([
     (0, common_1.Module)({
-        imports: [typeorm_1.TypeOrmModule.forFeature([movement_entity_1.Movement, movement_detail_entity_1.MovementDetail, product_entity_1.Product, location_entity_1.Location, warehouse_entity_1.Warehouse, stock_entity_1.Stock])],
+        imports: [typeorm_1.TypeOrmModule.forFeature([movement_entity_1.Movement, movement_detail_entity_1.MovementDetail, regularization_log_entity_1.RegularizationLog, product_entity_1.Product, location_entity_1.Location, warehouse_entity_1.Warehouse, stock_entity_1.Stock, lot_entity_1.Lot, pallet_entity_1.Pallet])],
         controllers: [movements_controller_1.MovementsController],
         providers: [movements_service_1.MovementsService],
         exports: [movements_service_1.MovementsService],

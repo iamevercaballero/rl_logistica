@@ -12,6 +12,8 @@ import {
   type StockReportResponse,
   type TraceReportResponse,
 } from "../api/reports";
+import { getMovements, regularizeMovement, type Movement } from "../api/movements";
+import { listLots, type Lot } from "../api/lots";
 import { listWarehouses, type Warehouse } from "../api/warehouses";
 import { listProducts, type Product } from "../api/products";
 import { getFriendlyApiError } from "../utils/apiError";
@@ -22,7 +24,6 @@ const MOVE_LABEL: Record<string, string> = {
   TRANSFER: "Transferencia",
   ADJUSTMENT_IN: "Ajuste entrada",
   ADJUSTMENT_OUT: "Ajuste salida",
-  REPROCESS: "Reproceso",
 };
 
 const MOVE_BADGE: Record<string, string> = {
@@ -31,17 +32,16 @@ const MOVE_BADGE: Record<string, string> = {
   TRANSFER: "badge badge--transfer",
   ADJUSTMENT_IN: "badge badge--adj-in",
   ADJUSTMENT_OUT: "badge badge--adj-out",
-  REPROCESS: "badge badge--reprocess",
 };
 
 const BAR_COLORS = ["#2563eb", "#7c3aed", "#059669", "#d97706", "#dc2626", "#0891b2"];
 
-type Tab = "stock" | "movimientos" | "diario" | "sap" | "trazabilidad";
+type Tab = "stock" | "movimientos" | "lotes" | "pendientes" | "diario" | "sap" | "trazabilidad";
 
 type MovementFilters = {
   warehouseId: string;
   productId: string;
-  type: "" | "ENTRY" | "EXIT" | "TRANSFER" | "ADJUSTMENT_IN" | "ADJUSTMENT_OUT" | "REPROCESS";
+  type: "" | "ENTRY" | "EXIT" | "TRANSFER" | "ADJUSTMENT_IN" | "ADJUSTMENT_OUT";
   dateFrom: string;
   dateTo: string;
   search: string;
@@ -51,27 +51,77 @@ const initialFilters: MovementFilters = {
   warehouseId: "", productId: "", type: "", dateFrom: "", dateTo: "", search: "",
 };
 
+type RegPayload = {
+  reason: string;
+  documentNumber: string;
+  supplier: string;
+  carrier: string;
+  driver: string;
+  destination: string;
+  notes: string;
+  sapLot: string;
+  fechaVencimiento: string;
+  fechaFabricacion: string;
+  proveedor: string;
+};
+
+const emptyReg: RegPayload = {
+  reason: "", documentNumber: "", supplier: "", carrier: "",
+  driver: "", destination: "", notes: "", sapLot: "",
+  fechaVencimiento: "", fechaFabricacion: "", proveedor: "",
+};
+
 export default function ReportsPage() {
   const today = new Date().toISOString().slice(0, 10);
   const [activeTab, setActiveTab] = useState<Tab>("stock");
+
+  // Shared catalog data
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+
+  // Stock tab
   const [stock, setStock] = useState<StockReportResponse | null>(null);
   const [stockWarehouseId, setStockWarehouseId] = useState("");
+
+  // Historial tab
   const [movements, setMovements] = useState<ReportMovementRow[]>([]);
   const [movementsMeta, setMovementsMeta] = useState({ page: 1, limit: 20, total: 0, totalPages: 1 });
   const [filters, setFilters] = useState<MovementFilters>(initialFilters);
   const [appliedFilters, setAppliedFilters] = useState<MovementFilters>(initialFilters);
+
+  // Lotes & SAP tab
+  const [lotSapSearch, setLotSapSearch] = useState("");
+  const [lotProductSearch, setLotProductSearch] = useState("");
+  const [lotResults, setLotResults] = useState<Lot[]>([]);
+  const [lotLoaded, setLotLoaded] = useState(false);
+  const [lotError, setLotError] = useState("");
+
+  // Pendientes tab
+  const [pendingMovements, setPendingMovements] = useState<Movement[]>([]);
+  const [pendingLoaded, setPendingLoaded] = useState(false);
+  const [pendingError, setPendingError] = useState("");
+  const [regModal, setRegModal] = useState<{ id: string; label: string } | null>(null);
+  const [regForm, setRegForm] = useState<RegPayload>(emptyReg);
+  const [regError, setRegError] = useState("");
+  const [regLoading, setRegLoading] = useState(false);
+
+  // Trace tab
   const [traceMaterialId, setTraceMaterialId] = useState("");
   const [traceResult, setTraceResult] = useState<TraceReportResponse | null>(null);
+  const [traceError, setTraceError] = useState("");
+
+  // Daily / SAP tabs
   const [dailyDate, setDailyDate] = useState(today);
   const [dailyStock, setDailyStock] = useState<DailyStockRow[]>([]);
   const [differencesSap, setDifferencesSap] = useState<DailyStockRow[]>([]);
   const [sapForm, setSapForm] = useState({ date: today, productId: "", warehouseId: "", sapQuantity: "" });
+  const [sapError, setSapError] = useState("");
+
+  // Global loading / error
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [traceError, setTraceError] = useState("");
-  const [sapError, setSapError] = useState("");
+
+  // ── Data loaders ──────────────────────────────────────────────────────────
 
   const loadStock = useCallback(async (warehouseId?: string) => {
     const data = await getStockReport(warehouseId);
@@ -101,6 +151,18 @@ export default function ReportsPage() {
     setDifferencesSap(diff);
   }, []);
 
+  const loadPending = useCallback(async () => {
+    setPendingError("");
+    try {
+      const res = await getMovements({ status: "PENDING_REGULARIZATION", limit: 100 });
+      setPendingMovements(res.data);
+    } catch (err) {
+      setPendingError(getFriendlyApiError(err));
+    } finally {
+      setPendingLoaded(true);
+    }
+  }, []);
+
   const loadInitial = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -127,6 +189,15 @@ export default function ReportsPage() {
     loadInitial().catch(() => undefined);
   }, [loadInitial]);
 
+  // Lazy-load pending regularizations on first visit to that tab
+  useEffect(() => {
+    if (activeTab === "pendientes" && !pendingLoaded) {
+      loadPending().catch(() => undefined);
+    }
+  }, [activeTab, loadPending, pendingLoaded]);
+
+  // ── Event handlers ────────────────────────────────────────────────────────
+
   async function handleApplyMovements() {
     setLoading(true);
     setError("");
@@ -137,6 +208,23 @@ export default function ReportsPage() {
       setError(getFriendlyApiError(err));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleLotSearch() {
+    setLotError("");
+    setLotLoaded(false);
+    try {
+      const results = await listLots(
+        lotProductSearch || undefined,
+        lotSapSearch.trim() || undefined,
+      );
+      setLotResults(results);
+    } catch (err) {
+      setLotError(getFriendlyApiError(err));
+      setLotResults([]);
+    } finally {
+      setLotLoaded(true);
     }
   }
 
@@ -174,25 +262,61 @@ export default function ReportsPage() {
     }
   }
 
+  async function handleRegularize() {
+    if (!regModal) return;
+    if (!regForm.reason.trim()) { setRegError("El motivo es obligatorio."); return; }
+    setRegLoading(true);
+    setRegError("");
+    try {
+      await regularizeMovement(regModal.id, {
+        reason: regForm.reason,
+        documentNumber: regForm.documentNumber || undefined,
+        supplier: regForm.supplier || undefined,
+        carrier: regForm.carrier || undefined,
+        driver: regForm.driver || undefined,
+        destination: regForm.destination || undefined,
+        notes: regForm.notes || undefined,
+        sapLot: regForm.sapLot || undefined,
+        fechaVencimiento: regForm.fechaVencimiento || undefined,
+        fechaFabricacion: regForm.fechaFabricacion || undefined,
+        proveedor: regForm.proveedor || undefined,
+      });
+      setRegModal(null);
+      setRegForm(emptyReg);
+      setPendingLoaded(false);
+      await loadPending();
+    } catch (err) {
+      setRegError(getFriendlyApiError(err));
+    } finally {
+      setRegLoading(false);
+    }
+  }
+
+  // ── Computed values ───────────────────────────────────────────────────────
+
   const stockChartData = useMemo(
     () => (stock?.byWarehouse ?? []).map((row) => ({ name: row.warehouseName || "Sin depósito", quantity: row.quantity })),
     [stock],
   );
 
   const tabs: { key: Tab; label: string }[] = [
-    { key: "stock", label: "Stock actual" },
+    { key: "stock",       label: "Stock actual" },
     { key: "movimientos", label: "Historial" },
-    { key: "diario", label: "Control diario" },
-    { key: "sap", label: "Diferencias SAP" },
-    { key: "trazabilidad", label: "Trazabilidad" },
+    { key: "lotes",       label: "Lotes & SAP" },
+    { key: "pendientes",  label: "Pendientes" },
+    { key: "diario",      label: "Control diario" },
+    { key: "sap",         label: "SAP" },
+    { key: "trazabilidad",label: "Trazabilidad" },
   ];
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div>
       <div style={{ marginBottom: 20 }}>
         <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.5, marginBottom: 4 }}>Reportes</h1>
         <p style={{ color: "var(--muted)", fontSize: 14, marginBottom: 0 }}>
-          Stock real, trazabilidad por material, control diario y diferencias con SAP.
+          Stock real, trazabilidad, lotes SAP, pendientes de regularización y control diario.
         </p>
       </div>
 
@@ -213,6 +337,11 @@ export default function ReportsPage() {
             onClick={() => setActiveTab(t.key)}
           >
             {t.label}
+            {t.key === "pendientes" && pendingMovements.length > 0 && (
+              <span style={{ marginLeft: 6, background: "#d97706", color: "#fff", borderRadius: 10, padding: "1px 7px", fontSize: 11, fontWeight: 700 }}>
+                {pendingMovements.length}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -307,13 +436,16 @@ export default function ReportsPage() {
               <option value="TRANSFER">Transferencia</option>
               <option value="ADJUSTMENT_IN">Ajuste entrada</option>
               <option value="ADJUSTMENT_OUT">Ajuste salida</option>
-              <option value="REPROCESS">Reproceso</option>
             </select>
             <input className="input" type="date" value={filters.dateFrom} onChange={(e) => setFilters((p) => ({ ...p, dateFrom: e.target.value }))} />
             <input className="input" type="date" value={filters.dateTo} onChange={(e) => setFilters((p) => ({ ...p, dateTo: e.target.value }))} />
             <input className="input" placeholder="Buscar" value={filters.search} onChange={(e) => setFilters((p) => ({ ...p, search: e.target.value }))} style={{ minWidth: 200 }} />
             <button className="btn btn--primary" onClick={handleApplyMovements}>Buscar</button>
-            <button className="btn" onClick={() => { setFilters(initialFilters); setAppliedFilters(initialFilters); loadMovements(1, movementsMeta.limit, initialFilters).catch(() => undefined); }}>Limpiar</button>
+            <button className="btn" onClick={() => {
+              setFilters(initialFilters);
+              setAppliedFilters(initialFilters);
+              loadMovements(1, movementsMeta.limit, initialFilters).catch(() => undefined);
+            }}>Limpiar</button>
           </div>
 
           {movements.length === 0 ? (
@@ -323,7 +455,8 @@ export default function ReportsPage() {
               <table className="table">
                 <thead>
                   <tr>
-                    <th>Fecha</th><th>Tipo</th><th>Material</th><th>Cantidad</th><th>Ubicación</th><th>Documento</th>
+                    <th>Fecha</th><th>Tipo</th><th>Material</th><th>Cantidad</th>
+                    <th>Ubicación</th><th>Documento</th><th>Proveedor</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -338,7 +471,8 @@ export default function ReportsPage() {
                           ? `${m.from?.locationCode ?? "-"} → ${m.to?.locationCode ?? "-"}`
                           : `${m.warehouse?.name ?? "-"} / ${m.location?.code ?? "-"}`}
                       </td>
-                      <td style={{ color: "var(--muted)", fontSize: 12 }}>{m.documentNumber || "-"}</td>
+                      <td style={{ color: "var(--muted)", fontSize: 12 }}>{m.documentNumber ?? "-"}</td>
+                      <td style={{ color: "var(--muted)", fontSize: 12 }}>{m.supplier ?? "-"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -361,6 +495,170 @@ export default function ReportsPage() {
                 </select>
               </div>
             </>
+          )}
+        </section>
+      )}
+
+      {/* ── Tab: Lotes & SAP ── */}
+      {activeTab === "lotes" && (
+        <section className="card">
+          <h3 style={{ marginTop: 0, fontSize: 15, fontWeight: 800, marginBottom: 4 }}>Consulta de lotes por código SAP</h3>
+          <p style={{ color: "var(--muted)", fontSize: 13, marginBottom: 16 }}>
+            Buscá lotes por su código SAP (ej. <code>Z051308201</code>) o filtrá por material.
+          </p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+            <input
+              className="input"
+              placeholder="Lote SAP (ej. Z051308201)"
+              value={lotSapSearch}
+              onChange={(e) => setLotSapSearch(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleLotSearch()}
+              style={{ minWidth: 220, fontFamily: "monospace" }}
+            />
+            <select
+              className="input"
+              value={lotProductSearch}
+              onChange={(e) => setLotProductSearch(e.target.value)}
+            >
+              <option value="">Todos los materiales</option>
+              {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.description}</option>)}
+            </select>
+            <button className="btn btn--primary" onClick={handleLotSearch}>Buscar</button>
+            <button className="btn" onClick={() => {
+              setLotSapSearch("");
+              setLotProductSearch("");
+              setLotResults([]);
+              setLotLoaded(false);
+              setLotError("");
+            }}>Limpiar</button>
+          </div>
+
+          {lotError && <p style={{ color: "#dc2626", fontSize: 13 }}>{lotError}</p>}
+          {!lotLoaded && !lotError && (
+            <p style={{ color: "var(--muted)" }}>Ingresá un lote SAP o seleccioná un material y presioná Buscar.</p>
+          )}
+          {lotLoaded && lotResults.length === 0 && !lotError && (
+            <p style={{ color: "var(--muted)" }}>No se encontraron lotes con esos criterios.</p>
+          )}
+          {lotResults.length > 0 && (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Código lote</th>
+                  <th>Lote SAP</th>
+                  <th>Material</th>
+                  <th>Vencimiento</th>
+                  <th>Fabricación</th>
+                  <th>Proveedor lote</th>
+                  <th>Stock</th>
+                  <th>Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lotResults.map((lot) => (
+                  <tr key={lot.id} style={lot.status === "PENDING_REGULARIZATION" ? { background: "rgba(217,119,6,0.06)" } : {}}>
+                    <td><strong>{lot.lotCode}</strong></td>
+                    <td style={{ fontFamily: "monospace", fontSize: 13 }}>{lot.sapLot ?? <span style={{ color: "var(--muted)" }}>—</span>}</td>
+                    <td>
+                      {lot.product
+                        ? <><strong>{lot.product.code}</strong> · {lot.product.description}</>
+                        : <span style={{ color: "var(--muted)", fontSize: 12 }}>{lot.productId}</span>}
+                    </td>
+                    <td style={{ color: "var(--muted)", fontSize: 12 }}>
+                      {lot.fechaVencimiento ? new Date(lot.fechaVencimiento).toLocaleDateString("es-AR") : "—"}
+                    </td>
+                    <td style={{ color: "var(--muted)", fontSize: 12 }}>
+                      {lot.fechaFabricacion ? new Date(lot.fechaFabricacion).toLocaleDateString("es-AR") : "—"}
+                    </td>
+                    <td style={{ fontSize: 12 }}>{lot.proveedor ?? "—"}</td>
+                    <td><strong>{lot.stockActual.toLocaleString("es-AR")}</strong></td>
+                    <td>
+                      {lot.status === "PENDING_REGULARIZATION"
+                        ? <span className="badge badge--adj-out">Pendiente</span>
+                        : <span className="badge">Normal</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      )}
+
+      {/* ── Tab: Pendientes de regularización ── */}
+      {activeTab === "pendientes" && (
+        <section className="card">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Pendientes de regularización</h3>
+              <p style={{ color: "var(--muted)", fontSize: 13, marginTop: 2, marginBottom: 0 }}>
+                Movimientos provisionales que requieren datos definitivos antes de cerrar.
+              </p>
+            </div>
+            <button className="btn" onClick={() => { setPendingLoaded(false); loadPending().catch(() => undefined); }}>
+              Actualizar
+            </button>
+          </div>
+
+          {pendingError && <p style={{ color: "#dc2626", fontSize: 13 }}>{pendingError}</p>}
+
+          {!pendingLoaded && !pendingError && (
+            <p style={{ color: "var(--muted)", fontSize: 13 }}>Cargando...</p>
+          )}
+
+          {pendingLoaded && pendingMovements.length === 0 && !pendingError && (
+            <div style={{ textAlign: "center", padding: "32px 0", color: "var(--muted)" }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>✓</div>
+              <p style={{ margin: 0, fontSize: 14 }}>No hay movimientos pendientes de regularización.</p>
+            </div>
+          )}
+
+          {pendingMovements.length > 0 && (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Fecha</th><th>Tipo</th><th>Material</th><th>Cantidad</th>
+                  <th>Documento</th><th>Proveedor</th><th>Notas</th><th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {pendingMovements.map((m) => (
+                  <tr key={m.id}>
+                    <td style={{ color: "var(--muted)", fontSize: 12, whiteSpace: "nowrap" }}>
+                      {new Date(m.date).toLocaleString("es-AR")}
+                    </td>
+                    <td><span className={MOVE_BADGE[m.type] ?? "badge"}>{MOVE_LABEL[m.type] ?? m.type}</span></td>
+                    <td><strong>{m.material.code}</strong> · {m.material.description}</td>
+                    <td>{m.quantity.toLocaleString("es-AR")}</td>
+                    <td style={{ fontSize: 12, color: m.documentNumber ? "inherit" : "var(--muted)" }}>
+                      {m.documentNumber ?? "—"}
+                    </td>
+                    <td style={{ fontSize: 12, color: m.supplier ? "inherit" : "var(--muted)" }}>
+                      {m.supplier ?? "—"}
+                    </td>
+                    <td style={{ fontSize: 12, color: "var(--muted)", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {m.notes ?? "—"}
+                    </td>
+                    <td>
+                      <button
+                        className="btn btn--primary"
+                        style={{ fontSize: 12, padding: "4px 12px", whiteSpace: "nowrap" }}
+                        onClick={() => {
+                          setRegModal({
+                            id: m.id,
+                            label: `${m.material.code} · ${new Date(m.date).toLocaleDateString("es-AR")}`,
+                          });
+                          setRegForm(emptyReg);
+                          setRegError("");
+                        }}
+                      >
+                        Regularizar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </section>
       )}
@@ -524,6 +822,101 @@ export default function ReportsPage() {
             </div>
           )}
         </section>
+      )}
+
+      {/* ── Regularization modal ── */}
+      {regModal && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={(e) => { if (e.target === e.currentTarget && !regLoading) { setRegModal(null); setRegForm(emptyReg); setRegError(""); } }}
+        >
+          <div style={{ background: "var(--panel)", borderRadius: 16, padding: 28, width: "100%", maxWidth: 540, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 40px rgba(0,0,0,0.35)" }}>
+            <h3 style={{ marginTop: 0, fontSize: 15, fontWeight: 800, marginBottom: 2 }}>Regularizar movimiento</h3>
+            <p style={{ color: "var(--muted)", fontSize: 12, marginBottom: 20 }}>{regModal.label}</p>
+
+            <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: "#92400e" }}>
+              Solo se registran los campos que se modifiquen. Cada cambio queda en el log de auditoría.
+            </div>
+
+            <div style={{ display: "grid", gap: 10 }}>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 700, display: "block", marginBottom: 4 }}>
+                  Motivo de regularización <span style={{ color: "#dc2626" }}>*</span>
+                </label>
+                <textarea
+                  className="input"
+                  rows={2}
+                  placeholder="Describir el motivo del cambio..."
+                  value={regForm.reason}
+                  onChange={(e) => setRegForm((p) => ({ ...p, reason: e.target.value }))}
+                  style={{ resize: "vertical" }}
+                />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>Nro. documento</label>
+                  <input className="input" placeholder="Nro. documento" value={regForm.documentNumber} onChange={(e) => setRegForm((p) => ({ ...p, documentNumber: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>Proveedor</label>
+                  <input className="input" placeholder="Proveedor" value={regForm.supplier} onChange={(e) => setRegForm((p) => ({ ...p, supplier: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>Transportista</label>
+                  <input className="input" placeholder="Transportista" value={regForm.carrier} onChange={(e) => setRegForm((p) => ({ ...p, carrier: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>Conductor</label>
+                  <input className="input" placeholder="Conductor" value={regForm.driver} onChange={(e) => setRegForm((p) => ({ ...p, driver: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>Destino</label>
+                  <input className="input" placeholder="Destino" value={regForm.destination} onChange={(e) => setRegForm((p) => ({ ...p, destination: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>Lote SAP</label>
+                  <input className="input" placeholder="ej. Z051308201" value={regForm.sapLot} onChange={(e) => setRegForm((p) => ({ ...p, sapLot: e.target.value }))} style={{ fontFamily: "monospace" }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>Fecha vencimiento</label>
+                  <input className="input" type="date" value={regForm.fechaVencimiento} onChange={(e) => setRegForm((p) => ({ ...p, fechaVencimiento: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>Fecha fabricación</label>
+                  <input className="input" type="date" value={regForm.fechaFabricacion} onChange={(e) => setRegForm((p) => ({ ...p, fechaFabricacion: e.target.value }))} />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>Proveedor del lote</label>
+                <input className="input" placeholder="Proveedor del lote" value={regForm.proveedor} onChange={(e) => setRegForm((p) => ({ ...p, proveedor: e.target.value }))} />
+              </div>
+
+              <div>
+                <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>Notas adicionales</label>
+                <textarea className="input" rows={2} placeholder="Observaciones..." value={regForm.notes} onChange={(e) => setRegForm((p) => ({ ...p, notes: e.target.value }))} style={{ resize: "vertical" }} />
+              </div>
+            </div>
+
+            {regError && (
+              <p style={{ color: "#dc2626", fontSize: 13, marginTop: 10, marginBottom: 0 }}>{regError}</p>
+            )}
+
+            <div style={{ display: "flex", gap: 8, marginTop: 20 }}>
+              <button className="btn btn--primary" onClick={handleRegularize} disabled={regLoading}>
+                {regLoading ? "Guardando..." : "Confirmar regularización"}
+              </button>
+              <button
+                className="btn"
+                onClick={() => { setRegModal(null); setRegForm(emptyReg); setRegError(""); }}
+                disabled={regLoading}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

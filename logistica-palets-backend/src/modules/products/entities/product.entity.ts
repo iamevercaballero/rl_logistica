@@ -16,4 +16,7 @@ export class Product {
 
   @Column({ default: true })
   active: boolean;
+
+  @Column({ type: 'int', nullable: true })
+  stockMinimo?: number | null;
 }

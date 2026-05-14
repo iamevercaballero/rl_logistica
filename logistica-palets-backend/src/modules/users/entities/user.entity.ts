@@ -18,4 +18,7 @@ export class User {
 
   @Column({ default: true })
   active: boolean;
+
+  @Column({ type: 'varchar', nullable: true })
+  fullName?: string | null;
 }

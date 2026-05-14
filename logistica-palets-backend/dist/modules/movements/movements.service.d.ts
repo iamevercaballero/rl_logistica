@@ -1,5 +1,6 @@
 import { DataSource } from 'typeorm';
 import { CreateMovementDto } from './dto/create-movement.dto';
+import { RegularizeMovementDto } from './dto/regularize-movement.dto';
 import { MovementsQueryDto } from './dto/movements-query.dto';
 export declare class MovementsService {
     private readonly dataSource;
@@ -8,11 +9,18 @@ export declare class MovementsService {
         movementId: string;
         stockImpact: string;
     }>;
+    regularize(id: string, dto: RegularizeMovementDto, userId: string): Promise<{
+        regularized: boolean;
+        changes: number;
+    }>;
     findAll(query: MovementsQueryDto): Promise<{
         data: {
             id: unknown;
             type: unknown;
             date: unknown;
+            status: {};
+            adjustmentReason: {} | null;
+            adjustmentCategory: {} | null;
             quantity: number;
             pallets: number | null;
             documentNumber: unknown;
@@ -25,6 +33,11 @@ export declare class MovementsService {
             createdAt: unknown;
             palletId: unknown;
             lotId: unknown;
+            encargado: {
+                id: {};
+                username: unknown;
+                fullName: unknown;
+            } | null;
             material: {
                 id: unknown;
                 code: unknown;
@@ -63,6 +76,9 @@ export declare class MovementsService {
         id: unknown;
         type: unknown;
         date: unknown;
+        status: {};
+        adjustmentReason: {} | null;
+        adjustmentCategory: {} | null;
         quantity: number;
         pallets: number | null;
         documentNumber: unknown;
@@ -75,6 +91,11 @@ export declare class MovementsService {
         createdAt: unknown;
         palletId: unknown;
         lotId: unknown;
+        encargado: {
+            id: {};
+            username: unknown;
+            fullName: unknown;
+        } | null;
         material: {
             id: unknown;
             code: unknown;
@@ -109,6 +130,8 @@ export declare class MovementsService {
     private applyIncrease;
     private applyDecrease;
     private findOrCreateStock;
+    private findOrCreateLot;
+    private updateLotStock;
     private parseNumber;
     private toStartDate;
     private toEndDate;

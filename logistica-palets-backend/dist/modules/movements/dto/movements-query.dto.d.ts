@@ -9,4 +9,5 @@ export declare class MovementsQueryDto {
     dateFrom?: string;
     dateTo?: string;
     search?: string;
+    status?: string;
 }

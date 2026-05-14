@@ -4,10 +4,22 @@ export declare class UsersController {
     private readonly service;
     constructor(service: UsersService);
     findAll(): Promise<import("./entities/user.entity").User[]>;
+    findActive(): Promise<import("./entities/user.entity").User[]>;
     create(dto: CreateUserDto): Promise<{
         id: string;
         username: string;
+        fullName: string | null | undefined;
         role: import("./entities/user.entity").UserRole;
         active: boolean;
+    }>;
+    update(id: string, dto: Partial<CreateUserDto>): Promise<{
+        id: string;
+        username: string;
+        fullName: string | null | undefined;
+        role: import("./entities/user.entity").UserRole;
+        active: boolean;
+    }>;
+    remove(id: string): Promise<{
+        deleted: boolean;
     }>;
 }

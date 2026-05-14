@@ -1,9 +1,17 @@
 import { MovementType } from '../entities/movement.entity';
+export declare class PalletItemDto {
+    palletId?: string;
+    lotCode?: string;
+    quantity: number;
+    fechaVencimiento?: string;
+    fechaFabricacion?: string;
+    sapLot?: string;
+}
 export declare class CreateMovementDto {
     type: MovementType;
     date?: string;
     productId: string;
-    quantity: number;
+    quantity?: number;
     pallets?: number;
     warehouseId?: string;
     locationId?: string;
@@ -17,4 +25,9 @@ export declare class CreateMovementDto {
     notes?: string;
     palletId?: string;
     lotId?: string;
+    encargadoRecepcionId?: string;
+    isProvisional?: boolean;
+    adjustmentReason?: string;
+    adjustmentCategory?: string;
+    palletItems?: PalletItemDto[];
 }

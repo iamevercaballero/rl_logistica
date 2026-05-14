@@ -22,4 +22,24 @@ __decorate([
     (0, class_validator_1.IsUUID)(),
     __metadata("design:type", String)
 ], CreateLotDto.prototype, "productId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsDateString)(),
+    __metadata("design:type", String)
+], CreateLotDto.prototype, "fechaVencimiento", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsDateString)(),
+    __metadata("design:type", String)
+], CreateLotDto.prototype, "fechaFabricacion", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateLotDto.prototype, "proveedor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateLotDto.prototype, "sapLot", void 0);
 //# sourceMappingURL=create-lot.dto.js.map

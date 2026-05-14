@@ -5,4 +5,5 @@ export declare class User {
     passwordHash: string;
     role: UserRole;
     active: boolean;
+    fullName?: string | null;
 }

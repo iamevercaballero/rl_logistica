@@ -1,9 +1,7 @@
 import { Request } from 'express';
 import { MovementsService } from './movements.service';
-import { CreateEntryDto } from './dto/create-entry.dto';
-import { CreateExitDto } from './dto/create-exit.dto';
-import { CreateTransferDto } from './dto/create-transfer.dto';
 import { CreateMovementDto } from './dto/create-movement.dto';
+import { RegularizeMovementDto } from './dto/regularize-movement.dto';
 import { MovementsQueryDto } from './dto/movements-query.dto';
 export declare class MovementsController {
     private readonly service;
@@ -16,59 +14,22 @@ export declare class MovementsController {
         movementId: string;
         stockImpact: string;
     }>;
-    createEntry(dto: CreateEntryDto, req: Request & {
+    regularize(id: string, dto: RegularizeMovementDto, req: Request & {
         user: {
             userId: string;
         };
     }): Promise<{
-        movementId: string;
-        stockImpact: string;
-    }>;
-    createExit(dto: CreateExitDto, req: Request & {
-        user: {
-            userId: string;
-        };
-    }): Promise<{
-        movementId: string;
-        stockImpact: string;
-    }>;
-    createTransfer(dto: CreateTransferDto, req: Request & {
-        user: {
-            userId: string;
-        };
-    }): Promise<{
-        movementId: string;
-        stockImpact: string;
-    }>;
-    createAdjustmentIn(dto: CreateEntryDto, req: Request & {
-        user: {
-            userId: string;
-        };
-    }): Promise<{
-        movementId: string;
-        stockImpact: string;
-    }>;
-    createAdjustmentOut(dto: CreateExitDto, req: Request & {
-        user: {
-            userId: string;
-        };
-    }): Promise<{
-        movementId: string;
-        stockImpact: string;
-    }>;
-    createReprocess(dto: CreateEntryDto, req: Request & {
-        user: {
-            userId: string;
-        };
-    }): Promise<{
-        movementId: string;
-        stockImpact: string;
+        regularized: boolean;
+        changes: number;
     }>;
     findAll(query: MovementsQueryDto): Promise<{
         data: {
             id: unknown;
             type: unknown;
             date: unknown;
+            status: {};
+            adjustmentReason: {} | null;
+            adjustmentCategory: {} | null;
             quantity: number;
             pallets: number | null;
             documentNumber: unknown;
@@ -81,6 +42,11 @@ export declare class MovementsController {
             createdAt: unknown;
             palletId: unknown;
             lotId: unknown;
+            encargado: {
+                id: {};
+                username: unknown;
+                fullName: unknown;
+            } | null;
             material: {
                 id: unknown;
                 code: unknown;
@@ -119,6 +85,9 @@ export declare class MovementsController {
         id: unknown;
         type: unknown;
         date: unknown;
+        status: {};
+        adjustmentReason: {} | null;
+        adjustmentCategory: {} | null;
         quantity: number;
         pallets: number | null;
         documentNumber: unknown;
@@ -131,6 +100,11 @@ export declare class MovementsController {
         createdAt: unknown;
         palletId: unknown;
         lotId: unknown;
+        encargado: {
+            id: {};
+            username: unknown;
+            fullName: unknown;
+        } | null;
         material: {
             id: unknown;
             code: unknown;

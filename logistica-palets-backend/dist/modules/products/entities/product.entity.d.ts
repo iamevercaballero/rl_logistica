@@ -4,4 +4,5 @@ export declare class Product {
     description: string;
     unitOfMeasure: string;
     active: boolean;
+    stockMinimo?: number | null;
 }

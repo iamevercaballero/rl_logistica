@@ -13,14 +13,13 @@ const lots_service_1 = require("./lots.service");
 const lots_controller_1 = require("./lots.controller");
 const lot_entity_1 = require("./entities/lot.entity");
 const product_entity_1 = require("../products/entities/product.entity");
+const pallet_entity_1 = require("../pallets/entities/pallet.entity");
 let LotsModule = class LotsModule {
 };
 exports.LotsModule = LotsModule;
 exports.LotsModule = LotsModule = __decorate([
     (0, common_1.Module)({
-        imports: [
-            typeorm_1.TypeOrmModule.forFeature([lot_entity_1.Lot, product_entity_1.Product])
-        ],
+        imports: [typeorm_1.TypeOrmModule.forFeature([lot_entity_1.Lot, product_entity_1.Product, pallet_entity_1.Pallet])],
         controllers: [lots_controller_1.LotsController],
         providers: [lots_service_1.LotsService],
     })

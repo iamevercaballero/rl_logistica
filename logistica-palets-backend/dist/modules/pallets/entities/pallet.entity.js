@@ -31,8 +31,8 @@ __decorate([
     __metadata("design:type", Number)
 ], Pallet.prototype, "quantity", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'uuid' }),
-    __metadata("design:type", String)
+    (0, typeorm_1.Column)({ type: 'uuid', nullable: true }),
+    __metadata("design:type", Object)
 ], Pallet.prototype, "currentLocationId", void 0);
 __decorate([
     (0, typeorm_1.Column)({ default: 'AVAILABLE' }),

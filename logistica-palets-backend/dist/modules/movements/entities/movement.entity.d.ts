@@ -1,5 +1,9 @@
-export declare const movementTypes: readonly ["ENTRY", "EXIT", "TRANSFER", "ADJUSTMENT_IN", "ADJUSTMENT_OUT", "REPROCESS"];
+export declare const movementTypes: readonly ["ENTRY", "EXIT", "TRANSFER", "ADJUSTMENT_IN", "ADJUSTMENT_OUT"];
 export type MovementType = (typeof movementTypes)[number];
+export declare const movementStatuses: readonly ["NORMAL", "PENDING_REGULARIZATION"];
+export type MovementStatus = (typeof movementStatuses)[number];
+export declare const adjustmentReasons: readonly ["DIFERENCIA_INVENTARIO", "CONTEO_FISICO", "MERMA", "PERDIDA", "ROTURA", "SOBRANTE", "OTRO"];
+export type AdjustmentReason = (typeof adjustmentReasons)[number];
 export declare class Movement {
     id: string;
     type: MovementType;
@@ -22,5 +26,9 @@ export declare class Movement {
     palletId?: string;
     lotId?: string;
     createdById: string;
+    encargadoRecepcionId?: string | null;
+    status: MovementStatus;
+    adjustmentReason?: string | null;
+    adjustmentCategory?: string | null;
     createdAt: Date;
 }

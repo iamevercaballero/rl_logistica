@@ -57,30 +57,51 @@ let UsersService = class UsersService {
     }
     findAll() {
         return this.userRepo.find({
-            select: ['id', 'username', 'role', 'active'],
+            select: ['id', 'username', 'fullName', 'role', 'active'],
+        });
+    }
+    findActive() {
+        return this.userRepo.find({
+            where: { active: true },
+            select: ['id', 'username', 'fullName', 'role'],
+            order: { username: 'ASC' },
         });
     }
     findByUsername(username) {
         return this.userRepo.findOne({ where: { username } });
     }
-    async createWithPassword(username, password, role = 'OPERATOR') {
+    async createWithPassword(username, password, role = 'OPERATOR', fullName) {
         const exists = await this.userRepo.findOne({ where: { username } });
         if (exists)
             throw new common_1.BadRequestException('Username ya existe');
         const passwordHash = await bcrypt.hash(password, 10);
-        const user = this.userRepo.create({
-            username,
-            passwordHash,
-            role,
-            active: true,
-        });
+        const user = this.userRepo.create({ username, passwordHash, role, active: true, fullName: fullName !== null && fullName !== void 0 ? fullName : null });
         const saved = await this.userRepo.save(user);
-        return {
-            id: saved.id,
-            username: saved.username,
-            role: saved.role,
-            active: saved.active,
-        };
+        return { id: saved.id, username: saved.username, fullName: saved.fullName, role: saved.role, active: saved.active };
+    }
+    async update(id, dto) {
+        const user = await this.userRepo.findOne({ where: { id } });
+        if (!user)
+            throw new common_1.NotFoundException('Usuario no encontrado');
+        if (dto.username)
+            user.username = dto.username;
+        if (dto.role)
+            user.role = dto.role;
+        if (dto.fullName !== undefined)
+            user.fullName = dto.fullName;
+        if (dto.active !== undefined)
+            user.active = dto.active;
+        if (dto.password)
+            user.passwordHash = await bcrypt.hash(dto.password, 10);
+        const saved = await this.userRepo.save(user);
+        return { id: saved.id, username: saved.username, fullName: saved.fullName, role: saved.role, active: saved.active };
+    }
+    async remove(id) {
+        const user = await this.userRepo.findOne({ where: { id } });
+        if (!user)
+            throw new common_1.NotFoundException('Usuario no encontrado');
+        await this.userRepo.remove(user);
+        return { deleted: true };
     }
 };
 exports.UsersService = UsersService;

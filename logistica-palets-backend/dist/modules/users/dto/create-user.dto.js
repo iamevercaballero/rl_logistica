@@ -27,4 +27,9 @@ __decorate([
     (0, class_validator_1.IsIn)(['ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR']),
     __metadata("design:type", String)
 ], CreateUserDto.prototype, "role", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateUserDto.prototype, "fullName", void 0);
 //# sourceMappingURL=create-user.dto.js.map

@@ -3,4 +3,5 @@ export declare class CreateProductDto {
     description: string;
     unitOfMeasure?: string;
     active?: boolean;
+    stockMinimo?: number;
 }

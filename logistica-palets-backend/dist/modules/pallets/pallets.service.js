@@ -26,27 +26,34 @@ let PalletsService = class PalletsService {
         this.locationRepo = locationRepo;
     }
     async create(dto) {
-        var _a;
+        var _a, _b;
         const exists = await this.palletRepo.findOne({ where: { code: dto.code } });
         if (exists)
             throw new common_1.BadRequestException('Ya existe un pallet con ese código');
         const lot = await this.lotRepo.findOne({ where: { id: dto.lotId } });
         if (!lot)
             throw new common_1.NotFoundException('Lote no encontrado');
-        const loc = await this.locationRepo.findOne({ where: { id: dto.currentLocationId } });
-        if (!loc)
-            throw new common_1.NotFoundException('Ubicación no encontrada');
+        if (dto.currentLocationId) {
+            const loc = await this.locationRepo.findOne({ where: { id: dto.currentLocationId } });
+            if (!loc)
+                throw new common_1.NotFoundException('Ubicación no encontrada');
+        }
         const pallet = this.palletRepo.create({
             code: dto.code,
             lotId: dto.lotId,
             quantity: dto.quantity,
-            currentLocationId: dto.currentLocationId,
-            status: (_a = dto.status) !== null && _a !== void 0 ? _a : 'AVAILABLE',
+            currentLocationId: (_a = dto.currentLocationId) !== null && _a !== void 0 ? _a : null,
+            status: (_b = dto.status) !== null && _b !== void 0 ? _b : 'AVAILABLE',
         });
         return this.palletRepo.save(pallet);
     }
-    findAll() {
-        return this.palletRepo.find();
+    findAll(lotId, status) {
+        const where = {};
+        if (lotId)
+            where.lotId = lotId;
+        if (status)
+            where.status = status;
+        return this.palletRepo.find({ where, order: { code: 'ASC' } });
     }
     async findOne(id) {
         const pallet = await this.palletRepo.findOne({ where: { id } });

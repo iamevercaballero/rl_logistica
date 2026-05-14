@@ -32,7 +32,15 @@ let ProductsService = class ProductsService {
         });
         return this.productRepo.save(product);
     }
-    findAll() {
+    findAll(search) {
+        if (search === null || search === void 0 ? void 0 : search.trim()) {
+            const q = `%${search.trim()}%`;
+            return this.productRepo.find({
+                where: [{ code: (0, typeorm_2.ILike)(q) }, { description: (0, typeorm_2.ILike)(q) }],
+                order: { code: 'ASC' },
+                take: 50,
+            });
+        }
         return this.productRepo.find({ order: { code: 'ASC' } });
     }
     async findOne(id) {
@@ -57,6 +65,17 @@ let ProductsService = class ProductsService {
     async remove(id) {
         const product = await this.findOne(id);
         return this.productRepo.remove(product);
+    }
+    async findBelowMinimum() {
+        return this.productRepo
+            .createQueryBuilder('p')
+            .innerJoin('stocks', 's', 's."productId" = p.id')
+            .where('p."stockMinimo" IS NOT NULL')
+            .groupBy('p.id')
+            .having('SUM(s."currentQuantity") < p."stockMinimo"')
+            .select(['p.id AS id', 'p.code AS code', 'p.description AS description',
+            'p."stockMinimo" AS "stockMinimo"', 'SUM(s."currentQuantity") AS "stockActual"'])
+            .getRawMany();
     }
     async ensureCodeAvailable(code, excludeId) {
         const existing = await this.productRepo.findOne({ where: { code: code.trim().toUpperCase() } });

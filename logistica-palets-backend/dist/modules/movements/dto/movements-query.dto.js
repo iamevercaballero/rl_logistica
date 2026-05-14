@@ -70,4 +70,9 @@ __decorate([
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], MovementsQueryDto.prototype, "search", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(movement_entity_1.movementStatuses),
+    __metadata("design:type", String)
+], MovementsQueryDto.prototype, "status", void 0);
 //# sourceMappingURL=movements-query.dto.js.map

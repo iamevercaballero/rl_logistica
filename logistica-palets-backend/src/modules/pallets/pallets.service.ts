@@ -16,30 +16,33 @@ export class PalletsService {
   ) {}
 
   async create(dto: CreatePalletDto) {
-    // code único
     const exists = await this.palletRepo.findOne({ where: { code: dto.code } });
     if (exists) throw new BadRequestException('Ya existe un pallet con ese código');
 
-    // validar FK
     const lot = await this.lotRepo.findOne({ where: { id: dto.lotId } });
     if (!lot) throw new NotFoundException('Lote no encontrado');
 
-    const loc = await this.locationRepo.findOne({ where: { id: dto.currentLocationId } });
-    if (!loc) throw new NotFoundException('Ubicación no encontrada');
+    if (dto.currentLocationId) {
+      const loc = await this.locationRepo.findOne({ where: { id: dto.currentLocationId } });
+      if (!loc) throw new NotFoundException('Ubicación no encontrada');
+    }
 
     const pallet = this.palletRepo.create({
       code: dto.code,
       lotId: dto.lotId,
       quantity: dto.quantity,
-      currentLocationId: dto.currentLocationId,
+      currentLocationId: dto.currentLocationId ?? null,
       status: dto.status ?? 'AVAILABLE',
     });
 
     return this.palletRepo.save(pallet);
   }
 
-  findAll() {
-    return this.palletRepo.find();
+  findAll(lotId?: string, status?: string) {
+    const where: Record<string, unknown> = {};
+    if (lotId) where.lotId = lotId;
+    if (status) where.status = status;
+    return this.palletRepo.find({ where, order: { code: 'ASC' } });
   }
 
   async findOne(id: string) {

@@ -6,12 +6,12 @@ import {
   Param,
   Patch,
   Delete,
+  Query,
+  UseGuards,
 } from '@nestjs/common';
 import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-
-import { UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles/roles.guard';
 import { Roles } from '../auth/roles/roles.decorator';
@@ -21,11 +21,16 @@ import { Roles } from '../auth/roles/roles.decorator';
 export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
 
-  // ✅ READ: todos
   @Get()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
-  findAll() {
-    return this.productsService.findAll();
+  findAll(@Query('search') search?: string) {
+    return this.productsService.findAll(search);
+  }
+
+  @Get('alerts/stock-minimo')
+  @Roles('ADMIN', 'MANAGER', 'AUDITOR')
+  belowMinimum() {
+    return this.productsService.findBelowMinimum();
   }
 
   @Get(':id')
@@ -34,7 +39,6 @@ export class ProductsController {
     return this.productsService.findOne(id);
   }
 
-  // ✅ WRITE: admin/manager
   @Post()
   @Roles('ADMIN', 'MANAGER')
   create(@Body() dto: CreateProductDto) {

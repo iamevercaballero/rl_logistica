@@ -10,7 +10,7 @@ export declare class PalletsService {
     private readonly locationRepo;
     constructor(palletRepo: Repository<Pallet>, lotRepo: Repository<Lot>, locationRepo: Repository<Location>);
     create(dto: CreatePalletDto): Promise<Pallet>;
-    findAll(): Promise<Pallet[]>;
+    findAll(lotId?: string, status?: string): Promise<Pallet[]>;
     findOne(id: string): Promise<Pallet>;
     update(id: string, dto: UpdatePalletDto): Promise<Pallet>;
     remove(id: string): Promise<{

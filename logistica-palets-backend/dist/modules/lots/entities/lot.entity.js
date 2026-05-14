@@ -24,9 +24,38 @@ __decorate([
     __metadata("design:type", String)
 ], Lot.prototype, "lotCode", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ type: 'uuid' }),
+    __metadata("design:type", String)
+], Lot.prototype, "productId", void 0);
+__decorate([
     (0, typeorm_1.ManyToOne)(() => product_entity_1.Product, { eager: true }),
+    (0, typeorm_1.JoinColumn)({ name: 'productId' }),
     __metadata("design:type", product_entity_1.Product)
 ], Lot.prototype, "product", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'date', nullable: true }),
+    __metadata("design:type", Object)
+], Lot.prototype, "fechaVencimiento", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'date', nullable: true }),
+    __metadata("design:type", Object)
+], Lot.prototype, "fechaFabricacion", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', nullable: true }),
+    __metadata("design:type", Object)
+], Lot.prototype, "proveedor", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', nullable: true }),
+    __metadata("design:type", Object)
+], Lot.prototype, "sapLot", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'int', default: 0 }),
+    __metadata("design:type", Number)
+], Lot.prototype, "stockActual", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', default: 'NORMAL' }),
+    __metadata("design:type", String)
+], Lot.prototype, "status", void 0);
 exports.Lot = Lot = __decorate([
     (0, typeorm_1.Entity)('lots')
 ], Lot);

@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Delete,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { PalletsService } from './pallets.service';
@@ -23,8 +24,8 @@ export class PalletsController {
   // ✅ READ
   @Get()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
-  findAll() {
-    return this.service.findAll();
+  findAll(@Query('lotId') lotId?: string, @Query('status') status?: string) {
+    return this.service.findAll(lotId, status);
   }
 
   @Get(':id')

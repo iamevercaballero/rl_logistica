@@ -1,4 +1,4 @@
-import { IsString, IsUUID } from 'class-validator';
+import { IsDateString, IsOptional, IsString, IsUUID } from 'class-validator';
 
 export class CreateLotDto {
   @IsString()
@@ -6,4 +6,20 @@ export class CreateLotDto {
 
   @IsUUID()
   productId: string;
+
+  @IsOptional()
+  @IsDateString()
+  fechaVencimiento?: string;
+
+  @IsOptional()
+  @IsDateString()
+  fechaFabricacion?: string;
+
+  @IsOptional()
+  @IsString()
+  proveedor?: string;
+
+  @IsOptional()
+  @IsString()
+  sapLot?: string;
 }

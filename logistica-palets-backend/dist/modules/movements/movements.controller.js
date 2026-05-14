@@ -15,10 +15,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.MovementsController = void 0;
 const common_1 = require("@nestjs/common");
 const movements_service_1 = require("./movements.service");
-const create_entry_dto_1 = require("./dto/create-entry.dto");
-const create_exit_dto_1 = require("./dto/create-exit.dto");
-const create_transfer_dto_1 = require("./dto/create-transfer.dto");
 const create_movement_dto_1 = require("./dto/create-movement.dto");
+const regularize_movement_dto_1 = require("./dto/regularize-movement.dto");
 const movements_query_dto_1 = require("./dto/movements-query.dto");
 const jwt_auth_guard_1 = require("../auth/guards/jwt-auth.guard");
 const roles_guard_1 = require("../auth/roles/roles.guard");
@@ -30,23 +28,8 @@ let MovementsController = class MovementsController {
     create(dto, req) {
         return this.service.create(dto, req.user.userId);
     }
-    createEntry(dto, req) {
-        return this.service.create({ ...dto, type: 'ENTRY' }, req.user.userId);
-    }
-    createExit(dto, req) {
-        return this.service.create({ ...dto, type: 'EXIT' }, req.user.userId);
-    }
-    createTransfer(dto, req) {
-        return this.service.create({ ...dto, type: 'TRANSFER' }, req.user.userId);
-    }
-    createAdjustmentIn(dto, req) {
-        return this.service.create({ ...dto, type: 'ADJUSTMENT_IN' }, req.user.userId);
-    }
-    createAdjustmentOut(dto, req) {
-        return this.service.create({ ...dto, type: 'ADJUSTMENT_OUT' }, req.user.userId);
-    }
-    createReprocess(dto, req) {
-        return this.service.create({ ...dto, type: 'REPROCESS' }, req.user.userId);
+    regularize(id, dto, req) {
+        return this.service.regularize(id, dto, req.user.userId);
     }
     findAll(query) {
         return this.service.findAll(query);
@@ -66,62 +49,18 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], MovementsController.prototype, "create", null);
 __decorate([
-    (0, common_1.Post)('entry'),
-    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR'),
-    __param(0, (0, common_1.Body)()),
-    __param(1, (0, common_1.Req)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [create_entry_dto_1.CreateEntryDto, Object]),
-    __metadata("design:returntype", void 0)
-], MovementsController.prototype, "createEntry", null);
-__decorate([
-    (0, common_1.Post)('exit'),
-    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR'),
-    __param(0, (0, common_1.Body)()),
-    __param(1, (0, common_1.Req)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [create_exit_dto_1.CreateExitDto, Object]),
-    __metadata("design:returntype", void 0)
-], MovementsController.prototype, "createExit", null);
-__decorate([
-    (0, common_1.Post)('transfer'),
-    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR'),
-    __param(0, (0, common_1.Body)()),
-    __param(1, (0, common_1.Req)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [create_transfer_dto_1.CreateTransferDto, Object]),
-    __metadata("design:returntype", void 0)
-], MovementsController.prototype, "createTransfer", null);
-__decorate([
-    (0, common_1.Post)('adjustment-in'),
+    (0, common_1.Patch)(':id/regularize'),
     (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER'),
-    __param(0, (0, common_1.Body)()),
-    __param(1, (0, common_1.Req)()),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Body)()),
+    __param(2, (0, common_1.Req)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [create_entry_dto_1.CreateEntryDto, Object]),
+    __metadata("design:paramtypes", [String, regularize_movement_dto_1.RegularizeMovementDto, Object]),
     __metadata("design:returntype", void 0)
-], MovementsController.prototype, "createAdjustmentIn", null);
-__decorate([
-    (0, common_1.Post)('adjustment-out'),
-    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER'),
-    __param(0, (0, common_1.Body)()),
-    __param(1, (0, common_1.Req)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [create_exit_dto_1.CreateExitDto, Object]),
-    __metadata("design:returntype", void 0)
-], MovementsController.prototype, "createAdjustmentOut", null);
-__decorate([
-    (0, common_1.Post)('reprocess'),
-    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR'),
-    __param(0, (0, common_1.Body)()),
-    __param(1, (0, common_1.Req)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [create_entry_dto_1.CreateEntryDto, Object]),
-    __metadata("design:returntype", void 0)
-], MovementsController.prototype, "createReprocess", null);
+], MovementsController.prototype, "regularize", null);
 __decorate([
     (0, common_1.Get)(),
-    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'AUDITOR'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR'),
     __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [movements_query_dto_1.MovementsQueryDto]),
@@ -129,7 +68,7 @@ __decorate([
 ], MovementsController.prototype, "findAll", null);
 __decorate([
     (0, common_1.Get)(':id'),
-    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'AUDITOR'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR'),
     __param(0, (0, common_1.Param)('id')),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String]),

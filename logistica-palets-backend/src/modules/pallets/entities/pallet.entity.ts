@@ -14,9 +14,10 @@ export class Pallet {
   @Column('int')
   quantity: number;
 
-  @Column({ type: 'uuid' })
-  currentLocationId: string;
+  @Column({ type: 'uuid', nullable: true })
+  currentLocationId?: string | null;
 
+  /** AVAILABLE | EXITED | BLOCKED | DAMAGED | IN_TRANSIT */
   @Column({ default: 'AVAILABLE' })
   status: string;
 }

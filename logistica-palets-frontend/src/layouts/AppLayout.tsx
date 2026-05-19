@@ -171,11 +171,11 @@ export default function AppLayout() {
         </div>
       </aside>
 
-      <main style={{ padding: "20px 24px 48px", minWidth: 0 }}>
+      <main style={{ padding: "20px 24px 48px", minWidth: 0, background: "var(--bg)" }}>
         <div className="topbar">
           <div className="topbar-title">
-            <span style={{ color: "var(--primary)", marginRight: 6 }}>●</span>
-            Sistema operativo — RL Logística
+            <span className="status-dot" />
+            RL Logística — WMS Enterprise
           </div>
           <div className="topbar-right">
             <span className={ROLE_BADGE[user.role] ?? "badge"}>{user.role}</span>

@@ -4,7 +4,8 @@
       "Bash(npm run *)",
       "Bash(npm install *)",
       "Bash(Get-ChildItem *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(claude mcp *)"
     ]
   }
 }

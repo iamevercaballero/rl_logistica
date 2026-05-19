@@ -4,24 +4,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**RL Logística** is a full-stack pallet/inventory logistics management system:
-- **Backend**: NestJS + PostgreSQL + TypeORM (`/backend`)
-- **Frontend**: React 19 + TypeScript + Vite (`/frontend`)
+**RL Logística** is a full-stack pallet/inventory logistics management system for AMBEV:
+- **Backend**: NestJS + PostgreSQL + TypeORM (`logistica-palets-backend/`)
+- **Frontend**: React 19 + TypeScript + Vite (`logistica-palets-frontend/`)
 - **Infrastructure**: Docker Compose (root)
 
 ## Commands
 
-### Backend (`/backend`)
+### Backend (`logistica-palets-backend/`)
 ```bash
 npm install
-npm run start:dev       # dev server on port 3000 with watch mode
+npm run start:dev       # dev server port 3000, watch mode
 npm run build
-npm start               # production start
-npm run lint            # eslint with --fix
+npm start               # production
+npm run lint            # eslint --fix
 npm run start:debug     # with debugger
 ```
 
-### Frontend (`/frontend`)
+### Frontend (`logistica-palets-frontend/`)
 ```bash
 npm install
 npm run dev             # Vite dev server
@@ -32,43 +32,93 @@ npm run preview
 
 ### Docker (root)
 ```bash
-docker compose up --build   # PostgreSQL (5433), backend (3000), frontend/nginx (5174)
+docker compose up --build   # PostgreSQL (5433), backend (3000), frontend/nginx (5175)
 ```
 
 ## Architecture
 
 ### Data Flow
-1. User authenticates via `POST /api/auth/login` → JWT returned
-2. Frontend stores token in `localStorage`; axios interceptor attaches `Bearer` token on every request
-3. Role-based access control (RBAC) gates both backend routes (NestJS guards) and frontend routes (`RequireRole` wrapper in `/frontend/src/main.tsx`)
+1. `POST /api/auth/login` → JWT returned
+2. Frontend stores token in `localStorage`; axios interceptor (`api/client.ts`) attaches `Bearer` on every request
+3. RBAC gates backend routes (`RolesGuard` + `@Roles()` decorator) and frontend routes (`RequireRole` in `main.tsx` using `auth/rbac.ts`)
 
 ### Core Domain Model
-- **Products** (materials) → **Lots** (ManyToOne to Product) → **Pallets** (individual units with status/location)
-- **Warehouses** → **Locations** (racks/floors within a warehouse)
-- **Stock**: current quantity by Product + Warehouse + Location
-- **Movements**: all inventory changes (ENTRY, EXIT, TRANSFER, ADJUSTMENT_IN, ADJUSTMENT_OUT, REPROCESS); each movement updates Stock transactionally
 
-### Backend Module Layout (`/backend/src`)
-- `auth/` — JWT + Passport, `@Roles()` decorator, `RolesGuard`
-- `users/` — user management, bcrypt password hashing, role enum
-- `movements/` — the core business logic: validates stock availability, runs DB transactions, updates stock atomically
-- `stocks/` — read-side stock state per product/warehouse/location
-- `reports/` — KPI aggregations and SAP stock export
-- All other modules (`products`, `lots`, `warehouses`, `locations`, `pallets`, `transports`) are standard CRUD with TypeORM entities
+```
+Product ──< Lot ──< Pallet
+                     │ currentLocationId → Location → Warehouse
+Stock (productId, warehouseId?, locationId?) ← updated atomically per movement
+Movement ──< MovementDetail (per pallet line)
+          └─ RegularizationLog (audit trail per field change)
+```
 
-Path alias: `@modules/*` maps to `src/modules/*` (configured in `tsconfig.json`).  
-Global API prefix: `/api` (set in `main.ts`).
+- **Stock** is keyed by `(productId, warehouseId, locationId)` — all three columns are nullable. Use TypeORM `IsNull()` for null-equality in `findOne`, not `undefined`.
+- **Pallet.currentLocationId** is the source of truth for where a pallet physically is. EXIT/TRANSFER stock math reads this field, not the form's warehouseId.
+- **Lot.status** and **Movement.status** are both `NORMAL | PENDING_REGULARIZATION`. A provisional entry marks both as `PENDING_REGULARIZATION`; regularization resets both.
+- **Pallet.status**: `AVAILABLE | EXITED | BLOCKED | DAMAGED | IN_TRANSIT`. Exited pallets cannot be re-dispatched; PENDING_REGULARIZATION lots block exit.
 
-### Frontend Module Layout (`/frontend/src`)
+### Movement Types & Lifecycle
+
+Types: `ENTRY`, `EXIT`, `TRANSFER`, `ADJUSTMENT_IN`, `ADJUSTMENT_OUT`
+
+**ENTRY**: increases Stock at (warehouseId, locationId). With `palletItems`: increases stock first (total), then per-pallet creates/finds Lot and creates Pallet records. `isProvisional=true` marks status PENDING_REGULARIZATION and requires non-empty `notes`.
+
+**EXIT**: with `palletItems`, decreases stock from each pallet's `currentLocationId` (not the form's warehouseId). Sets `pallet.status = 'EXITED'`. Blocked if pallet's lot has `PENDING_REGULARIZATION`.
+
+**TRANSFER**: per-pallet decreases from `pallet.currentLocationId`, increases at `toLocationId`, updates `pallet.currentLocationId = toLocationId`.
+
+**ADJUSTMENT_IN/OUT**: requires `adjustmentReason` (enum: `DIFERENCIA_INVENTARIO | CONTEO_FISICO | MERMA | PERDIDA | ROTURA | SOBRANTE | OTRO`). Optional `adjustmentCategory`.
+
+**Regularization** (`PATCH /movements/:id/regularize`): only on PENDING_REGULARIZATION movements. Updates allowed fields (documentNumber, supplier, carrier, driver, destination, notes, sapLot, fechaVencimiento, fechaFabricacion, proveedor), logs each changed field to `regularization_logs`, resets movement + associated lots to NORMAL. Requires ADMIN or MANAGER role.
+
+### SAP Lot Code Formula
+```typescript
+// letter = A for 2001, B for 2002, ..., Z for 2026
+`${String.fromCharCode(65 + (year - 2001))}${MM}${DD}08201`
+// e.g. Z051308201 for 2026-05-13
+```
+
+### FEFO
+`GET /lots/fefo` returns lots ordered by `fechaVencimiento ASC NULLS LAST` with embedded AVAILABLE pallets. Accepts `locationId` to scope pallets to a specific rack (used for transfers).
+
+### Backend Module Layout (`logistica-palets-backend/src/modules/`)
+- `movements/` — core business logic; all stock mutations run inside `DataSource.transaction()`. `MovementsService` owns `applyIncrease`/`applyDecrease` helpers that upsert the Stock row.
+- `lots/` — CRUD + FEFO query; `findOrCreateLot` is called from MovementsService during ENTRY
+- `stocks/` — read-side stock state; written only by MovementsService
+- `reports/` — KPI aggregations, daily stock, SAP diff, trace by material
+- `billing/` — electronic invoicing (Paraguay SIFEN): clients (`clientes`), invoices (`facturas`), XML generation (`XmlGeneratorService`), SIFEN submission (`SifenService`). Config via `EMISOR_*` and `FACTURA_*` env vars.
+- `seed/` — data seeding endpoint (enabled when `ALLOW_SEED=true`)
+- All other modules (`products`, `warehouses`, `locations`, `pallets`, `transports`, `users`, `auth`) are standard CRUD
+
+Path alias: `@modules/*` → `src/modules/*` (tsconfig.json).  
+Global prefix: `/api` (main.ts).  
+Schema: TypeORM `synchronize: true` — entity changes apply on next boot, no migration files.
+
+### Frontend Module Layout (`logistica-palets-frontend/src/`)
 - `auth/AuthContext.tsx` — global auth state (token, user, role)
-- `api/client.ts` — axios instance; each domain has its own API file (e.g., `api/movements.ts`)
-- `pages/` — one page per domain feature; Dashboard includes Recharts KPI charts
+- `auth/rbac.ts` — `PERMS` table mapping each module to which roles can read/create/update/remove; use `canRead(module, role)` etc.
+- `auth/RequireRole.tsx` — route guard; redirects to `/login` if unauthenticated, shows error if insufficient role
+- `api/client.ts` — axios instance with JWT interceptor; each domain has its own API file
+- `pages/` — one page per domain; `Movements.tsx` handles ENTRY/EXIT/TRANSFER/ADJUSTMENT with tabbed forms
+- `pages/Reports.tsx` — tabs: Stock actual, Historial, Lotes & SAP, Pendientes (regularization queue), Control diario, SAP (diff upload), Trazabilidad
 - `layouts/AppLayout.tsx` — shared nav shell
 
-Roles: `Admin`, `Manager`, `Operator`, `Auditor`. Role checks use `RequireRole` in the router.
+### RBAC Summary
+| Role | Movements | Billing | Regularize |
+|---|---|---|---|
+| ADMIN | read/create | read/create/remove | yes |
+| MANAGER | read/create | read/create | yes |
+| OPERATOR | create only | — | — |
+| AUDITOR | read only | read only | — |
+
+Movements read access: ADMIN, MANAGER, AUDITOR only (OPERATOR cannot browse history — only submit).
 
 ### Environment Variables
-Backend and Docker read from a `.env` file at root/backend:
-- `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_DATABASE`
+Root `.env` (Docker + backend):
+- `DB_HOST`, `DB_PORT`, `DB_USERNAME`/`DB_PASSWORD`/`DB_DATABASE`, `POSTGRES_DB`/`POSTGRES_USER`/`POSTGRES_PASSWORD`
 - `JWT_SECRET`, `JWT_EXPIRES_IN`
-- `VITE_API_URL` (frontend only, injected at build time by Vite)
+- `EMISOR_RUC`, `EMISOR_DV`, `EMISOR_RAZON_SOCIAL`, `FACTURA_TIMBRADO`, `FACTURA_VIGENCIA`, `SIFEN_URL`
+- `ALLOW_SEED=true` to enable seed endpoint
+
+Frontend:
+- `VITE_API_URL` — injected at build time by Vite (set to `http://localhost:3000/api` for Docker builds)

@@ -5,7 +5,10 @@
       "Bash(npm install *)",
       "Bash(Get-ChildItem *)",
       "Bash(npx tsc *)",
-      "Bash(claude mcp *)"
+      "Bash(claude mcp *)",
+      "Bash(docker compose *)",
+      "Bash(Start-Sleep -Seconds 5)",
+      "PowerShell($token = \\(Invoke-RestMethod -Uri \"http://localhost:3000/api/auth/login\" -Method POST -ContentType \"application/json\" -Body '{\"username\":\"admin\",\"password\":\"admin123\"}'\\).access_token; Write-Host \"Token OK\"; $headers = @{Authorization = \"Bearer $token\"}; $stock = Invoke-RestMethod -Uri \"http://localhost:3000/api/reports/stock\" -Headers $headers; Write-Host \"Stock OK - items: $\\($stock.items.Count\\), totalQuantity: $\\($stock.totalQuantity\\)\"; $movements = Invoke-RestMethod -Uri \"http://localhost:3000/api/reports/movements?page=1&limit=20\" -Headers $headers; Write-Host \"Movements OK - total: $\\($movements.meta.total\\)\")"
     ]
   }
 }

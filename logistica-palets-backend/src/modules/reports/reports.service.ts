@@ -66,14 +66,13 @@ export class ReportsService {
       .addSelect('w.id', 'warehouseId')
       .addSelect('w.name', 'warehouseName')
       .addSelect('l.id', 'locationId')
-      .addSelect('l.code', 'locationCode')
-      .orderBy('p.code', 'ASC');
+      .addSelect('l.code', 'locationCode');
 
     if (query.warehouseId) qb.andWhere('s."warehouseId" = :warehouseId', { warehouseId: query.warehouseId });
     if (query.locationId) qb.andWhere('s."locationId" = :locationId', { locationId: query.locationId });
 
     const [items, totalsRaw, byWarehouse, byMaterial] = await Promise.all([
-      qb.clone().getRawMany(),
+      qb.clone().orderBy('p.code', 'ASC').getRawMany(),
       qb.clone()
         .select('COUNT(DISTINCT s.id)', 'stockRows')
         .addSelect('COUNT(DISTINCT s."productId")', 'materials')
@@ -169,8 +168,7 @@ export class ReportsService {
       .addSelect('fw.name', 'fromWarehouseName')
       .addSelect('fl.code', 'fromLocationCode')
       .addSelect('tw.name', 'toWarehouseName')
-      .addSelect('tl.code', 'toLocationCode')
-      .orderBy('m.date', 'DESC');
+      .addSelect('tl.code', 'toLocationCode');
 
     if (query.warehouseId) {
       qb.andWhere('(m."warehouseId" = :warehouseId OR m."fromWarehouseId" = :warehouseId OR m."toWarehouseId" = :warehouseId)', { warehouseId: query.warehouseId });
@@ -195,7 +193,7 @@ export class ReportsService {
     }
 
     const [data, total] = await Promise.all([
-      qb.clone().offset((page - 1) * limit).limit(limit).getRawMany(),
+      qb.clone().orderBy('m.date', 'DESC').offset((page - 1) * limit).limit(limit).getRawMany(),
       qb.clone().select('COUNT(m.id)', 'total').getRawOne(),
     ]);
 

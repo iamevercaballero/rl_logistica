@@ -136,6 +136,7 @@ export class MovementsService {
               }
               await this.applyDecrease(manager, dto.productId, stockWarehouseId, stockLocationId, item.quantity);
               pallet.status = 'EXITED';
+              pallet.exitedAt = new Date();
 
             } else if (dto.type === 'TRANSFER') {
               // Transferencia: reducir desde ubicación actual del palet, aumentar en destino

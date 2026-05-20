@@ -10,6 +10,8 @@ exports.AppModule = void 0;
 const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
 const typeorm_1 = require("@nestjs/typeorm");
+const throttler_1 = require("@nestjs/throttler");
+const core_1 = require("@nestjs/core");
 const auth_module_1 = require("./modules/auth/auth.module");
 const users_module_1 = require("./modules/users/users.module");
 const products_module_1 = require("./modules/products/products.module");
@@ -32,17 +34,40 @@ exports.AppModule = AppModule = __decorate([
             config_1.ConfigModule.forRoot({
                 isGlobal: true
             }),
+            throttler_1.ThrottlerModule.forRoot({
+                throttlers: [
+                    {
+                        ttl: Number(process.env.THROTTLE_TTL) || 60000,
+                        limit: Number(process.env.THROTTLE_LIMIT) || 120,
+                    },
+                ],
+            }),
             typeorm_1.TypeOrmModule.forRootAsync({
-                useFactory: () => ({
-                    type: 'postgres',
-                    host: process.env.DB_HOST,
-                    port: Number(process.env.DB_PORT),
-                    username: process.env.DB_USERNAME,
-                    password: process.env.DB_PASSWORD,
-                    database: process.env.DB_DATABASE,
-                    autoLoadEntities: true,
-                    synchronize: true
-                })
+                useFactory: () => {
+                    const isProd = process.env.NODE_ENV === 'production';
+                    const synchronize = process.env.DB_SYNCHRONIZE === 'true';
+                    const migrationsRun = process.env.DB_MIGRATIONS_RUN === 'true' ||
+                        (isProd && process.env.DB_MIGRATIONS_RUN !== 'false');
+                    const migrationsGlob = isProd
+                        ? 'dist/migrations/*.js'
+                        : 'src/migrations/*.ts';
+                    return {
+                        type: 'postgres',
+                        host: process.env.DB_HOST,
+                        port: Number(process.env.DB_PORT),
+                        username: process.env.DB_USERNAME,
+                        password: process.env.DB_PASSWORD,
+                        database: process.env.DB_DATABASE,
+                        autoLoadEntities: true,
+                        synchronize,
+                        migrations: [migrationsGlob],
+                        migrationsRun,
+                        migrationsTableName: 'typeorm_migrations',
+                        logging: process.env.DB_LOGGING === 'true'
+                            ? ['query', 'error', 'warn']
+                            : ['error'],
+                    };
+                },
             }),
             auth_module_1.AuthModule,
             users_module_1.UsersModule,
@@ -58,6 +83,9 @@ exports.AppModule = AppModule = __decorate([
             seed_module_1.SeedModule,
         ],
         controllers: [app_controller_1.AppController],
+        providers: [
+            { provide: core_1.APP_GUARD, useClass: throttler_1.ThrottlerGuard },
+        ],
     })
 ], AppModule);
 //# sourceMappingURL=app.module.js.map

@@ -38,6 +38,14 @@ __decorate([
     (0, typeorm_1.Column)({ default: 'AVAILABLE' }),
     __metadata("design:type", String)
 ], Pallet.prototype, "status", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' }),
+    __metadata("design:type", Date)
+], Pallet.prototype, "createdAt", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'timestamp', nullable: true }),
+    __metadata("design:type", Object)
+], Pallet.prototype, "exitedAt", void 0);
 exports.Pallet = Pallet = __decorate([
     (0, typeorm_1.Entity)('pallets')
 ], Pallet);

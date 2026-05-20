@@ -20,6 +20,7 @@ import { TransportsModule } from './modules/transports/transports.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { SeedModule } from './modules/seed/seed.module';
+import { MailModule } from './modules/mail/mail.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -110,6 +111,7 @@ import { AppController } from './app.controller';
     BillingModule,
     SeedModule,
     AlertsModule,
+    MailModule,
   ],
   controllers: [AppController],
   providers: [

@@ -1,0 +1,120 @@
+# =============================================================================
+# RL Logística — Entorno de TESTS / QA
+# Levanta PostgreSQL + Redis + backend en modo test para:
+#   • Tests E2E (Supertest / Jest)
+#   • QA manual contra datos de prueba
+#
+# Uso rápido:
+#   cp .env.test.example .env.test     # rellenar contraseñas
+#   docker compose -f docker-compose.test.yml --env-file .env.test up -d
+#   docker compose -f docker-compose.test.yml --env-file .env.test down -v
+#
+# Diferencias respecto a docker-compose.yml (dev):
+#   • Contenedores prefijados con "rl_test_"
+#   • PostgreSQL en puerto 5434 (no conflicta con el dev en 5433)
+#   • Redis en puerto 6380
+#   • Backend en puerto 3001
+#   • Base de datos efímera (tmpfs — se reinicia en cada `down -v`)
+#   • ALLOW_SEED=true: endpoint /api/seed disponible para cargar fixtures
+#   • NODE_ENV=test: desactiva PWA, activa logging detallado
+# =============================================================================
+
+services:
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────────
+  db-test:
+    image: postgres:16-alpine
+    container_name: rl_test_db
+    restart: "no"
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-logistica_palets_test}
+      POSTGRES_USER:     ${POSTGRES_USER:-rl_test}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-test_password_change_me}
+    ports:
+      - "5434:5432"
+    # tmpfs: datos en RAM, se borran al apagar el contenedor → base siempre limpia
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rl_test}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks:
+      - rl_test_net
+
+  # ── Redis ─────────────────────────────────────────────────────────────────
+  redis-test:
+    image: redis:7-alpine
+    container_name: rl_test_redis
+    restart: "no"
+    command: redis-server --save "" --appendonly no --maxmemory 64mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+    networks:
+      - rl_test_net
+
+  # ── Backend ───────────────────────────────────────────────────────────────
+  backend-test:
+    build:
+      context: ./logistica-palets-backend
+      dockerfile: Dockerfile
+    container_name: rl_test_backend
+    restart: "no"
+    depends_on:
+      db-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    environment:
+      PORT:              3000
+      NODE_ENV:          test
+
+      # Base de datos — apunta al servicio db-test del mismo compose
+      DB_HOST:           db-test
+      DB_PORT:           5432
+      DB_USERNAME:       ${POSTGRES_USER:-rl_test}
+      DB_PASSWORD:       ${POSTGRES_PASSWORD:-test_password_change_me}
+      DB_DATABASE:       ${POSTGRES_DB:-logistica_palets_test}
+
+      # TypeORM: NUNCA synchronize en test; migrationsRun aplica el schema
+      DB_SYNCHRONIZE:    "false"
+      DB_MIGRATIONS_RUN: "true"
+      DB_LOGGING:        "false"
+
+      # Auth
+      JWT_SECRET:        ${JWT_SECRET:-test_jwt_secret_32chars_minimum_xx}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-test_refresh_secret_32chars_min_x}
+      JWT_EXPIRES_IN:    8h
+
+      # Rate limiting relajado para scripts de test
+      THROTTLE_TTL:      60000
+      THROTTLE_LIMIT:    500
+
+      # Seguridad
+      CORS_ORIGIN:       "*"
+
+      # Seed habilitado en test → POST /api/seed/run carga fixtures
+      ALLOW_SEED:        "true"
+
+      # Redis
+      REDIS_HOST:        redis-test
+      REDIS_PORT:        6379
+
+      # Email desactivado en tests (no envía correos reales)
+      MAIL_ENABLED:      "false"
+
+    ports:
+      - "3001:3000"
+    networks:
+      - rl_test_net
+
+networks:
+  rl_test_net:
+    name: rl_logistica_test_network
+    driver: bridge

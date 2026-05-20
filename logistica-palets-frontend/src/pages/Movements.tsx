@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import ProductSearch from "../components/ProductSearch";
 import {
@@ -17,6 +17,7 @@ import { listActiveUsers } from "../api/users";
 import type { Product } from "../api/products";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
+import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 
 // ── Tipos formulario entrada jerárquico
 type PalletEntry = { id: number; quantity: string };
@@ -120,6 +121,42 @@ export default function MovementsPage() {
   const isExit = movType === "EXIT" || movType === "ADJUSTMENT_OUT";
   const isTransfer = movType === "TRANSFER";
   const isAdjustment = movType === "ADJUSTMENT_IN" || movType === "ADJUSTMENT_OUT";
+
+  // ── Barcode scanner (EXIT + TRANSFER only) ───────────────────────────────
+  // USB mode: always active so the warehouse scanner auto-selects the pallet.
+  // Camera mode: user taps the 📷 button.
+  const scanVideoRef = useRef<HTMLVideoElement>(null);
+
+  const scanPalletByCode = useCallback(
+    (rawCode: string) => {
+      const code = rawCode.trim().toLowerCase();
+      let found = false;
+      setFefoRows((rows) =>
+        rows.map((row) => {
+          const pallet = row.lot.pallets.find((p) => p.code.trim().toLowerCase() === code);
+          if (!pallet || row.lot.status === "PENDING_REGULARIZATION") return row;
+          found = true;
+          const ids = new Set(row.selectedIds);
+          ids.add(pallet.id);
+          return { ...row, selectedIds: ids, expanded: true };
+        }),
+      );
+      // Toast after state update (found is captured in closure before the map)
+      setTimeout(() => {
+        if (found) toast.success(`Palet ${rawCode.trim()} seleccionado`);
+        else toast.error(`Palet "${rawCode.trim()}" no encontrado en los lotes cargados`);
+      }, 0);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [toast],
+  );
+
+  // Re-create the callback when fefoRows change so the closure is fresh
+  // (we intentionally read fefoRows at call time via setFefoRows functional form)
+  const { cameraActive, cameraSupported, startCamera, stopCamera } = useBarcodeScanner({
+    enabled: (isExit || isTransfer) && fefoRows.length > 0,
+    onScan: scanPalletByCode,
+  });
 
   const filteredLocations = useMemo(() => {
     if (isTransfer) return locations;
@@ -637,6 +674,47 @@ export default function MovementsPage() {
                   <div className="form-section-title">
                     Palets a transferir{totalExitPallets > 0 && <span style={{ color: "var(--primary)", marginLeft: 10, fontWeight: 700 }}>{totalExitPallets} sel. · {totalExitQty.toLocaleString("es-PY")} unid.</span>}
                   </div>
+                  {/* Scan bar — shown once FEFO rows are loaded */}
+                  {fefoRows.length > 0 && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" style={{ verticalAlign: "middle", marginRight: 4 }}>
+                          <rect x="3" y="3" width="2" height="18"/><rect x="7" y="3" width="1" height="18"/><rect x="10" y="3" width="3" height="18"/><rect x="15" y="3" width="1" height="18"/><rect x="18" y="3" width="2" height="18"/>
+                        </svg>
+                        Escáner USB activo · o
+                      </span>
+                      {cameraSupported && (
+                        <button
+                          type="button"
+                          className={`btn${cameraActive ? " btn--primary" : ""}`}
+                          onClick={() => {
+                            if (cameraActive) stopCamera();
+                            else if (scanVideoRef.current) void startCamera(scanVideoRef.current);
+                          }}
+                          style={{ fontSize: 12, padding: "4px 12px", display: "flex", alignItems: "center", gap: 5 }}
+                          aria-label={cameraActive ? "Detener cámara" : "Escanear palet con cámara"}
+                        >
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                            <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
+                            <circle cx="12" cy="13" r="4"/>
+                          </svg>
+                          {cameraActive ? "Detener cámara" : "Escanear con cámara"}
+                        </button>
+                      )}
+                      {cameraActive && (
+                        <video
+                          ref={scanVideoRef}
+                          muted
+                          playsInline
+                          aria-hidden="true"
+                          style={{
+                            width: 220, height: 165, borderRadius: 8,
+                            border: "2px solid var(--primary)", objectFit: "cover",
+                          }}
+                        />
+                      )}
+                    </div>
+                  )}
                   {renderFefoRows()}
                 </>
               ) : (
@@ -777,6 +855,47 @@ export default function MovementsPage() {
                     placeholder={`Lote SAP (ej: ${generateSapLot()})`} style={{ width: 210 }} />
                   <button type="button" className="btn btn--primary" onClick={() => setAppliedExitSapLot(exitSapLotInput.trim())}>Buscar lotes</button>
                   {appliedExitSapLot && <span style={{ fontSize: 12, color: "var(--muted)" }}>Lotes del <strong>{appliedExitSapLot}</strong></span>}
+                </div>
+              )}
+              {/* Scan bar — shown once we have FEFO rows loaded */}
+              {fefoRows.length > 0 && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" style={{ verticalAlign: "middle", marginRight: 4 }}>
+                      <rect x="3" y="3" width="2" height="18"/><rect x="7" y="3" width="1" height="18"/><rect x="10" y="3" width="3" height="18"/><rect x="15" y="3" width="1" height="18"/><rect x="18" y="3" width="2" height="18"/>
+                    </svg>
+                    Escáner USB activo · o
+                  </span>
+                  {cameraSupported && (
+                    <button
+                      type="button"
+                      className={`btn${cameraActive ? " btn--primary" : ""}`}
+                      onClick={() => {
+                        if (cameraActive) stopCamera();
+                        else if (scanVideoRef.current) void startCamera(scanVideoRef.current);
+                      }}
+                      style={{ fontSize: 12, padding: "4px 12px", display: "flex", alignItems: "center", gap: 5 }}
+                      aria-label={cameraActive ? "Detener cámara de escaneo" : "Escanear palet con cámara"}
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                        <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
+                        <circle cx="12" cy="13" r="4"/>
+                      </svg>
+                      {cameraActive ? "Detener cámara" : "Escanear con cámara"}
+                    </button>
+                  )}
+                  {cameraActive && (
+                    <video
+                      ref={scanVideoRef}
+                      muted
+                      playsInline
+                      aria-hidden="true"
+                      style={{
+                        width: 220, height: 165, borderRadius: 8,
+                        border: "2px solid var(--primary)", objectFit: "cover",
+                      }}
+                    />
+                  )}
                 </div>
               )}
               {renderFefoRows()}

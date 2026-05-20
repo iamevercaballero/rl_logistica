@@ -27,6 +27,19 @@ services:
     networks: [internal]
     # Sin sección 'ports': la base de datos no es accesible desde el host.
 
+  redis:
+    image: redis:7-alpine
+    container_name: rl_logistica_redis_prod
+    restart: unless-stopped
+    command: redis-server --save "" --appendonly no --maxmemory 128mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [internal]
+    # Sin 'ports': Redis no expuesto al host en producción.
+
   backend:
     build:
       context: ./logistica-palets-backend
@@ -39,9 +52,13 @@ services:
       PORT: 3000
       DB_HOST: db
       DB_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       NODE_ENV: production
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test:

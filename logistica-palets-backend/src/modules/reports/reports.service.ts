@@ -8,6 +8,7 @@ import { DailyStockQueryDto } from './dto/daily-stock-query.dto';
 import { DifferencesSapQueryDto } from './dto/differences-sap-query.dto';
 import { UpsertSapStockDto } from './dto/upsert-sap-stock.dto';
 import { SapStockSnapshot } from './entities/sap-stock.entity';
+import { CacheService } from '../cache/cache.service';
 
 @Injectable()
 export class ReportsService {
@@ -15,6 +16,7 @@ export class ReportsService {
     private readonly dataSource: DataSource,
     @InjectRepository(SapStockSnapshot)
     private readonly sapStockRepo: Repository<SapStockSnapshot>,
+    private readonly cache: CacheService,
   ) {}
 
   private parseNumber(value: unknown) {
@@ -69,6 +71,11 @@ export class ReportsService {
   }
 
   async stock(query: StockQueryDto) {
+    // Cache key includes filters so each warehouse/location combo is cached separately
+    const cacheKey = `stock:${query.warehouseId ?? 'all'}:${query.locationId ?? 'all'}`;
+    const cached = await this.cache.get(cacheKey);
+    if (cached) return cached;
+
     const qb = this.dataSource
       .createQueryBuilder()
       .from('stocks', 's')
@@ -119,7 +126,7 @@ export class ReportsService {
         .getRawMany(),
     ]);
 
-    return {
+    const stockResult = {
       totalMaterials: this.parseNumber(totalsRaw?.materials),
       stockRows: this.parseNumber(totalsRaw?.stockRows),
       totalQuantity: this.parseNumber(totalsRaw?.totalQuantity),
@@ -149,6 +156,10 @@ export class ReportsService {
         location: row.locationId ? { id: row.locationId, code: row.locationCode } : null,
       })),
     };
+
+    // Cache for 30 s — invalidated by MovementsService on any stock change
+    void this.cache.set(cacheKey, stockResult, 30);
+    return stockResult;
   }
 
   async movements(query: ReportsMovementsQueryDto) {
@@ -426,6 +437,12 @@ export class ReportsService {
 
   async kpis(query: KpisQueryDto) {
     const range = query.range ?? 'today';
+
+    // Cache key per range — invalidated on any movement create/regularize
+    const cacheKey = `kpis:${range}`;
+    const cached = await this.cache.get(cacheKey);
+    if (cached) return cached;
+
     const { start, end } = this.getRangeDates(range);
     const { start: prevStart, end: prevEnd } = this.getPreviousRangeDates(range);
 
@@ -518,7 +535,7 @@ export class ReportsService {
       (r) => new Date(r.fechaVencimiento) <= in15,
     ).length;
 
-    return {
+    const kpisResult = {
       range,
       totalMaterials: this.parseNumber(stockRaw?.materials),
       totalQuantity: this.parseNumber(stockRaw?.totalQuantity),
@@ -535,6 +552,10 @@ export class ReportsService {
         quantity: this.parseNumber(row.quantity),
       })),
     };
+
+    // Cache for 60 s — movements create/regularize invalidate automatically
+    void this.cache.set(cacheKey, kpisResult, 60);
+    return kpisResult;
   }
 
   private buildMovementScopeFilter(

@@ -9,6 +9,7 @@ import "./index.css";
 import { queryClient } from "./lib/queryClient";
 import { ThemeProvider } from "./design-system/theme";
 import { ToastProvider } from "./design-system/toast";
+import { SocketProvider } from "./contexts/SocketContext";
 import AppLayout from "./layouts/AppLayout";
 import DashboardPage from "./pages/Dashboard";
 import LocationsPage from "./pages/Locations";
@@ -113,11 +114,13 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
-        <ToastProvider>
-          <AuthProvider>
-            <RouterProvider router={router} />
-          </AuthProvider>
-        </ToastProvider>
+        <SocketProvider>
+          <ToastProvider>
+            <AuthProvider>
+              <RouterProvider router={router} />
+            </AuthProvider>
+          </ToastProvider>
+        </SocketProvider>
         {import.meta.env.DEV && <ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-left" />}
       </QueryClientProvider>
     </ThemeProvider>

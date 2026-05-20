@@ -88,9 +88,11 @@ services:
       DB_LOGGING:        "false"
 
       # Auth
-      JWT_SECRET:        ${JWT_SECRET:-test_jwt_secret_32chars_minimum_xx}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-test_refresh_secret_32chars_min_x}
-      JWT_EXPIRES_IN:    8h
+      JWT_SECRET:           ${JWT_SECRET:-test_jwt_secret_32chars_minimum_xxxx}
+      JWT_REFRESH_SECRET:   ${JWT_REFRESH_SECRET:-test_refresh_secret_32chars_min_xx}
+      JWT_EXPIRES_IN:       8h
+      JWT_REFRESH_EXPIRES_IN: 7d
+      LOG_LEVEL:            debug
 
       # Rate limiting relajado para scripts de test
       THROTTLE_TTL:      60000

@@ -50,13 +50,21 @@ services:
       DB_DATABASE: ${DB_DATABASE}
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
       NODE_ENV: production
-      # TypeORM: producción NUNCA con synchronize. migrationsRun=true aplica
-      # migrations pendientes al arrancar el contenedor.
+      # TypeORM — en dev .env pone DB_SYNCHRONIZE=true para crear tablas al vuelo.
+      # docker-compose.prod.yml sobreescribe esto a false (belt & suspenders).
       DB_SYNCHRONIZE: "${DB_SYNCHRONIZE:-false}"
       DB_MIGRATIONS_RUN: "${DB_MIGRATIONS_RUN:-true}"
       DB_LOGGING: "${DB_LOGGING:-false}"
       ALLOW_SEED: "${ALLOW_SEED:-false}"
+      # Seguridad
+      CORS_ORIGIN: "${CORS_ORIGIN:-}"
+      THROTTLE_TTL: "${THROTTLE_TTL:-60000}"
+      THROTTLE_LIMIT: "${THROTTLE_LIMIT:-120}"
+      # Email reports (desactivado por default)
+      MAIL_ENABLED: "${MAIL_ENABLED:-false}"
       # Redis cache + WebSocket event bus
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -86,6 +94,7 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_URL: http://localhost:3000/api
+        VITE_WS_URL: http://localhost:3000
     container_name: rl_logistica_frontend
     restart: unless-stopped
     depends_on:

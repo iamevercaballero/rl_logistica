@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { LoggerModule } from 'nestjs-pino';
 import { APP_GUARD } from '@nestjs/core';
 import { CacheModule } from './modules/cache/cache.module';
 import { EventsModule } from './modules/events/events.module';
@@ -24,6 +25,32 @@ import { AppController } from './app.controller';
     ConfigModule.forRoot({
       isGlobal: true
     }),
+
+    // Structured logging: JSON en prod, pretty-print en dev
+    LoggerModule.forRoot({
+      pinoHttp: {
+        level: process.env.LOG_LEVEL ?? 'info',
+        transport:
+          process.env.NODE_ENV !== 'production'
+            ? {
+                target: 'pino-pretty',
+                options: { colorize: true, singleLine: true, translateTime: 'SYS:standard' },
+              }
+            : undefined,
+        base: { service: 'rl-logistica', env: process.env.NODE_ENV },
+        // Nunca loguear tokens JWT ni cookies en los headers
+        redact: {
+          paths: ['req.headers.authorization', 'req.headers.cookie'],
+          censor: '[REDACTED]',
+        },
+        customLogLevel: (_req: unknown, res: { statusCode: number }, err: unknown) => {
+          if (err || (res as { statusCode: number }).statusCode >= 500) return 'error';
+          if ((res as { statusCode: number }).statusCode >= 400) return 'warn';
+          return 'info';
+        },
+      },
+    }),
+
     ThrottlerModule.forRoot({
       throttlers: [
         {

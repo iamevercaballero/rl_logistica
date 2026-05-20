@@ -1,10 +1,19 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
+import { Logger } from 'nestjs-pino';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // bufferLogs: true ensures Pino captures early boot messages
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+
+  // Replace NestJS default logger with Pino
+  app.useLogger(app.get(Logger));
+
+  // Parse cookies (needed for HttpOnly refresh token)
+  app.use(cookieParser());
 
   // Security HTTP headers (HSTS, X-Frame-Options, X-Content-Type-Options, etc.)
   app.use(helmet());
@@ -30,6 +39,6 @@ async function bootstrap() {
 
   const port = process.env.PORT || 3000;
   await app.listen(port);
-  console.log(`Logistica palets API escuchando en puerto ${port}`);
+  app.get(Logger).log(`RL Logística API escuchando en puerto ${port}`, 'Bootstrap');
 }
 void bootstrap();

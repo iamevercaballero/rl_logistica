@@ -34,6 +34,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isReady, setIsReady] = useState(initialReady);
 
   const logout = () => {
+    // Best-effort: ask the server to clear the HttpOnly refresh cookie.
+    // We don't await this — local state is cleared immediately regardless.
+    void api.post("/auth/logout").catch(() => {});
     clearAuthStorage();
     setUser(null);
     setIsReady(true);

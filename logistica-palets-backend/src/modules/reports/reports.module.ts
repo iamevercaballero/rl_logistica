@@ -13,5 +13,6 @@ import { Location } from '../locations/entities/location.entity';
   imports: [TypeOrmModule.forFeature([SapStockSnapshot, Stock, Movement, Product, Warehouse, Location])],
   controllers: [ReportsController],
   providers: [ReportsService],
+  exports: [ReportsService],
 })
 export class ReportsModule {}

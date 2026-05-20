@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listLocations } from "../api/locations";
@@ -15,6 +15,7 @@ import { useAuth } from "../auth/AuthContext";
 import { canCreate, canDelete } from "../auth/rbac";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
+import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 
 const STATUS_LABEL: Record<string, string> = {
   AVAILABLE: "Disponible",
@@ -271,6 +272,16 @@ export default function PalletsPage() {
   const [submitted, setSubmitted] = useState(false);
   const [historyPalletId, setHistoryPalletId] = useState<string | null>(null);
 
+  // Barcode scanner: USB mode always active; camera scan populates code field
+  const scanVideoRef = useRef<HTMLVideoElement>(null);
+  const { cameraActive, cameraSupported, startCamera, stopCamera } = useBarcodeScanner({
+    enabled: allowCreate && !saving,
+    onScan: (scanned) => {
+      setCode(scanned);
+      toast.success(`Código escaneado: ${scanned}`);
+    },
+  });
+
   const codeError = useMemo(() => {
     const value = code.trim();
     if (!value) return "Ingresá un código.";
@@ -365,16 +376,53 @@ export default function PalletsPage() {
       </div>
 
       <form onSubmit={handleSubmit} style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }} aria-label="Nuevo pallet">
-        <input
-          id={codeId}
-          className="input"
-          disabled={!allowCreate || saving}
-          value={code}
-          onChange={(event) => setCode(event.target.value)}
-          placeholder="Código"
-          aria-label="Código del pallet"
-          aria-invalid={submitted && !!codeError}
-          aria-describedby={submitted && codeError ? `${codeId}-err` : undefined}
+        {/* Code field + scan button */}
+        <div style={{ display: "flex", gap: 4 }}>
+          <input
+            id={codeId}
+            className="input"
+            disabled={!allowCreate || saving}
+            value={code}
+            onChange={(event) => setCode(event.target.value)}
+            placeholder="Código del pallet"
+            aria-label="Código del pallet"
+            aria-invalid={submitted && !!codeError}
+            aria-describedby={submitted && codeError ? `${codeId}-err` : undefined}
+            style={{ minWidth: 180 }}
+          />
+          {allowCreate && cameraSupported && (
+            <button
+              type="button"
+              className={`btn${cameraActive ? " btn--primary" : ""}`}
+              onClick={() => {
+                if (cameraActive) stopCamera();
+                else if (scanVideoRef.current) void startCamera(scanVideoRef.current);
+              }}
+              title={cameraActive ? "Detener cámara" : "Escanear código con cámara"}
+              aria-label={cameraActive ? "Detener cámara" : "Escanear código con cámara"}
+              style={{ padding: "0 10px", flexShrink: 0 }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
+                <circle cx="12" cy="13" r="4"/>
+              </svg>
+            </button>
+          )}
+        </div>
+        {/* Hidden video element for camera scanning */}
+        <video
+          ref={scanVideoRef}
+          muted
+          playsInline
+          aria-hidden="true"
+          style={{
+            display: cameraActive ? "block" : "none",
+            width: 240, height: 180,
+            borderRadius: 8,
+            border: "2px solid var(--primary)",
+            objectFit: "cover",
+            alignSelf: "flex-start",
+          }}
         />
         <input
           id={qtyId}

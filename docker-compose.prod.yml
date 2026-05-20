@@ -5,13 +5,17 @@
 #
 # Seguridad:
 #  - La DB NO expone puertos al host (solo red interna del compose).
-#  - Backend y frontend se publican únicamente en 127.0.0.1, para que un reverse
-#    proxy (Nginx/Traefik con SSL) en el host los enrute. NUNCA exponer estos
-#    puertos directamente a internet sin TLS.
+#  - Backend y frontend se publican únicamente en 127.0.0.1, para que un
+#    reverse proxy (Nginx/Traefik con SSL) en el host los enrute.
+#    NUNCA exponer estos puertos directamente a internet sin TLS.
 #  - Secretos vienen de .env.prod (gitignored), nunca hardcodeados.
+#  - La sección environment: del backend sobreescribe cualquier valor del
+#    .env.prod para las variables críticas de seguridad (belt & suspenders).
 # =============================================================================
 
 services:
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────────
   db:
     image: postgres:16-alpine
     container_name: rl_logistica_db_prod
@@ -25,8 +29,9 @@ services:
       timeout: 5s
       retries: 10
     networks: [internal]
-    # Sin sección 'ports': la base de datos no es accesible desde el host.
+    # Sin 'ports': la base de datos NO es accesible desde el host.
 
+  # ── Redis ──────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     container_name: rl_logistica_redis_prod
@@ -40,6 +45,7 @@ services:
     networks: [internal]
     # Sin 'ports': Redis no expuesto al host en producción.
 
+  # ── Backend ───────────────────────────────────────────────────────────────
   backend:
     build:
       context: ./logistica-palets-backend
@@ -48,13 +54,20 @@ services:
     restart: unless-stopped
     env_file: [.env.prod]
     environment:
-      # Overrides defensivos: valores internos fijos, independientes del .env.
-      PORT: 3000
-      DB_HOST: db
-      DB_PORT: 5432
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      NODE_ENV: production
+      # ── Overrides fijos (no pueden ser cambiados desde .env.prod) ──────────
+      # Redes internas del compose
+      PORT:              3000
+      DB_HOST:           db
+      DB_PORT:           5432
+      REDIS_HOST:        redis
+      REDIS_PORT:        6379
+      # Entorno — fuerza modo producción (pino JSON, cache, etc.)
+      NODE_ENV:          production
+      # Seguridad crítica — estos valores NO se sobreescriben aunque .env.prod
+      # diga lo contrario. Doble candado para evitar accidentes.
+      DB_SYNCHRONIZE:    "false"     # NUNCA synchronize en prod
+      DB_MIGRATIONS_RUN: "true"      # aplica migrations al arrancar
+      ALLOW_SEED:        "false"     # seed bloqueado en producción
     depends_on:
       db:
         condition: service_healthy
@@ -74,12 +87,15 @@ services:
       - "127.0.0.1:3000:3000"
     networks: [internal]
 
+  # ── Frontend (React → Nginx) ───────────────────────────────────────────────
   frontend:
     build:
       context: ./logistica-palets-frontend
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: ${VITE_API_URL}
+        # Estas URLs se inyectan en tiempo de build (import.meta.env)
+        VITE_API_URL:  ${VITE_API_URL}
+        VITE_WS_URL:   ${VITE_WS_URL}
     container_name: rl_logistica_frontend_prod
     restart: unless-stopped
     depends_on:

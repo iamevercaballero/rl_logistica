@@ -8,7 +8,32 @@
       "Bash(claude mcp *)",
       "Bash(docker compose *)",
       "Bash(Start-Sleep -Seconds 5)",
-      "PowerShell($token = \\(Invoke-RestMethod -Uri \"http://localhost:3000/api/auth/login\" -Method POST -ContentType \"application/json\" -Body '{\"username\":\"admin\",\"password\":\"admin123\"}'\\).access_token; Write-Host \"Token OK\"; $headers = @{Authorization = \"Bearer $token\"}; $stock = Invoke-RestMethod -Uri \"http://localhost:3000/api/reports/stock\" -Headers $headers; Write-Host \"Stock OK - items: $\\($stock.items.Count\\), totalQuantity: $\\($stock.totalQuantity\\)\"; $movements = Invoke-RestMethod -Uri \"http://localhost:3000/api/reports/movements?page=1&limit=20\" -Headers $headers; Write-Host \"Movements OK - total: $\\($movements.meta.total\\)\")"
+      "PowerShell($token = \\(Invoke-RestMethod -Uri \"http://localhost:3000/api/auth/login\" -Method POST -ContentType \"application/json\" -Body '{\"username\":\"admin\",\"password\":\"admin123\"}'\\).access_token; Write-Host \"Token OK\"; $headers = @{Authorization = \"Bearer $token\"}; $stock = Invoke-RestMethod -Uri \"http://localhost:3000/api/reports/stock\" -Headers $headers; Write-Host \"Stock OK - items: $\\($stock.items.Count\\), totalQuantity: $\\($stock.totalQuantity\\)\"; $movements = Invoke-RestMethod -Uri \"http://localhost:3000/api/reports/movements?page=1&limit=20\" -Headers $headers; Write-Host \"Movements OK - total: $\\($movements.meta.total\\)\")",
+      "Bash(node -e ' *)",
+      "Bash(ls -la docker-compose*)",
+      "Bash(ls logistica-palets-frontend/*.conf logistica-palets-frontend/nginx*)",
+      "Bash(cat logistica-palets-frontend/Dockerfile)",
+      "Bash(git rm *)",
+      "Bash(node -e \"console.log\\(require\\('crypto'\\).randomBytes\\(48\\).toString\\('base64'\\)\\)\")",
+      "Bash(node -e \"console.log\\('helmet', require\\('helmet/package.json'\\).version\\); console.log\\('throttler', require\\('@nestjs/throttler/package.json'\\).version\\)\")",
+      "Bash(node -p \"require\\('./node_modules/helmet/package.json'\\).version + ' | throttler ' + require\\('./node_modules/@nestjs/throttler/package.json'\\).version\")",
+      "Bash(cp .env.prod.example .env.prod)",
+      "Bash(rm -f .env.prod)",
+      "Bash(xargs grep -l \"palletId\\\\|pallet_id\")",
+      "Bash(xargs grep -l \"pallet\" -i)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(k,v\\) for k,v in {**d.get\\('dependencies',{}\\), **d.get\\('devDependencies',{}\\)}.items\\(\\)]\")",
+      "Bash(node -e \"const p = require\\('./package.json'\\); console.log\\('socket.io-client:', p.dependencies['socket.io-client'] || 'MISSING'\\)\")",
+      "Bash(git commit -m ' *)",
+      "Bash(git add *)",
+      "Bash(node -e \"require\\('sharp'\\)\")",
+      "Bash(node -e \"require\\('canvas'\\)\")",
+      "Bash(magick --version)",
+      "Bash(cat .env.test.example)",
+      "Bash(cat ../.env.test.example)",
+      "Bash(grep -n \"REPORT_TO\\\\|MAIL\\\\|SMTP\\\\|mailer\\\\|nodemailer\" src/ -r)",
+      "Bash(ls src/modules/mail)",
+      "Bash(node \"C:\\\\Users\\\\Usuario\\\\Documents\\\\cursos\\\\rl-logistica\\\\scripts\\\\generate-pwa-icons.mjs\")",
+      "Bash(node -e \"const c=require\\('crypto'\\); console.log\\('JWT_SECRET='+c.randomBytes\\(48\\).toString\\('base64'\\)\\); console.log\\('JWT_REFRESH_SECRET='+c.randomBytes\\(48\\).toString\\('base64'\\)\\); console.log\\('DB_PASSWORD_PROD='+c.randomBytes\\(24\\).toString\\('base64url'\\)\\); console.log\\('DB_PASSWORD_TEST='+c.randomBytes\\(24\\).toString\\('base64url'\\)\\); console.log\\('POSTGRES_PASSWORD_PROD='+c.randomBytes\\(24\\).toString\\('base64url'\\)\\); console.log\\('POSTGRES_PASSWORD_TEST='+c.randomBytes\\(24\\).toString\\('base64url'\\)\\)\")"
     ]
   }
 }

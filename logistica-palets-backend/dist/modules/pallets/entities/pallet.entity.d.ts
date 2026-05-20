@@ -5,4 +5,6 @@ export declare class Pallet {
     quantity: number;
     currentLocationId?: string | null;
     status: string;
+    createdAt: Date;
+    exitedAt?: Date | null;
 }

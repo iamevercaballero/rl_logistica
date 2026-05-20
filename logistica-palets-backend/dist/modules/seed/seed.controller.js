@@ -26,7 +26,7 @@ let SeedController = SeedController_1 = class SeedController {
     }
     async seedFromExcel(body) {
         var _a, _b;
-        if (process.env.NODE_ENV === 'production' && !process.env.ALLOW_SEED) {
+        if (process.env.NODE_ENV === 'production' && process.env.ALLOW_SEED !== 'true') {
             throw new common_1.BadRequestException('Seed deshabilitado en producción. Setear ALLOW_SEED=true para habilitar.');
         }
         this.logger.log('Iniciando seed desde Excel...');

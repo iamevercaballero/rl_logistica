@@ -125,6 +125,7 @@ let MovementsService = class MovementsService {
                             }
                             await this.applyDecrease(manager, dto.productId, stockWarehouseId, stockLocationId, item.quantity);
                             pallet.status = 'EXITED';
+                            pallet.exitedAt = new Date();
                         }
                         else if (dto.type === 'TRANSFER') {
                             const fromLocationId = (_4 = pallet.currentLocationId) !== null && _4 !== void 0 ? _4 : null;

@@ -44,3 +44,40 @@ export async function createPallet(payload: {
 export async function deletePallet(id: string): Promise<void> {
   await api.delete(`/pallets/${id}`);
 }
+
+/* ── Pallet traceability ──────────────────────────────────────────────────── */
+
+export type PalletHistoryEvent = {
+  movementId: string;
+  type: string;
+  date: string;
+  quantity: number;
+  documentNumber?: string | null;
+  supplier?: string | null;
+  carrier?: string | null;
+  driver?: string | null;
+  destination?: string | null;
+  notes?: string | null;
+  status: string;
+  from?: {
+    locationId: string;
+    locationCode: string;
+    warehouseName?: string | null;
+  } | null;
+  to?: {
+    locationId: string;
+    locationCode: string;
+    warehouseName?: string | null;
+  } | null;
+};
+
+export type PalletHistoryResponse = {
+  pallet: LotPallet;
+  product: { code: string; description: string } | null;
+  history: PalletHistoryEvent[];
+};
+
+export async function getPalletHistory(id: string): Promise<PalletHistoryResponse> {
+  const { data } = await api.get<PalletHistoryResponse>(`/pallets/${id}/history`);
+  return data;
+}

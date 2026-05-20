@@ -34,6 +34,16 @@ export class PalletsController {
     return this.service.findOne(id);
   }
 
+  /**
+   * Full movement history for a single pallet.
+   * Used by the traceability UI panel.
+   */
+  @Get(':id/history')
+  @Roles('ADMIN', 'MANAGER', 'AUDITOR')
+  history(@Param('id') id: string) {
+    return this.service.history(id);
+  }
+
   // ✅ WRITE
   @Post()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')

@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { ProductsModule } from './modules/products/products.module';
@@ -20,17 +22,44 @@ import { AppController } from './app.controller';
     ConfigModule.forRoot({
       isGlobal: true
     }),
+    ThrottlerModule.forRoot({
+      throttlers: [
+        {
+          // ttl en milisegundos (throttler v6). Default: 120 req/min por IP.
+          ttl: Number(process.env.THROTTLE_TTL) || 60_000,
+          limit: Number(process.env.THROTTLE_LIMIT) || 120,
+        },
+      ],
+    }),
     TypeOrmModule.forRootAsync({
-      useFactory: () => ({
-        type: 'postgres',
-        host: process.env.DB_HOST,
-        port: Number(process.env.DB_PORT),
-        username: process.env.DB_USERNAME,
-        password: process.env.DB_PASSWORD,
-        database: process.env.DB_DATABASE,
-        autoLoadEntities: true,
-        synchronize: true
-      })
+      useFactory: () => {
+        const isProd = process.env.NODE_ENV === 'production';
+        const synchronize = process.env.DB_SYNCHRONIZE === 'true';
+        // En prod, migrationsRun por default; en dev, sólo si el usuario lo pide.
+        const migrationsRun =
+          process.env.DB_MIGRATIONS_RUN === 'true' ||
+          (isProd && process.env.DB_MIGRATIONS_RUN !== 'false');
+        const migrationsGlob = isProd
+          ? 'dist/migrations/*.js'
+          : 'src/migrations/*.ts';
+        return {
+          type: 'postgres',
+          host: process.env.DB_HOST,
+          port: Number(process.env.DB_PORT),
+          username: process.env.DB_USERNAME,
+          password: process.env.DB_PASSWORD,
+          database: process.env.DB_DATABASE,
+          autoLoadEntities: true,
+          synchronize,
+          migrations: [migrationsGlob],
+          migrationsRun,
+          migrationsTableName: 'typeorm_migrations',
+          logging:
+            process.env.DB_LOGGING === 'true'
+              ? ['query', 'error', 'warn']
+              : ['error'],
+        };
+      },
     }),
     AuthModule,
     UsersModule,
@@ -46,5 +75,9 @@ import { AppController } from './app.controller';
     SeedModule,
   ],
   controllers: [AppController],
+  providers: [
+    // Rate limiting global. Cada endpoint puede sobreescribir con @Throttle.
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+  ],
 })
 export class AppModule {}

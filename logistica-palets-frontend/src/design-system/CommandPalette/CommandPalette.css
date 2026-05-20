@@ -1,0 +1,243 @@
+/* =============================================================================
+   Command Palette — RL Logística Design System
+   ============================================================================= */
+
+/* ── Backdrop ─────────────────────────────────────────────────────────────── */
+.cp-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9900;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 15vh;
+  animation: cp-fade-in 0.12s ease;
+}
+
+@keyframes cp-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ── Modal ────────────────────────────────────────────────────────────────── */
+.cp-modal {
+  width: 100%;
+  max-width: 560px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg), 0 0 0 1px rgba(0, 102, 255, 0.12);
+  overflow: hidden;
+  animation: cp-slide-in 0.15s cubic-bezier(0.22, 1, 0.36, 1);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+}
+
+@keyframes cp-slide-in {
+  from { transform: translateY(-10px); opacity: 0; }
+  to   { transform: translateY(0);     opacity: 1; }
+}
+
+/* ── Search bar ───────────────────────────────────────────────────────────── */
+.cp-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-base);
+}
+
+.cp-search-icon {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.cp-input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  font: inherit;
+  font-size: 15px;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.cp-input::placeholder { color: var(--muted); }
+
+.cp-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--panel-hi);
+  font-family: ui-monospace, monospace;
+  letter-spacing: 0;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.cp-kbd:hover {
+  background: var(--panel-top);
+  color: var(--text);
+}
+
+/* ── Results list ─────────────────────────────────────────────────────────── */
+.cp-list {
+  overflow-y: auto;
+  flex: 1;
+  padding: 6px 0;
+}
+
+/* ── Group label ──────────────────────────────────────────────────────────── */
+.cp-group-label {
+  padding: 8px 14px 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+
+/* ── Item ─────────────────────────────────────────────────────────────────── */
+.cp-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  cursor: pointer;
+  transition: background 0.08s ease;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.cp-item:hover,
+.cp-item[aria-selected="true"] {
+  background: var(--primary-light);
+}
+
+.cp-item[aria-selected="true"] .cp-item-label {
+  color: var(--primary-text);
+}
+
+.cp-item[aria-selected="true"] .cp-item-icon {
+  color: var(--primary);
+}
+
+.cp-item-icon {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--panel-hi);
+  border: 1px solid var(--border-dim);
+  color: var(--muted);
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.cp-item-icon--primary { background: var(--primary-light); border-color: rgba(0,102,255,0.2); color: var(--primary); }
+.cp-item-icon--success { background: rgba(16,185,129,0.10); border-color: rgba(16,185,129,0.25); color: var(--success); }
+.cp-item-icon--warning { background: rgba(245,158,11,0.10); border-color: rgba(245,158,11,0.25); color: var(--warning); }
+.cp-item-icon--danger  { background: rgba(239,68,68,0.10);  border-color: rgba(239,68,68,0.25);  color: var(--danger); }
+
+.cp-item-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.cp-item-label {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.cp-item-sub {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cp-item-shortcut {
+  flex-shrink: 0;
+}
+
+/* ── Footer ───────────────────────────────────────────────────────────────── */
+.cp-footer {
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg-base);
+}
+
+.cp-footer-hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* ── Empty state ──────────────────────────────────────────────────────────── */
+.cp-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ── Highlight match ──────────────────────────────────────────────────────── */
+.cp-highlight {
+  color: var(--primary-text);
+  font-weight: 700;
+  background: var(--primary-light);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* ── Trigger button (topbar) ──────────────────────────────────────────────── */
+.cp-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-mid);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.cp-trigger:hover {
+  background: var(--panel-hi);
+  border-color: var(--muted);
+  color: var(--text);
+}

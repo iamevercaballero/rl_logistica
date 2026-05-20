@@ -2,6 +2,13 @@ import React from "react";
 import { Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { canRead } from "../auth/rbac";
 import { useAuth } from "../auth/AuthContext";
+import { ThemeToggleButton } from "../design-system/theme";
+import {
+  CommandPalette,
+  CommandPaletteTrigger,
+  useCommandPalette,
+  type CommandItem,
+} from "../design-system/CommandPalette";
 
 const ROLE_BADGE: Record<string, string> = {
   ADMIN: "badge badge--role-admin",
@@ -100,6 +107,7 @@ const modules = [
 export default function AppLayout() {
   const { user, isReady, logout } = useAuth();
   const navigate = useNavigate();
+  const cmdPalette = useCommandPalette();
 
   if (!isReady) return null;
   if (!user) return <Navigate to="/login" replace />;
@@ -112,9 +120,100 @@ export default function AppLayout() {
     navigate("/login", { replace: true });
   }
 
+  /* Build command palette items */
+  const commandItems: CommandItem[] = [
+    // Navigation — visible pages
+    ...visible.map((m) => ({
+      id: `nav-${m.key}`,
+      label: m.label,
+      group: "Páginas",
+      icon: Icons[m.key],
+      iconVariant: "primary" as const,
+      path: m.path,
+      keywords: m.key,
+    })),
+    // Quick actions
+    {
+      id: "action-new-entry",
+      label: "Nuevo movimiento de entrada",
+      sublabel: "Registrar ingreso de palets al depósito",
+      group: "Acciones rápidas",
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+      ),
+      iconVariant: "success",
+      path: "/movements",
+      keywords: "entrada entry ingreso palet",
+    },
+    {
+      id: "action-new-exit",
+      label: "Nuevo movimiento de salida",
+      sublabel: "Registrar egreso o despacho de palets",
+      group: "Acciones rápidas",
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M7 16V4m0 0L3 8m4-4l4 4"/><path d="M17 8v12m0 0l4-4m-4 4l-4-4"/>
+        </svg>
+      ),
+      iconVariant: "danger",
+      path: "/movements",
+      keywords: "salida exit egreso despacho",
+    },
+    {
+      id: "action-reports-stock",
+      label: "Ver stock actual",
+      sublabel: "Reporte de inventario en tiempo real",
+      group: "Acciones rápidas",
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <line x1="18" y1="20" x2="18" y2="10"/>
+          <line x1="12" y1="20" x2="12" y2="4"/>
+          <line x1="6" y1="20" x2="6" y2="14"/>
+        </svg>
+      ),
+      iconVariant: "primary",
+      path: "/reports",
+      keywords: "stock inventario reporte cantidad",
+    },
+    {
+      id: "action-fefo",
+      label: "Consulta FEFO",
+      sublabel: "Lotes ordenados por fecha de vencimiento",
+      group: "Acciones rápidas",
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+          <line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/>
+          <line x1="3" y1="10" x2="21" y2="10"/>
+        </svg>
+      ),
+      iconVariant: "warning",
+      path: "/lots",
+      keywords: "fefo vencimiento lote fecha",
+    },
+    {
+      id: "action-logout",
+      label: "Cerrar sesión",
+      group: "Sistema",
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+          <polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+        </svg>
+      ),
+      iconVariant: "danger",
+      action: handleLogout,
+      keywords: "logout salir",
+    },
+  ];
+
   return (
     <div style={{ minHeight: "100vh", display: "grid", gridTemplateColumns: "260px 1fr" }}>
-      <aside className="sidebar-wrap">
+      <a href="#main-content" className="skip-link">Saltar al contenido</a>
+
+      <aside className="sidebar-wrap" aria-label="Menú lateral">
         <div className="sidebar-brand">
           <img src="/logo.jpg" alt="RL Logística" className="sidebar-brand-logo" />
           <div>
@@ -125,7 +224,7 @@ export default function AppLayout() {
 
         <div className="sidebar-section">Navegación</div>
 
-        <nav className="sidebar-nav">
+        <nav className="sidebar-nav" aria-label="Navegación principal">
           {visible.map((m) => (
             <NavLink
               key={m.key}
@@ -161,7 +260,8 @@ export default function AppLayout() {
               <span className="sidebar-user-role">{user.role}</span>
             </div>
           </div>
-          <button className="sidebar-logout" onClick={handleLogout}>
+          <ThemeToggleButton />
+          <button className="sidebar-logout" onClick={handleLogout} aria-label="Cerrar sesión">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
               <polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" />
@@ -171,13 +271,14 @@ export default function AppLayout() {
         </div>
       </aside>
 
-      <main style={{ padding: "20px 24px 48px", minWidth: 0, background: "var(--bg)" }}>
+      <main id="main-content" style={{ padding: "20px 24px 48px", minWidth: 0, background: "var(--bg)" }}>
         <div className="topbar">
           <div className="topbar-title">
             <span className="status-dot" />
             RL Logística — WMS Enterprise
           </div>
           <div className="topbar-right">
+            <CommandPaletteTrigger onClick={cmdPalette.open} />
             <span className={ROLE_BADGE[user.role] ?? "badge"}>{user.role}</span>
             <span className="badge">{user.username}</span>
           </div>
@@ -185,6 +286,12 @@ export default function AppLayout() {
 
         <Outlet />
       </main>
+
+      <CommandPalette
+        items={commandItems}
+        isOpen={cmdPalette.isOpen}
+        onClose={cmdPalette.close}
+      />
     </div>
   );
 }

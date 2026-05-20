@@ -36,7 +36,12 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN}
       NODE_ENV: production
-      ALLOW_SEED: "true"
+      # TypeORM: producción NUNCA con synchronize. migrationsRun=true aplica
+      # migrations pendientes al arrancar el contenedor.
+      DB_SYNCHRONIZE: "${DB_SYNCHRONIZE:-false}"
+      DB_MIGRATIONS_RUN: "${DB_MIGRATIONS_RUN:-true}"
+      DB_LOGGING: "${DB_LOGGING:-false}"
+      ALLOW_SEED: "${ALLOW_SEED:-false}"
       # Datos del emisor (RL Logística) para facturación electrónica
       EMISOR_RUC: ${EMISOR_RUC:-80000000}
       EMISOR_DV: ${EMISOR_DV:-0}

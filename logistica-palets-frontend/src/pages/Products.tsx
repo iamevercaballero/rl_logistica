@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createProduct, deleteProduct, listProducts, type Product } from "../api/products";
 import { useAuth } from "../auth/AuthContext";
 import { canCreate, canDelete } from "../auth/rbac";
+import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 
 export default function ProductsPage() {
@@ -9,15 +11,15 @@ export default function ProductsPage() {
   const role = user?.role;
   const allowCreate = role ? canCreate("products", role) : false;
   const allowDelete = role ? canDelete("products", role) : false;
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const codeId = useId();
+  const descId = useId();
+  const umId = useId();
 
-  const [items, setItems] = useState<Product[]>([]);
   const [code, setCode] = useState("");
   const [description, setDescription] = useState("");
   const [unitOfMeasure, setUnitOfMeasure] = useState("UN");
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [formError, setFormError] = useState("");
   const [submitted, setSubmitted] = useState(false);
 
   const codeError = useMemo(() => {
@@ -34,62 +36,51 @@ export default function ProductsPage() {
     return "";
   }, [description]);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      setItems(await listProducts());
-    } catch (err) {
-      setError(getFriendlyApiError(err));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const { data: items = [], isLoading, isError, refetch } = useQuery({
+    queryKey: ["products"],
+    queryFn: () => listProducts(),
+  });
 
-  useEffect(() => {
-    refresh().catch(() => undefined);
-  }, [refresh]);
-
-  async function handleCreate(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSubmitted(true);
-    setFormError("");
-
-    if (!allowCreate || codeError || descriptionError) return;
-
-    setSaving(true);
-    try {
-      await createProduct({
-        code: code.trim(),
-        description: description.trim(),
-        unitOfMeasure: unitOfMeasure.trim(),
-        active: true,
-      });
+  const createMut = useMutation({
+    mutationFn: createProduct,
+    onSuccess: (created) => {
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+      toast.success(`Material ${created.code} creado`);
       setCode("");
       setDescription("");
       setUnitOfMeasure("UN");
       setSubmitted(false);
-      await refresh();
-    } catch (err) {
-      setFormError(getFriendlyApiError(err));
-    } finally {
-      setSaving(false);
-    }
+    },
+    onError: (err) => toast.error(getFriendlyApiError(err)),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => deleteProduct(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+      toast.success("Material eliminado");
+    },
+    onError: (err) => toast.error(getFriendlyApiError(err)),
+  });
+
+  const saving = createMut.isPending || deleteMut.isPending;
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSubmitted(true);
+    if (!allowCreate || codeError || descriptionError) return;
+    createMut.mutate({
+      code: code.trim(),
+      description: description.trim(),
+      unitOfMeasure: unitOfMeasure.trim(),
+      active: true,
+    });
   }
 
-  async function handleDelete(item: Product) {
-    if (!allowDelete || !window.confirm(`Eliminar material ${item.code}?`)) return;
-
-    setFormError("");
-    setSaving(true);
-    try {
-      await deleteProduct(item.id);
-      await refresh();
-    } catch (err) {
-      setFormError(getFriendlyApiError(err));
-    } finally {
-      setSaving(false);
-    }
+  function handleDelete(item: Product) {
+    if (!allowDelete) return;
+    if (!window.confirm(`Eliminar material ${item.code}?`)) return;
+    deleteMut.mutate(item.id);
   }
 
   return (
@@ -101,52 +92,68 @@ export default function ProductsPage() {
         </p>
       </div>
 
-      <form onSubmit={handleCreate} style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-        <input className="input" disabled={!allowCreate || saving} value={code} onChange={(event) => setCode(event.target.value)} placeholder="Código material" />
+      <form onSubmit={handleSubmit} style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }} aria-label="Nuevo material">
         <input
+          id={codeId}
+          className="input"
+          disabled={!allowCreate || saving}
+          value={code}
+          onChange={(event) => setCode(event.target.value)}
+          placeholder="Código material"
+          aria-label="Código de material"
+          aria-invalid={submitted && !!codeError}
+          aria-describedby={submitted && codeError ? `${codeId}-err` : undefined}
+        />
+        <input
+          id={descId}
           className="input"
           disabled={!allowCreate || saving}
           value={description}
           onChange={(event) => setDescription(event.target.value)}
           placeholder="Descripción"
+          aria-label="Descripción"
+          aria-invalid={submitted && !!descriptionError}
+          aria-describedby={submitted && descriptionError ? `${descId}-err` : undefined}
           style={{ minWidth: 320 }}
         />
         <input
+          id={umId}
           className="input"
           disabled={!allowCreate || saving}
           value={unitOfMeasure}
           onChange={(event) => setUnitOfMeasure(event.target.value)}
           placeholder="UM"
+          aria-label="Unidad de medida"
           style={{ width: 120 }}
         />
         <button className="btn btn--primary" type="submit" disabled={!allowCreate || saving}>
-          {saving ? "Guardando..." : "Guardar material"}
+          {createMut.isPending ? "Guardando..." : "Guardar material"}
         </button>
       </form>
 
-      {submitted && codeError ? <p style={{ color: "#dc2626", marginTop: -4, fontSize: 13 }}>{codeError}</p> : null}
-      {submitted && descriptionError ? <p style={{ color: "#dc2626", marginTop: -4, fontSize: 13 }}>{descriptionError}</p> : null}
-      {formError ? <p style={{ color: "#dc2626", fontSize: 13 }}>{formError}</p> : null}
-      {loading ? <p style={{ color: "var(--muted)", fontSize: 14 }}>Cargando...</p> : null}
-      {error ? (
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <p style={{ color: "#dc2626", marginBottom: 0, fontSize: 13 }}>No se pudo cargar.</p>
-          <button className="btn btn--primary" onClick={refresh}>Reintentar</button>
+      {submitted && codeError ? <p id={`${codeId}-err`} className="form-error" role="alert">{codeError}</p> : null}
+      {submitted && descriptionError ? <p id={`${descId}-err`} className="form-error" role="alert">{descriptionError}</p> : null}
+
+      {isLoading ? <p style={{ color: "var(--muted)", fontSize: 14 }} aria-busy="true">Cargando…</p> : null}
+      {isError ? (
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }} role="alert">
+          <p className="form-error" style={{ marginBottom: 0 }}>No se pudo cargar.</p>
+          <button className="btn btn--primary" onClick={() => refetch()}>Reintentar</button>
         </div>
       ) : null}
 
-      {!loading && !error ? (
+      {!isLoading && !isError ? (
         items.length === 0 ? (
           <p>No hay materiales registrados</p>
         ) : (
-          <table className="table">
+          <table className="table" aria-label="Lista de materiales">
             <thead>
               <tr>
-                <th>Código</th>
-                <th>Descripción</th>
-                <th>UM</th>
-                <th>Estado</th>
-                <th />
+                <th scope="col">Código</th>
+                <th scope="col">Descripción</th>
+                <th scope="col">UM</th>
+                <th scope="col">Estado</th>
+                <th scope="col" />
               </tr>
             </thead>
             <tbody>
@@ -161,7 +168,16 @@ export default function ProductsPage() {
                     </span>
                   </td>
                   <td style={{ textAlign: "right" }}>
-                    {allowDelete ? <button className="btn btn--danger" onClick={() => handleDelete(item)}>Eliminar</button> : null}
+                    {allowDelete ? (
+                      <button
+                        className="btn btn--danger"
+                        onClick={() => handleDelete(item)}
+                        disabled={saving}
+                        aria-label={`Eliminar material ${item.code}`}
+                      >
+                        Eliminar
+                      </button>
+                    ) : null}
                   </td>
                 </tr>
               ))}

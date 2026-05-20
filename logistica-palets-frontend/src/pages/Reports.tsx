@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   getDailyStockReport,
@@ -7,15 +8,12 @@ import {
   getStockReport,
   getTraceReport,
   upsertSapStock,
-  type DailyStockRow,
-  type ReportMovementRow,
-  type StockReportResponse,
-  type TraceReportResponse,
 } from "../api/reports";
-import { getMovements, regularizeMovement, type Movement } from "../api/movements";
-import { listLots, type Lot } from "../api/lots";
-import { listWarehouses, type Warehouse } from "../api/warehouses";
-import { listProducts, type Product } from "../api/products";
+import { getMovements, regularizeMovement } from "../api/movements";
+import { listLots } from "../api/lots";
+import { listWarehouses } from "../api/warehouses";
+import { listProducts } from "../api/products";
+import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 
 const MOVE_LABEL: Record<string, string> = {
@@ -52,17 +50,9 @@ const initialFilters: MovementFilters = {
 };
 
 type RegPayload = {
-  reason: string;
-  documentNumber: string;
-  supplier: string;
-  carrier: string;
-  driver: string;
-  destination: string;
-  notes: string;
-  sapLot: string;
-  fechaVencimiento: string;
-  fechaFabricacion: string;
-  proveedor: string;
+  reason: string; documentNumber: string; supplier: string; carrier: string;
+  driver: string; destination: string; notes: string; sapLot: string;
+  fechaVencimiento: string; fechaFabricacion: string; proveedor: string;
 };
 
 const emptyReg: RegPayload = {
@@ -73,226 +63,140 @@ const emptyReg: RegPayload = {
 
 export default function ReportsPage() {
   const today = new Date().toISOString().slice(0, 10);
+  const { toast } = useToast();
+  const qc = useQueryClient();
+
   const [activeTab, setActiveTab] = useState<Tab>("stock");
 
-  // Shared catalog data
-  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-
   // Stock tab
-  const [stock, setStock] = useState<StockReportResponse | null>(null);
   const [stockWarehouseId, setStockWarehouseId] = useState("");
 
   // Historial tab
-  const [movements, setMovements] = useState<ReportMovementRow[]>([]);
-  const [movementsMeta, setMovementsMeta] = useState({ page: 1, limit: 20, total: 0, totalPages: 1 });
   const [filters, setFilters] = useState<MovementFilters>(initialFilters);
   const [appliedFilters, setAppliedFilters] = useState<MovementFilters>(initialFilters);
+  const [movPage, setMovPage] = useState(1);
+  const [movLimit, setMovLimit] = useState(20);
 
-  // Lotes & SAP tab
+  // Lotes tab
   const [lotSapSearch, setLotSapSearch] = useState("");
   const [lotProductSearch, setLotProductSearch] = useState("");
-  const [lotResults, setLotResults] = useState<Lot[]>([]);
-  const [lotLoaded, setLotLoaded] = useState(false);
-  const [lotError, setLotError] = useState("");
+  const [lotApplied, setLotApplied] = useState<{ sap: string; product: string } | null>(null);
 
   // Pendientes tab
-  const [pendingMovements, setPendingMovements] = useState<Movement[]>([]);
-  const [pendingLoaded, setPendingLoaded] = useState(false);
-  const [pendingError, setPendingError] = useState("");
   const [regModal, setRegModal] = useState<{ id: string; label: string } | null>(null);
   const [regForm, setRegForm] = useState<RegPayload>(emptyReg);
   const [regError, setRegError] = useState("");
-  const [regLoading, setRegLoading] = useState(false);
 
   // Trace tab
   const [traceMaterialId, setTraceMaterialId] = useState("");
-  const [traceResult, setTraceResult] = useState<TraceReportResponse | null>(null);
-  const [traceError, setTraceError] = useState("");
+  const [traceApplied, setTraceApplied] = useState("");
 
   // Daily / SAP tabs
   const [dailyDate, setDailyDate] = useState(today);
-  const [dailyStock, setDailyStock] = useState<DailyStockRow[]>([]);
-  const [differencesSap, setDifferencesSap] = useState<DailyStockRow[]>([]);
   const [sapForm, setSapForm] = useState({ date: today, productId: "", warehouseId: "", sapQuantity: "" });
   const [sapError, setSapError] = useState("");
 
-  // Global loading / error
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  // ── Catalog queries ───────────────────────────────────────────────────────
 
-  // ── Data loaders ──────────────────────────────────────────────────────────
+  const [warehousesQ, productsQ] = useQueries({
+    queries: [
+      { queryKey: ["warehouses"], queryFn: listWarehouses, staleTime: 5 * 60_000 },
+      { queryKey: ["products"],   queryFn: listProducts,   staleTime: 5 * 60_000 },
+    ],
+  });
 
-  const loadStock = useCallback(async (warehouseId?: string) => {
-    const data = await getStockReport(warehouseId);
-    setStock(data);
-  }, []);
+  // ── Data queries ──────────────────────────────────────────────────────────
 
-  const loadMovements = useCallback(async (page = 1, limit = 20, current = initialFilters) => {
-    const response = await getMovementsReport({
-      page, limit,
-      warehouseId: current.warehouseId || undefined,
-      productId: current.productId || undefined,
-      type: current.type || undefined,
-      dateFrom: current.dateFrom || undefined,
-      dateTo: current.dateTo || undefined,
-      search: current.search.trim() || undefined,
-    });
-    setMovements(response.data);
-    setMovementsMeta(response.meta);
-  }, []);
+  const stockQ = useQuery({
+    queryKey: ["stock", "report", stockWarehouseId],
+    queryFn: () => getStockReport(stockWarehouseId || undefined),
+  });
 
-  const loadDaily = useCallback(async (date: string) => {
-    const [daily, diff] = await Promise.all([
-      getDailyStockReport({ date }),
-      getDifferencesSapReport({ date }),
-    ]);
-    setDailyStock(daily);
-    setDifferencesSap(diff);
-  }, []);
+  const movementsQ = useQuery({
+    queryKey: ["movements", "report", { page: movPage, limit: movLimit, ...appliedFilters }],
+    queryFn: () => getMovementsReport({
+      page: movPage, limit: movLimit,
+      warehouseId: appliedFilters.warehouseId || undefined,
+      productId:   appliedFilters.productId   || undefined,
+      type:        appliedFilters.type        || undefined,
+      dateFrom:    appliedFilters.dateFrom    || undefined,
+      dateTo:      appliedFilters.dateTo      || undefined,
+      search:      appliedFilters.search.trim() || undefined,
+    }),
+    placeholderData: (prev) => prev,
+  });
 
-  const loadPending = useCallback(async () => {
-    setPendingError("");
-    try {
-      const res = await getMovements({ status: "PENDING_REGULARIZATION", limit: 100 });
-      setPendingMovements(res.data);
-    } catch (err) {
-      setPendingError(getFriendlyApiError(err));
-    } finally {
-      setPendingLoaded(true);
-    }
-  }, []);
+  const lotsQ = useQuery({
+    queryKey: ["lots", "search", lotApplied],
+    queryFn:  () => listLots(lotApplied?.product || undefined, lotApplied?.sap || undefined),
+    enabled:  lotApplied !== null,
+  });
 
-  const loadInitial = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const [warehouseData, productData] = await Promise.all([
-        listWarehouses().catch(() => []),
-        listProducts().catch(() => []),
-      ]);
-      setWarehouses(warehouseData);
-      setProducts(productData);
-      await Promise.all([
-        loadStock(stockWarehouseId || undefined),
-        loadMovements(1, 20, appliedFilters),
-        loadDaily(dailyDate),
-      ]);
-    } catch (err) {
-      setError(getFriendlyApiError(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [appliedFilters, dailyDate, loadDaily, loadMovements, loadStock, stockWarehouseId]);
+  const pendingQ = useQuery({
+    queryKey: ["movements", "pending"],
+    queryFn:  () => getMovements({ status: "PENDING_REGULARIZATION", limit: 100 }),
+    enabled:  activeTab === "pendientes",
+    staleTime: 0,
+  });
 
-  useEffect(() => {
-    loadInitial().catch(() => undefined);
-  }, [loadInitial]);
+  const [dailyQ, diffQ] = useQueries({
+    queries: [
+      {
+        queryKey: ["daily", "stock", dailyDate],
+        queryFn:  () => getDailyStockReport({ date: dailyDate }),
+      },
+      {
+        queryKey: ["daily", "diff", dailyDate],
+        queryFn:  () => getDifferencesSapReport({ date: dailyDate }),
+      },
+    ],
+  });
 
-  // Lazy-load pending regularizations on first visit to that tab
-  useEffect(() => {
-    if (activeTab === "pendientes" && !pendingLoaded) {
-      loadPending().catch(() => undefined);
-    }
-  }, [activeTab, loadPending, pendingLoaded]);
+  const traceQ = useQuery({
+    queryKey: ["trace", traceApplied],
+    queryFn:  () => getTraceReport(traceApplied),
+    enabled:  !!traceApplied,
+    staleTime: 30_000,
+  });
 
-  // ── Event handlers ────────────────────────────────────────────────────────
+  // ── Mutations ─────────────────────────────────────────────────────────────
 
-  async function handleApplyMovements() {
-    setLoading(true);
-    setError("");
-    try {
-      setAppliedFilters(filters);
-      await loadMovements(1, movementsMeta.limit, filters);
-    } catch (err) {
-      setError(getFriendlyApiError(err));
-    } finally {
-      setLoading(false);
-    }
-  }
+  const upsertSapMut = useMutation({
+    mutationFn: upsertSapStock,
+    onSuccess: () => {
+      toast.success("Stock SAP guardado correctamente.");
+      setSapError("");
+      void qc.invalidateQueries({ queryKey: ["daily"] });
+    },
+    onError: (err) => setSapError(getFriendlyApiError(err)),
+  });
 
-  async function handleLotSearch() {
-    setLotError("");
-    setLotLoaded(false);
-    try {
-      const results = await listLots(
-        lotProductSearch || undefined,
-        lotSapSearch.trim() || undefined,
-      );
-      setLotResults(results);
-    } catch (err) {
-      setLotError(getFriendlyApiError(err));
-      setLotResults([]);
-    } finally {
-      setLotLoaded(true);
-    }
-  }
-
-  async function handleTraceSearch() {
-    if (!traceMaterialId.trim()) { setTraceResult(null); setTraceError(""); return; }
-    setLoading(true);
-    setTraceError("");
-    try {
-      const result = await getTraceReport(traceMaterialId.trim());
-      setTraceResult(result);
-    } catch (err) {
-      setTraceResult(null);
-      setTraceError(getFriendlyApiError(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleSaveSapStock(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSapError("");
-    setLoading(true);
-    try {
-      await upsertSapStock({
-        date: sapForm.date,
-        productId: sapForm.productId,
-        warehouseId: sapForm.warehouseId || undefined,
-        sapQuantity: Number(sapForm.sapQuantity),
-      });
-      await loadDaily(dailyDate);
-    } catch (err) {
-      setSapError(getFriendlyApiError(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleRegularize() {
-    if (!regModal) return;
-    if (!regForm.reason.trim()) { setRegError("El motivo es obligatorio."); return; }
-    setRegLoading(true);
-    setRegError("");
-    try {
-      await regularizeMovement(regModal.id, {
-        reason: regForm.reason,
-        documentNumber: regForm.documentNumber || undefined,
-        supplier: regForm.supplier || undefined,
-        carrier: regForm.carrier || undefined,
-        driver: regForm.driver || undefined,
-        destination: regForm.destination || undefined,
-        notes: regForm.notes || undefined,
-        sapLot: regForm.sapLot || undefined,
-        fechaVencimiento: regForm.fechaVencimiento || undefined,
-        fechaFabricacion: regForm.fechaFabricacion || undefined,
-        proveedor: regForm.proveedor || undefined,
-      });
+  const regularizeMut = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: Parameters<typeof regularizeMovement>[1] }) =>
+      regularizeMovement(id, payload),
+    onSuccess: () => {
+      toast.success("Movimiento regularizado.");
       setRegModal(null);
       setRegForm(emptyReg);
-      setPendingLoaded(false);
-      await loadPending();
-    } catch (err) {
-      setRegError(getFriendlyApiError(err));
-    } finally {
-      setRegLoading(false);
-    }
-  }
+      setRegError("");
+      void qc.invalidateQueries({ queryKey: ["movements"] });
+      void qc.invalidateQueries({ queryKey: ["kpis"] });
+    },
+    onError: (err) => setRegError(getFriendlyApiError(err)),
+  });
 
-  // ── Computed values ───────────────────────────────────────────────────────
+  // ── Derived ───────────────────────────────────────────────────────────────
+
+  const warehouses      = warehousesQ.data ?? [];
+  const products        = productsQ.data  ?? [];
+  const stock           = stockQ.data     ?? null;
+  const movements       = movementsQ.data?.data ?? [];
+  const movMeta         = movementsQ.data?.meta ?? { page: movPage, limit: movLimit, total: 0, totalPages: 1 };
+  const lotResults      = lotsQ.data      ?? [];
+  const pendingMovements = pendingQ.data?.data ?? [];
+  const dailyStock      = dailyQ.data     ?? [];
+  const differencesSap  = diffQ.data      ?? [];
+  const traceResult     = traceQ.data     ?? null;
 
   const stockChartData = useMemo(
     () => (stock?.byWarehouse ?? []).map((row) => ({ name: row.warehouseName || "Sin depósito", quantity: row.quantity })),
@@ -300,13 +204,13 @@ export default function ReportsPage() {
   );
 
   const tabs: { key: Tab; label: string }[] = [
-    { key: "stock",       label: "Stock actual" },
-    { key: "movimientos", label: "Historial" },
-    { key: "lotes",       label: "Lotes & SAP" },
-    { key: "pendientes",  label: "Pendientes" },
-    { key: "diario",      label: "Control diario" },
-    { key: "sap",         label: "SAP" },
-    { key: "trazabilidad",label: "Trazabilidad" },
+    { key: "stock",        label: "Stock actual"  },
+    { key: "movimientos",  label: "Historial"     },
+    { key: "lotes",        label: "Lotes & SAP"   },
+    { key: "pendientes",   label: "Pendientes"    },
+    { key: "diario",       label: "Control diario"},
+    { key: "sap",          label: "SAP"           },
+    { key: "trazabilidad", label: "Trazabilidad"  },
   ];
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -320,25 +224,18 @@ export default function ReportsPage() {
         </p>
       </div>
 
-      {loading && <p style={{ color: "var(--muted)", fontSize: 14 }}>Cargando...</p>}
-
-      {error && (
-        <div style={{ background: "#fef2f2", border: "1.5px solid #fecaca", borderRadius: 12, padding: "12px 16px", marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ color: "#dc2626", fontSize: 14, fontWeight: 600 }}>No se pudo cargar.</span>
-          <button className="btn btn--primary" onClick={loadInitial}>Reintentar</button>
-        </div>
-      )}
-
-      <div className="tabs">
+      <div className="tabs" role="tablist" aria-label="Secciones de reportes">
         {tabs.map((t) => (
           <button
             key={t.key}
+            role="tab"
+            aria-selected={activeTab === t.key}
             className={`tab${activeTab === t.key ? " tab--active" : ""}`}
             onClick={() => setActiveTab(t.key)}
           >
             {t.label}
             {t.key === "pendientes" && pendingMovements.length > 0 && (
-              <span style={{ marginLeft: 6, background: "#d97706", color: "#fff", borderRadius: 10, padding: "1px 7px", fontSize: 11, fontWeight: 700 }}>
+              <span style={{ marginLeft: 6, background: "var(--warning)", color: "#fff", borderRadius: 10, padding: "1px 7px", fontSize: 11, fontWeight: 700 }}>
                 {pendingMovements.length}
               </span>
             )}
@@ -348,25 +245,27 @@ export default function ReportsPage() {
 
       {/* ── Tab: Stock actual ── */}
       {activeTab === "stock" && (
-        <section className="card">
+        <section className="card" aria-label="Stock actual por depósito">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
             <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Stock actual por depósito</h3>
             <select
               className="input"
               value={stockWarehouseId}
-              onChange={async (e) => {
-                const v = e.target.value;
-                setStockWarehouseId(v);
-                setLoading(true);
-                try { await loadStock(v || undefined); }
-                catch (err) { setError(getFriendlyApiError(err)); }
-                finally { setLoading(false); }
-              }}
+              onChange={(e) => setStockWarehouseId(e.target.value)}
+              aria-label="Filtrar por depósito"
             >
               <option value="">Todos los depósitos</option>
               {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
           </div>
+
+          {stockQ.isLoading && <p style={{ color: "var(--muted)", fontSize: 14 }} aria-busy="true">Cargando...</p>}
+          {stockQ.isError && (
+            <div className="form-error" role="alert" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <span>No se pudo cargar el stock.</span>
+              <button className="btn btn--primary" onClick={() => stockQ.refetch()}>Reintentar</button>
+            </div>
+          )}
 
           {stock && (
             <>
@@ -383,7 +282,7 @@ export default function ReportsPage() {
                       <XAxis dataKey="name" tick={{ fontSize: 12, fill: "var(--muted)" }} axisLine={false} tickLine={false} />
                       <YAxis tick={{ fontSize: 12, fill: "var(--muted)" }} axisLine={false} tickLine={false} />
                       <Tooltip
-                        contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 13 }}
+                        contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 13, color: "var(--text)" }}
                         formatter={(v: number | undefined) => [(v ?? 0).toLocaleString("es-AR"), "Cantidad"]}
                       />
                       <Bar dataKey="quantity" radius={[6, 6, 0, 0]}>
@@ -396,7 +295,7 @@ export default function ReportsPage() {
               <table className="table">
                 <thead>
                   <tr>
-                    <th>Material</th><th>Depósito</th><th>Ubicación</th><th>Cantidad</th><th>Actualizado</th>
+                    <th scope="col">Material</th><th scope="col">Depósito</th><th scope="col">Ubicación</th><th scope="col">Cantidad</th><th scope="col">Actualizado</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -421,15 +320,18 @@ export default function ReportsPage() {
         <section className="card">
           <h3 style={{ marginTop: 0, fontSize: 15, fontWeight: 800, marginBottom: 16 }}>Historial de movimientos</h3>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
-            <select className="input" value={filters.warehouseId} onChange={(e) => setFilters((p) => ({ ...p, warehouseId: e.target.value }))}>
+            <select className="input" value={filters.warehouseId} aria-label="Depósito"
+              onChange={(e) => setFilters((p) => ({ ...p, warehouseId: e.target.value }))}>
               <option value="">Todos los depósitos</option>
               {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
-            <select className="input" value={filters.productId} onChange={(e) => setFilters((p) => ({ ...p, productId: e.target.value }))}>
+            <select className="input" value={filters.productId} aria-label="Material"
+              onChange={(e) => setFilters((p) => ({ ...p, productId: e.target.value }))}>
               <option value="">Todos los materiales</option>
               {products.map((p) => <option key={p.id} value={p.id}>{p.code}</option>)}
             </select>
-            <select className="input" value={filters.type} onChange={(e) => setFilters((p) => ({ ...p, type: e.target.value as MovementFilters["type"] }))}>
+            <select className="input" value={filters.type} aria-label="Tipo de movimiento"
+              onChange={(e) => setFilters((p) => ({ ...p, type: e.target.value as MovementFilters["type"] }))}>
               <option value="">Todos los tipos</option>
               <option value="ENTRY">Entrada</option>
               <option value="EXIT">Salida</option>
@@ -437,26 +339,34 @@ export default function ReportsPage() {
               <option value="ADJUSTMENT_IN">Ajuste entrada</option>
               <option value="ADJUSTMENT_OUT">Ajuste salida</option>
             </select>
-            <input className="input" type="date" value={filters.dateFrom} onChange={(e) => setFilters((p) => ({ ...p, dateFrom: e.target.value }))} />
-            <input className="input" type="date" value={filters.dateTo} onChange={(e) => setFilters((p) => ({ ...p, dateTo: e.target.value }))} />
-            <input className="input" placeholder="Buscar" value={filters.search} onChange={(e) => setFilters((p) => ({ ...p, search: e.target.value }))} style={{ minWidth: 200 }} />
-            <button className="btn btn--primary" onClick={handleApplyMovements}>Buscar</button>
-            <button className="btn" onClick={() => {
-              setFilters(initialFilters);
-              setAppliedFilters(initialFilters);
-              loadMovements(1, movementsMeta.limit, initialFilters).catch(() => undefined);
-            }}>Limpiar</button>
+            <input className="input" type="date" value={filters.dateFrom} aria-label="Desde"
+              onChange={(e) => setFilters((p) => ({ ...p, dateFrom: e.target.value }))} />
+            <input className="input" type="date" value={filters.dateTo} aria-label="Hasta"
+              onChange={(e) => setFilters((p) => ({ ...p, dateTo: e.target.value }))} />
+            <input className="input" placeholder="Buscar" value={filters.search} style={{ minWidth: 200 }} aria-label="Buscar"
+              onChange={(e) => setFilters((p) => ({ ...p, search: e.target.value }))} />
+            <button className="btn btn--primary" onClick={() => { setAppliedFilters(filters); setMovPage(1); }}>
+              Buscar
+            </button>
+            <button className="btn" onClick={() => { setFilters(initialFilters); setAppliedFilters(initialFilters); setMovPage(1); }}>
+              Limpiar
+            </button>
           </div>
 
-          {movements.length === 0 ? (
+          {movementsQ.isLoading && <p style={{ color: "var(--muted)", fontSize: 14 }} aria-busy="true">Cargando...</p>}
+          {movementsQ.isError && (
+            <div className="form-error" role="alert">No se pudo cargar el historial.</div>
+          )}
+
+          {!movementsQ.isLoading && movements.length === 0 && !movementsQ.isError ? (
             <p style={{ color: "var(--muted)" }}>No hay registros</p>
-          ) : (
+          ) : movements.length > 0 && (
             <>
               <table className="table">
                 <thead>
                   <tr>
-                    <th>Fecha</th><th>Tipo</th><th>Material</th><th>Cantidad</th>
-                    <th>Ubicación</th><th>Documento</th><th>Proveedor</th>
+                    <th scope="col">Fecha</th><th scope="col">Tipo</th><th scope="col">Material</th><th scope="col">Cantidad</th>
+                    <th scope="col">Ubicación</th><th scope="col">Documento</th><th scope="col">Proveedor</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -478,17 +388,20 @@ export default function ReportsPage() {
                 </tbody>
               </table>
               <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
-                <button className="btn" disabled={loading || movementsMeta.page <= 1} onClick={() => loadMovements(movementsMeta.page - 1, movementsMeta.limit, appliedFilters)}>
+                <button className="btn" disabled={movementsQ.isFetching || movMeta.page <= 1}
+                  onClick={() => setMovPage((p) => p - 1)}>
                   Anterior
                 </button>
                 <span style={{ fontSize: 13, color: "var(--muted)" }}>
-                  Página {movementsMeta.page} de {movementsMeta.totalPages}
-                  {" · "}{movementsMeta.total} registros
+                  Página {movMeta.page} de {movMeta.totalPages}
+                  {" · "}{movMeta.total} registros
                 </span>
-                <button className="btn" disabled={loading || movementsMeta.page >= movementsMeta.totalPages} onClick={() => loadMovements(movementsMeta.page + 1, movementsMeta.limit, appliedFilters)}>
+                <button className="btn" disabled={movementsQ.isFetching || movMeta.page >= movMeta.totalPages}
+                  onClick={() => setMovPage((p) => p + 1)}>
                   Siguiente
                 </button>
-                <select className="input" value={movementsMeta.limit} onChange={(e) => loadMovements(1, Number(e.target.value), appliedFilters)}>
+                <select className="input" value={movLimit} aria-label="Registros por página"
+                  onChange={(e) => { setMovLimit(Number(e.target.value)); setMovPage(1); }}>
                   <option value={10}>10 / pág.</option>
                   <option value={20}>20 / pág.</option>
                   <option value={50}>50 / pág.</option>
@@ -512,53 +425,56 @@ export default function ReportsPage() {
               placeholder="Lote SAP (ej. Z051308201)"
               value={lotSapSearch}
               onChange={(e) => setLotSapSearch(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleLotSearch()}
+              onKeyDown={(e) => e.key === "Enter" && setLotApplied({ sap: lotSapSearch.trim(), product: lotProductSearch })}
               style={{ minWidth: 220, fontFamily: "monospace" }}
+              aria-label="Código lote SAP"
             />
             <select
               className="input"
               value={lotProductSearch}
               onChange={(e) => setLotProductSearch(e.target.value)}
+              aria-label="Material"
             >
               <option value="">Todos los materiales</option>
               {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.description}</option>)}
             </select>
-            <button className="btn btn--primary" onClick={handleLotSearch}>Buscar</button>
-            <button className="btn" onClick={() => {
-              setLotSapSearch("");
-              setLotProductSearch("");
-              setLotResults([]);
-              setLotLoaded(false);
-              setLotError("");
-            }}>Limpiar</button>
+            <button className="btn btn--primary"
+              onClick={() => setLotApplied({ sap: lotSapSearch.trim(), product: lotProductSearch })}>
+              Buscar
+            </button>
+            <button className="btn" onClick={() => { setLotSapSearch(""); setLotProductSearch(""); setLotApplied(null); }}>
+              Limpiar
+            </button>
           </div>
 
-          {lotError && <p style={{ color: "#dc2626", fontSize: 13 }}>{lotError}</p>}
-          {!lotLoaded && !lotError && (
+          {lotsQ.isError && (
+            <p className="form-error" role="alert" style={{ fontSize: 13 }}>
+              {getFriendlyApiError(lotsQ.error)}
+            </p>
+          )}
+          {!lotApplied && (
             <p style={{ color: "var(--muted)" }}>Ingresá un lote SAP o seleccioná un material y presioná Buscar.</p>
           )}
-          {lotLoaded && lotResults.length === 0 && !lotError && (
+          {lotsQ.isLoading && <p style={{ color: "var(--muted)", fontSize: 14 }} aria-busy="true">Buscando...</p>}
+          {lotApplied && !lotsQ.isLoading && lotResults.length === 0 && !lotsQ.isError && (
             <p style={{ color: "var(--muted)" }}>No se encontraron lotes con esos criterios.</p>
           )}
           {lotResults.length > 0 && (
             <table className="table">
               <thead>
                 <tr>
-                  <th>Código lote</th>
-                  <th>Lote SAP</th>
-                  <th>Material</th>
-                  <th>Vencimiento</th>
-                  <th>Fabricación</th>
-                  <th>Proveedor lote</th>
-                  <th>Stock</th>
-                  <th>Estado</th>
+                  <th scope="col">Código lote</th><th scope="col">Lote SAP</th><th scope="col">Material</th>
+                  <th scope="col">Vencimiento</th><th scope="col">Fabricación</th><th scope="col">Proveedor lote</th>
+                  <th scope="col">Stock</th><th scope="col">Estado</th>
                 </tr>
               </thead>
               <tbody>
                 {lotResults.map((lot) => (
-                  <tr key={lot.id} style={lot.status === "PENDING_REGULARIZATION" ? { background: "rgba(217,119,6,0.06)" } : {}}>
+                  <tr key={lot.id} style={lot.status === "PENDING_REGULARIZATION" ? { background: "var(--badge-adjout-bg)" } : {}}>
                     <td><strong>{lot.lotCode}</strong></td>
-                    <td style={{ fontFamily: "monospace", fontSize: 13 }}>{lot.sapLot ?? <span style={{ color: "var(--muted)" }}>—</span>}</td>
+                    <td style={{ fontFamily: "monospace", fontSize: 13 }}>
+                      {lot.sapLot ?? <span style={{ color: "var(--muted)" }}>—</span>}
+                    </td>
                     <td>
                       {lot.product
                         ? <><strong>{lot.product.code}</strong> · {lot.product.description}</>
@@ -595,18 +511,20 @@ export default function ReportsPage() {
                 Movimientos provisionales que requieren datos definitivos antes de cerrar.
               </p>
             </div>
-            <button className="btn" onClick={() => { setPendingLoaded(false); loadPending().catch(() => undefined); }}>
+            <button className="btn"
+              onClick={() => void qc.invalidateQueries({ queryKey: ["movements", "pending"] })}>
               Actualizar
             </button>
           </div>
 
-          {pendingError && <p style={{ color: "#dc2626", fontSize: 13 }}>{pendingError}</p>}
-
-          {!pendingLoaded && !pendingError && (
-            <p style={{ color: "var(--muted)", fontSize: 13 }}>Cargando...</p>
+          {pendingQ.isError && (
+            <p className="form-error" role="alert" style={{ fontSize: 13 }}>
+              {getFriendlyApiError(pendingQ.error)}
+            </p>
           )}
+          {pendingQ.isLoading && <p style={{ color: "var(--muted)", fontSize: 13 }} aria-busy="true">Cargando...</p>}
 
-          {pendingLoaded && pendingMovements.length === 0 && !pendingError && (
+          {!pendingQ.isLoading && pendingMovements.length === 0 && !pendingQ.isError && (
             <div style={{ textAlign: "center", padding: "32px 0", color: "var(--muted)" }}>
               <div style={{ fontSize: 32, marginBottom: 8 }}>✓</div>
               <p style={{ margin: 0, fontSize: 14 }}>No hay movimientos pendientes de regularización.</p>
@@ -617,8 +535,8 @@ export default function ReportsPage() {
             <table className="table">
               <thead>
                 <tr>
-                  <th>Fecha</th><th>Tipo</th><th>Material</th><th>Cantidad</th>
-                  <th>Documento</th><th>Proveedor</th><th>Notas</th><th></th>
+                  <th scope="col">Fecha</th><th scope="col">Tipo</th><th scope="col">Material</th><th scope="col">Cantidad</th>
+                  <th scope="col">Documento</th><th scope="col">Proveedor</th><th scope="col">Notas</th><th scope="col"></th>
                 </tr>
               </thead>
               <tbody>
@@ -672,24 +590,19 @@ export default function ReportsPage() {
               className="input"
               type="date"
               value={dailyDate}
-              onChange={async (e) => {
-                const v = e.target.value;
-                setDailyDate(v);
-                setLoading(true);
-                try { await loadDaily(v); }
-                catch (err) { setError(getFriendlyApiError(err)); }
-                finally { setLoading(false); }
-              }}
+              onChange={(e) => setDailyDate(e.target.value)}
+              aria-label="Fecha de control"
             />
           </div>
-          {dailyStock.length === 0 ? (
+          {dailyQ.isLoading && <p style={{ color: "var(--muted)", fontSize: 14 }} aria-busy="true">Cargando...</p>}
+          {!dailyQ.isLoading && dailyStock.length === 0 ? (
             <p style={{ color: "var(--muted)" }}>Sin registros para la fecha seleccionada.</p>
-          ) : (
+          ) : dailyStock.length > 0 && (
             <table className="table">
               <thead>
                 <tr>
-                  <th>Material</th><th>Stock inicial</th><th>Entradas</th>
-                  <th>Salidas</th><th>Stock final</th><th>SAP</th><th>Diferencia</th>
+                  <th scope="col">Material</th><th scope="col">Stock inicial</th><th scope="col">Entradas</th>
+                  <th scope="col">Salidas</th><th scope="col">Stock final</th><th scope="col">SAP</th><th scope="col">Diferencia</th>
                 </tr>
               </thead>
               <tbody>
@@ -697,8 +610,12 @@ export default function ReportsPage() {
                   <tr key={`${row.date}-${row.material.id}`}>
                     <td><strong>{row.material.code}</strong> · {row.material.description}</td>
                     <td>{row.stockInicial.toLocaleString("es-AR")}</td>
-                    <td style={{ color: "#16a34a", fontWeight: 600 }}>{row.entradas > 0 ? `+${row.entradas.toLocaleString("es-AR")}` : row.entradas}</td>
-                    <td style={{ color: "#dc2626", fontWeight: 600 }}>{row.salidas > 0 ? `-${row.salidas.toLocaleString("es-AR")}` : row.salidas}</td>
+                    <td style={{ color: "var(--success)", fontWeight: 600 }}>
+                      {row.entradas > 0 ? `+${row.entradas.toLocaleString("es-AR")}` : row.entradas}
+                    </td>
+                    <td style={{ color: "var(--danger)", fontWeight: 600 }}>
+                      {row.salidas > 0 ? `-${row.salidas.toLocaleString("es-AR")}` : row.salidas}
+                    </td>
                     <td style={{ fontWeight: 700 }}>{row.stockFinal.toLocaleString("es-AR")}</td>
                     <td>{row.stockSAP}</td>
                     <td>
@@ -719,32 +636,54 @@ export default function ReportsPage() {
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <section className="card">
             <h3 style={{ marginTop: 0, fontSize: 15, fontWeight: 800, marginBottom: 16 }}>Cargar stock SAP</h3>
-            <form onSubmit={handleSaveSapStock} style={{ display: "grid", gap: 10 }}>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                upsertSapMut.mutate({
+                  date: sapForm.date,
+                  productId: sapForm.productId,
+                  warehouseId: sapForm.warehouseId || undefined,
+                  sapQuantity: Number(sapForm.sapQuantity),
+                });
+              }}
+              style={{ display: "grid", gap: 10 }}
+              aria-label="Cargar stock SAP"
+            >
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
-                <input className="input" type="date" value={sapForm.date} onChange={(e) => setSapForm((p) => ({ ...p, date: e.target.value }))} />
-                <select className="input" value={sapForm.productId} onChange={(e) => setSapForm((p) => ({ ...p, productId: e.target.value }))}>
+                <input className="input" type="date" value={sapForm.date} aria-label="Fecha"
+                  onChange={(e) => setSapForm((p) => ({ ...p, date: e.target.value }))} />
+                <select className="input" value={sapForm.productId} aria-label="Material"
+                  onChange={(e) => setSapForm((p) => ({ ...p, productId: e.target.value }))}>
                   <option value="">Seleccionar material</option>
                   {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.description}</option>)}
                 </select>
-                <select className="input" value={sapForm.warehouseId} onChange={(e) => setSapForm((p) => ({ ...p, warehouseId: e.target.value }))}>
+                <select className="input" value={sapForm.warehouseId} aria-label="Depósito"
+                  onChange={(e) => setSapForm((p) => ({ ...p, warehouseId: e.target.value }))}>
                   <option value="">Depósito (opcional)</option>
                   {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
                 </select>
-                <input className="input" type="number" min={0} placeholder="Cantidad SAP" value={sapForm.sapQuantity} onChange={(e) => setSapForm((p) => ({ ...p, sapQuantity: e.target.value }))} />
+                <input className="input" type="number" min={0} placeholder="Cantidad SAP" value={sapForm.sapQuantity}
+                  aria-label="Cantidad SAP"
+                  onChange={(e) => setSapForm((p) => ({ ...p, sapQuantity: e.target.value }))} />
               </div>
-              {sapError && <p style={{ color: "#dc2626", margin: 0, fontSize: 13 }}>{sapError}</p>}
-              <div><button className="btn btn--primary" type="submit">Guardar stock SAP</button></div>
+              {sapError && <p className="form-error" role="alert" style={{ margin: 0, fontSize: 13 }}>{sapError}</p>}
+              <div>
+                <button className="btn btn--primary" type="submit" disabled={upsertSapMut.isPending}>
+                  {upsertSapMut.isPending ? "Guardando..." : "Guardar stock SAP"}
+                </button>
+              </div>
             </form>
           </section>
 
           <section className="card">
             <h3 style={{ marginTop: 0, fontSize: 15, fontWeight: 800, marginBottom: 16 }}>Diferencias contra SAP</h3>
-            {differencesSap.length === 0 ? (
+            {diffQ.isLoading && <p style={{ color: "var(--muted)", fontSize: 14 }} aria-busy="true">Cargando...</p>}
+            {!diffQ.isLoading && differencesSap.length === 0 ? (
               <p style={{ color: "var(--muted)" }}>Sin diferencias para la fecha seleccionada.</p>
-            ) : (
+            ) : differencesSap.length > 0 && (
               <table className="table">
                 <thead>
-                  <tr><th>Material</th><th>Sistema</th><th>SAP</th><th>Diferencia</th></tr>
+                  <tr><th scope="col">Material</th><th scope="col">Sistema</th><th scope="col">SAP</th><th scope="col">Diferencia</th></tr>
                 </thead>
                 <tbody>
                   {differencesSap.map((row) => (
@@ -776,16 +715,30 @@ export default function ReportsPage() {
               value={traceMaterialId}
               onChange={(e) => setTraceMaterialId(e.target.value)}
               style={{ minWidth: 320 }}
+              aria-label="Seleccionar material"
             >
               <option value="">Seleccionar material...</option>
               {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.description}</option>)}
             </select>
-            <button className="btn btn--primary" onClick={handleTraceSearch}>Buscar trazabilidad</button>
+            <button
+              className="btn btn--primary"
+              onClick={() => setTraceApplied(traceMaterialId)}
+              disabled={!traceMaterialId}
+            >
+              Buscar trazabilidad
+            </button>
           </div>
 
-          {traceError && <p style={{ color: "#dc2626", fontSize: 13 }}>{traceError}</p>}
-          {!traceResult && !traceError && (
-            <p style={{ color: "var(--muted)", marginBottom: 0 }}>Seleccioná un material para ver su historial completo de movimientos.</p>
+          {traceQ.isError && (
+            <p className="form-error" role="alert" style={{ fontSize: 13 }}>
+              {getFriendlyApiError(traceQ.error)}
+            </p>
+          )}
+          {traceQ.isLoading && <p style={{ color: "var(--muted)", fontSize: 14 }} aria-busy="true">Buscando...</p>}
+          {!traceApplied && (
+            <p style={{ color: "var(--muted)", marginBottom: 0 }}>
+              Seleccioná un material para ver su historial completo de movimientos.
+            </p>
           )}
           {traceResult && traceResult.history.length === 0 && (
             <p style={{ color: "var(--muted)", marginBottom: 0 }}>Sin registros para este material.</p>
@@ -796,10 +749,13 @@ export default function ReportsPage() {
                 <div
                   key={event.movementId}
                   style={{
-                    borderLeft: `3px solid ${event.type === "ENTRY" ? "#16a34a" : event.type === "EXIT" ? "#dc2626" : event.type === "TRANSFER" ? "#2563eb" : "#94a3b8"}`,
-                    paddingLeft: 14,
-                    paddingTop: 4,
-                    paddingBottom: 4,
+                    borderLeft: `3px solid ${
+                      event.type === "ENTRY"    ? "var(--success)" :
+                      event.type === "EXIT"     ? "var(--danger)"  :
+                      event.type === "TRANSFER" ? "var(--primary)" :
+                      "var(--border)"
+                    }`,
+                    paddingLeft: 14, paddingTop: 4, paddingBottom: 4,
                   }}
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
@@ -812,7 +768,9 @@ export default function ReportsPage() {
                     </span>
                   </div>
                   <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12, color: "var(--muted)" }}>
-                    {event.documentNumber && <span>Doc: <strong style={{ color: "var(--text)" }}>{event.documentNumber}</strong></span>}
+                    {event.documentNumber && (
+                      <span>Doc: <strong style={{ color: "var(--text)" }}>{event.documentNumber}</strong></span>
+                    )}
                     <span>Origen: {event.fromWarehouseName || event.warehouseName || "-"} / {event.fromLocationCode || "-"}</span>
                     <span>Destino: {event.toWarehouseName || event.destination || event.warehouseName || "-"} / {event.toLocationCode || event.locationCode || "-"}</span>
                     {event.notes && <span>Notas: {event.notes}</span>}
@@ -827,21 +785,36 @@ export default function ReportsPage() {
       {/* ── Regularization modal ── */}
       {regModal && (
         <div
-          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-          onClick={(e) => { if (e.target === e.currentTarget && !regLoading) { setRegModal(null); setRegForm(emptyReg); setRegError(""); } }}
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Regularizar movimiento"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !regularizeMut.isPending) {
+              setRegModal(null); setRegForm(emptyReg); setRegError("");
+            }
+          }}
         >
-          <div style={{ background: "var(--panel)", borderRadius: 16, padding: 28, width: "100%", maxWidth: 540, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 40px rgba(0,0,0,0.35)" }}>
+          <div className="modal" style={{ maxWidth: 540 }}>
             <h3 style={{ marginTop: 0, fontSize: 15, fontWeight: 800, marginBottom: 2 }}>Regularizar movimiento</h3>
             <p style={{ color: "var(--muted)", fontSize: 12, marginBottom: 20 }}>{regModal.label}</p>
 
-            <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: "#92400e" }}>
+            <div style={{
+              background: "var(--badge-adjout-bg)",
+              border: "1px solid var(--badge-adjout-border)",
+              borderRadius: 8,
+              padding: "10px 14px",
+              marginBottom: 16,
+              fontSize: 12,
+              color: "var(--badge-adjout-text)",
+            }}>
               Solo se registran los campos que se modifiquen. Cada cambio queda en el log de auditoría.
             </div>
 
             <div style={{ display: "grid", gap: 10 }}>
               <div>
                 <label style={{ fontSize: 12, fontWeight: 700, display: "block", marginBottom: 4 }}>
-                  Motivo de regularización <span style={{ color: "#dc2626" }}>*</span>
+                  Motivo de regularización <span style={{ color: "var(--danger)" }}>*</span>
                 </label>
                 <textarea
                   className="input"
@@ -850,67 +823,89 @@ export default function ReportsPage() {
                   value={regForm.reason}
                   onChange={(e) => setRegForm((p) => ({ ...p, reason: e.target.value }))}
                   style={{ resize: "vertical" }}
+                  aria-required="true"
                 />
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <div>
-                  <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>Nro. documento</label>
-                  <input className="input" placeholder="Nro. documento" value={regForm.documentNumber} onChange={(e) => setRegForm((p) => ({ ...p, documentNumber: e.target.value }))} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>Proveedor</label>
-                  <input className="input" placeholder="Proveedor" value={regForm.supplier} onChange={(e) => setRegForm((p) => ({ ...p, supplier: e.target.value }))} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>Transportista</label>
-                  <input className="input" placeholder="Transportista" value={regForm.carrier} onChange={(e) => setRegForm((p) => ({ ...p, carrier: e.target.value }))} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>Conductor</label>
-                  <input className="input" placeholder="Conductor" value={regForm.driver} onChange={(e) => setRegForm((p) => ({ ...p, driver: e.target.value }))} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>Destino</label>
-                  <input className="input" placeholder="Destino" value={regForm.destination} onChange={(e) => setRegForm((p) => ({ ...p, destination: e.target.value }))} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>Lote SAP</label>
-                  <input className="input" placeholder="ej. Z051308201" value={regForm.sapLot} onChange={(e) => setRegForm((p) => ({ ...p, sapLot: e.target.value }))} style={{ fontFamily: "monospace" }} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>Fecha vencimiento</label>
-                  <input className="input" type="date" value={regForm.fechaVencimiento} onChange={(e) => setRegForm((p) => ({ ...p, fechaVencimiento: e.target.value }))} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>Fecha fabricación</label>
-                  <input className="input" type="date" value={regForm.fechaFabricacion} onChange={(e) => setRegForm((p) => ({ ...p, fechaFabricacion: e.target.value }))} />
-                </div>
+                {(
+                  [
+                    ["documentNumber",  "Nro. documento",   "text"],
+                    ["supplier",        "Proveedor",        "text"],
+                    ["carrier",         "Transportista",    "text"],
+                    ["driver",          "Conductor",        "text"],
+                    ["destination",     "Destino",          "text"],
+                    ["sapLot",          "Lote SAP",         "text"],
+                    ["fechaVencimiento","Fecha vencimiento","date"],
+                    ["fechaFabricacion","Fecha fabricación","date"],
+                  ] as [keyof RegPayload, string, string][]
+                ).map(([field, label, type]) => (
+                  <div key={field}>
+                    <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>{label}</label>
+                    <input
+                      className="input"
+                      type={type}
+                      placeholder={field === "sapLot" ? "ej. Z051308201" : label}
+                      value={regForm[field]}
+                      onChange={(e) => setRegForm((p) => ({ ...p, [field]: e.target.value }))}
+                      style={field === "sapLot" ? { fontFamily: "monospace" } : {}}
+                    />
+                  </div>
+                ))}
               </div>
 
               <div>
                 <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>Proveedor del lote</label>
-                <input className="input" placeholder="Proveedor del lote" value={regForm.proveedor} onChange={(e) => setRegForm((p) => ({ ...p, proveedor: e.target.value }))} />
+                <input className="input" placeholder="Proveedor del lote" value={regForm.proveedor}
+                  onChange={(e) => setRegForm((p) => ({ ...p, proveedor: e.target.value }))} />
               </div>
 
               <div>
                 <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 3 }}>Notas adicionales</label>
-                <textarea className="input" rows={2} placeholder="Observaciones..." value={regForm.notes} onChange={(e) => setRegForm((p) => ({ ...p, notes: e.target.value }))} style={{ resize: "vertical" }} />
+                <textarea className="input" rows={2} placeholder="Observaciones..." value={regForm.notes}
+                  onChange={(e) => setRegForm((p) => ({ ...p, notes: e.target.value }))}
+                  style={{ resize: "vertical" }} />
               </div>
             </div>
 
             {regError && (
-              <p style={{ color: "#dc2626", fontSize: 13, marginTop: 10, marginBottom: 0 }}>{regError}</p>
+              <p className="form-error" role="alert" style={{ fontSize: 13, marginTop: 10, marginBottom: 0 }}>
+                {regError}
+              </p>
             )}
 
             <div style={{ display: "flex", gap: 8, marginTop: 20 }}>
-              <button className="btn btn--primary" onClick={handleRegularize} disabled={regLoading}>
-                {regLoading ? "Guardando..." : "Confirmar regularización"}
+              <button
+                className="btn btn--primary"
+                disabled={regularizeMut.isPending}
+                onClick={() => {
+                  if (!regModal) return;
+                  if (!regForm.reason.trim()) { setRegError("El motivo es obligatorio."); return; }
+                  setRegError("");
+                  regularizeMut.mutate({
+                    id: regModal.id,
+                    payload: {
+                      reason:           regForm.reason,
+                      documentNumber:   regForm.documentNumber   || undefined,
+                      supplier:         regForm.supplier         || undefined,
+                      carrier:          regForm.carrier          || undefined,
+                      driver:           regForm.driver           || undefined,
+                      destination:      regForm.destination      || undefined,
+                      notes:            regForm.notes            || undefined,
+                      sapLot:           regForm.sapLot           || undefined,
+                      fechaVencimiento: regForm.fechaVencimiento || undefined,
+                      fechaFabricacion: regForm.fechaFabricacion || undefined,
+                      proveedor:        regForm.proveedor        || undefined,
+                    },
+                  });
+                }}
+              >
+                {regularizeMut.isPending ? "Guardando..." : "Confirmar regularización"}
               </button>
               <button
                 className="btn"
+                disabled={regularizeMut.isPending}
                 onClick={() => { setRegModal(null); setRegForm(emptyReg); setRegError(""); }}
-                disabled={regLoading}
               >
                 Cancelar
               </button>

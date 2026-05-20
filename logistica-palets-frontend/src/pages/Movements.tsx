@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import ProductSearch from "../components/ProductSearch";
 import {
   ADJUSTMENT_REASONS,
@@ -10,10 +11,11 @@ import {
 } from "../api/movements";
 import { fefoLots, generateSapLot, type Lot } from "../api/lots";
 import type { LotPallet } from "../api/pallets";
-import { listWarehouses, type Warehouse } from "../api/warehouses";
-import { listLocations, type Location } from "../api/locations";
-import { listActiveUsers, type AppUser } from "../api/users";
+import { listWarehouses } from "../api/warehouses";
+import { listLocations } from "../api/locations";
+import { listActiveUsers } from "../api/users";
 import type { Product } from "../api/products";
+import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 
 // ── Tipos formulario entrada jerárquico
@@ -48,11 +50,26 @@ const newLotGroup = (): LotGroup => ({
 });
 
 export default function MovementsPage() {
-  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [locations, setLocations] = useState<Location[]>([]);
-  const [users, setUsers] = useState<AppUser[]>([]);
-  const [pending, setPending] = useState<Movement[]>([]);
-  const [saving, setSaving] = useState(false);
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const [warehousesQ, locationsQ, usersQ, pendingQ] = useQueries({
+    queries: [
+      { queryKey: ["warehouses"], queryFn: listWarehouses },
+      { queryKey: ["locations"], queryFn: listLocations },
+      { queryKey: ["users", "active"], queryFn: listActiveUsers },
+      {
+        queryKey: ["movements", "pending"],
+        queryFn: () => getMovements({ page: 1, limit: 100, status: "PENDING_REGULARIZATION" }),
+        select: (resp: { data: Movement[] }) => resp.data,
+      },
+    ],
+  });
+  const warehouses = warehousesQ.data ?? [];
+  const locations = locationsQ.data ?? [];
+  const users = usersQ.data ?? [];
+  const pending = pendingQ.data ?? [];
+
   const [formError, setFormError] = useState("");
 
   // Formulario común
@@ -81,16 +98,22 @@ export default function MovementsPage() {
   const [exitSapLotInput, setExitSapLotInput] = useState(() => generateSapLot());
   const [appliedExitSapLot, setAppliedExitSapLot] = useState("");
   const [fefoRows, setFefoRows] = useState<FefoRow[]>([]);
-  const [fefoLoading, setFefoLoading] = useState(false);
 
   // AJUSTES
   const [adjustmentReason, setAdjustmentReason] = useState("");
   const [adjustmentCategory, setAdjustmentCategory] = useState("");
 
+  // WIZARD — sólo para ENTRY
+  const [wizardStep, setWizardStep] = useState(1);
+  const WIZARD_STEPS = [
+    { n: 1, label: "Contexto", sublabel: "Material, depósito, documento" },
+    { n: 2, label: "Lotes y palets", sublabel: "Detallar lotes y cantidades" },
+    { n: 3, label: "Confirmación", sublabel: "Revisar y confirmar" },
+  ];
+
   // REGULARIZACIÓN
   const [regMovement, setRegMovement] = useState<Movement | null>(null);
   const [regForm, setRegForm] = useState<RegPayload>(emptyReg());
-  const [regSaving, setRegSaving] = useState(false);
   const [regError, setRegError] = useState("");
 
   const isEntry = movType === "ENTRY" || movType === "ADJUSTMENT_IN";
@@ -106,37 +129,29 @@ export default function MovementsPage() {
 
   const toLocations = useMemo(() => locations.filter((l) => l.id !== fromLocationId), [locations, fromLocationId]);
 
-  const refreshPending = useCallback(async () => {
-    try {
-      const resp = await getMovements({ page: 1, limit: 100, status: "PENDING_REGULARIZATION" });
-      setPending(resp.data);
-    } catch { /* silencioso */ }
-  }, []);
+  // FEFO via useQuery — sólo activa cuando hay parámetros válidos.
+  const fefoProductId = (exitMode === "product" || isTransfer) ? product?.id : undefined;
+  const fefoSapLot = exitMode === "sapLot" && !isTransfer ? appliedExitSapLot : undefined;
+  const fefoLocId = isTransfer ? fromLocationId || undefined : undefined;
+  const fefoEnabled = (isExit || isTransfer) && (!!fefoProductId || !!fefoSapLot);
+
+  const fefoQ = useQuery({
+    queryKey: ["lots", "fefo", { productId: fefoProductId, sapLot: fefoSapLot, locationId: fefoLocId }],
+    queryFn: () => fefoLots(fefoProductId, fefoSapLot, fefoLocId),
+    enabled: fefoEnabled,
+    staleTime: 15_000,
+  });
+  const fefoLoading = fefoQ.isFetching;
 
   useEffect(() => {
-    Promise.all([listWarehouses(), listLocations(), listActiveUsers()])
-      .then(([w, l, u]) => { setWarehouses(w); setLocations(l); setUsers(u); })
-      .catch(() => undefined);
-    refreshPending().catch(() => undefined);
-  }, [refreshPending]);
-
-  // Cargar FEFO al cambiar tipo/producto/modo/sapLot
-  useEffect(() => {
-    if (!isExit && !isTransfer) { setFefoRows([]); return; }
-    const productId = (exitMode === "product" || isTransfer) ? product?.id : undefined;
-    const sapLot = exitMode === "sapLot" && !isTransfer ? appliedExitSapLot : undefined;
-    const locId = isTransfer ? fromLocationId || undefined : undefined;
-    if (!productId && !sapLot) { setFefoRows([]); return; }
-    setFefoLoading(true);
-    fefoLots(productId, sapLot, locId)
-      .then((lots) => setFefoRows(lots.map((l) => ({
-        lot: l as Lot & { pallets: LotPallet[] },
-        selectedIds: new Set<string>(),
-        expanded: true,
-      }))))
-      .catch(() => setFefoRows([]))
-      .finally(() => setFefoLoading(false));
-  }, [product, movType, exitMode, appliedExitSapLot, isExit, isTransfer, fromLocationId]);
+    if (!fefoEnabled) { setFefoRows([]); return; }
+    if (!fefoQ.data) return;
+    setFefoRows(fefoQ.data.map((l) => ({
+      lot: l as Lot & { pallets: LotPallet[] },
+      selectedIds: new Set<string>(),
+      expanded: true,
+    })));
+  }, [fefoQ.data, fefoEnabled]);
 
   function resetForm() {
     setProduct(null); setWarehouseId(""); setLocationId(""); setFromLocationId(""); setToLocationId("");
@@ -145,6 +160,7 @@ export default function MovementsPage() {
     setEntrySapLot(generateSapLot()); setLotGroups([newLotGroup()]);
     setExitMode("product"); setExitSapLotInput(generateSapLot()); setAppliedExitSapLot(""); setFefoRows([]);
     setAdjustmentReason(""); setAdjustmentCategory(""); setFormError("");
+    setWizardStep(1);
   }
 
   // ── Helpers ENTRADA
@@ -199,77 +215,89 @@ export default function MovementsPage() {
     return <span className={`badge ${cls}`} style={{ fontSize: 10, marginLeft: 4 }}>{days < 0 ? "Vencido" : `${days}d`}</span>;
   };
 
-  async function handleSubmit(e: React.FormEvent) {
+  function invalidateAfterMovement() {
+    queryClient.invalidateQueries({ queryKey: ["movements"] });
+    queryClient.invalidateQueries({ queryKey: ["kpis"] });
+    queryClient.invalidateQueries({ queryKey: ["stock"] });
+    queryClient.invalidateQueries({ queryKey: ["lots"] });
+    queryClient.invalidateQueries({ queryKey: ["pallets"] });
+  }
+
+  const createMovementMut = useMutation({
+    mutationFn: createMovement,
+    onSuccess: () => {
+      invalidateAfterMovement();
+      toast.success(isProvisional ? "Entrada provisoria registrada" : "Movimiento registrado");
+      resetForm();
+    },
+    onError: (err) => {
+      const msg = getFriendlyApiError(err);
+      setFormError(msg);
+      toast.error(msg);
+    },
+  });
+  const saving = createMovementMut.isPending;
+
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!product) { setFormError("Seleccioná un material."); return; }
     if (isAdjustment && !adjustmentReason) { setFormError("Seleccioná el motivo del ajuste."); return; }
     if (isProvisional && !notes.trim()) { setFormError("Las entradas provisorias requieren una observación."); return; }
-    setSaving(true); setFormError("");
+    setFormError("");
 
-    try {
-      if (isEntry) {
-        const allItems = lotGroups.flatMap((g) =>
-          g.pallets.filter((p) => Number(p.quantity) > 0 && g.lotCode.trim()).map((p) => ({
-            lotCode: g.lotCode.trim(), quantity: Number(p.quantity),
-            fechaVencimiento: g.fechaVencimiento || undefined,
-            fechaFabricacion: g.fechaFabricacion || undefined,
-            sapLot: entrySapLot.trim() || undefined,
-          }))
-        );
-        if (allItems.length === 0) { setFormError("Agregá al menos un palet con lote y cantidad."); setSaving(false); return; }
-        for (const g of lotGroups) {
-          if (g.expectedTotal && Number(g.expectedTotal) > 0 && groupTotal(g) !== Number(g.expectedTotal)) {
-            setFormError(`Lote "${g.lotCode}": total de palets (${groupTotal(g)}) ≠ esperado (${g.expectedTotal}).`);
-            setSaving(false); return;
-          }
+    if (isEntry) {
+      const allItems = lotGroups.flatMap((g) =>
+        g.pallets.filter((p) => Number(p.quantity) > 0 && g.lotCode.trim()).map((p) => ({
+          lotCode: g.lotCode.trim(), quantity: Number(p.quantity),
+          fechaVencimiento: g.fechaVencimiento || undefined,
+          fechaFabricacion: g.fechaFabricacion || undefined,
+          sapLot: entrySapLot.trim() || undefined,
+        }))
+      );
+      if (allItems.length === 0) { setFormError("Agregá al menos un palet con lote y cantidad."); return; }
+      for (const g of lotGroups) {
+        if (g.expectedTotal && Number(g.expectedTotal) > 0 && groupTotal(g) !== Number(g.expectedTotal)) {
+          setFormError(`Lote "${g.lotCode}": total de palets (${groupTotal(g)}) ≠ esperado (${g.expectedTotal}).`);
+          return;
         }
-        await createMovement({
-          type: movType, date: date || undefined, productId: product.id,
-          warehouseId: warehouseId || undefined, locationId: locationId || undefined,
-          documentNumber: documentNumber || undefined, supplier: supplier || undefined,
-          carrier: carrier || undefined, driver: driver || undefined,
-          notes: notes || undefined, encargadoRecepcionId: encargadoId || undefined,
-          isProvisional: isProvisional || undefined,
-          adjustmentReason: isAdjustment ? adjustmentReason : undefined,
-          adjustmentCategory: isAdjustment ? adjustmentCategory || undefined : undefined,
-          palletItems: allItems,
-        });
-
-      } else if (isExit) {
-        const palletItems = fefoRows.flatMap((row) =>
-          row.lot.pallets.filter((p) => row.selectedIds.has(p.id)).map((p) => ({ palletId: p.id, quantity: p.quantity }))
-        );
-        if (palletItems.length === 0) { setFormError("Seleccioná al menos un palet."); setSaving(false); return; }
-        await createMovement({
-          type: movType, date: date || undefined, productId: product.id,
-          warehouseId: warehouseId || undefined, locationId: locationId || undefined,
-          documentNumber: documentNumber || undefined, carrier: carrier || undefined,
-          driver: driver || undefined, destination: destination || undefined,
-          notes: notes || undefined, encargadoRecepcionId: encargadoId || undefined,
-          adjustmentReason: isAdjustment ? adjustmentReason : undefined,
-          adjustmentCategory: isAdjustment ? adjustmentCategory || undefined : undefined,
-          palletItems,
-        });
-
-      } else if (isTransfer) {
-        const palletItems = fefoRows.flatMap((row) =>
-          row.lot.pallets.filter((p) => row.selectedIds.has(p.id)).map((p) => ({ palletId: p.id, quantity: p.quantity }))
-        );
-        if (palletItems.length === 0) { setFormError("Seleccioná al menos un palet para transferir."); setSaving(false); return; }
-        if (!toLocationId) { setFormError("Seleccioná la ubicación destino."); setSaving(false); return; }
-        await createMovement({
-          type: "TRANSFER", date: date || undefined, productId: product.id,
-          fromLocationId: fromLocationId || undefined, toLocationId,
-          notes: notes || undefined, palletItems,
-        });
       }
-
-      resetForm();
-      await refreshPending();
-    } catch (err) {
-      setFormError(getFriendlyApiError(err));
-    } finally {
-      setSaving(false);
+      createMovementMut.mutate({
+        type: movType, date: date || undefined, productId: product.id,
+        warehouseId: warehouseId || undefined, locationId: locationId || undefined,
+        documentNumber: documentNumber || undefined, supplier: supplier || undefined,
+        carrier: carrier || undefined, driver: driver || undefined,
+        notes: notes || undefined, encargadoRecepcionId: encargadoId || undefined,
+        isProvisional: isProvisional || undefined,
+        adjustmentReason: isAdjustment ? adjustmentReason : undefined,
+        adjustmentCategory: isAdjustment ? adjustmentCategory || undefined : undefined,
+        palletItems: allItems,
+      });
+    } else if (isExit) {
+      const palletItems = fefoRows.flatMap((row) =>
+        row.lot.pallets.filter((p) => row.selectedIds.has(p.id)).map((p) => ({ palletId: p.id, quantity: p.quantity }))
+      );
+      if (palletItems.length === 0) { setFormError("Seleccioná al menos un palet."); return; }
+      createMovementMut.mutate({
+        type: movType, date: date || undefined, productId: product.id,
+        warehouseId: warehouseId || undefined, locationId: locationId || undefined,
+        documentNumber: documentNumber || undefined, carrier: carrier || undefined,
+        driver: driver || undefined, destination: destination || undefined,
+        notes: notes || undefined, encargadoRecepcionId: encargadoId || undefined,
+        adjustmentReason: isAdjustment ? adjustmentReason : undefined,
+        adjustmentCategory: isAdjustment ? adjustmentCategory || undefined : undefined,
+        palletItems,
+      });
+    } else if (isTransfer) {
+      const palletItems = fefoRows.flatMap((row) =>
+        row.lot.pallets.filter((p) => row.selectedIds.has(p.id)).map((p) => ({ palletId: p.id, quantity: p.quantity }))
+      );
+      if (palletItems.length === 0) { setFormError("Seleccioná al menos un palet para transferir."); return; }
+      if (!toLocationId) { setFormError("Seleccioná la ubicación destino."); return; }
+      createMovementMut.mutate({
+        type: "TRANSFER", date: date || undefined, productId: product.id,
+        fromLocationId: fromLocationId || undefined, toLocationId,
+        notes: notes || undefined, palletItems,
+      });
     }
   }
 
@@ -281,35 +309,46 @@ export default function MovementsPage() {
   }
   function closeReg() { setRegMovement(null); setRegForm(emptyReg()); setRegError(""); }
 
-  async function handleRegularize(e: React.FormEvent) {
+  const regularizeMut = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: Parameters<typeof regularizeMovement>[1] }) =>
+      regularizeMovement(id, payload),
+    onSuccess: () => {
+      invalidateAfterMovement();
+      toast.success("Entrada regularizada");
+      closeReg();
+    },
+    onError: (err) => {
+      const msg = getFriendlyApiError(err);
+      setRegError(msg);
+      toast.error(msg);
+    },
+  });
+  const regSaving = regularizeMut.isPending;
+
+  function handleRegularize(e: React.FormEvent) {
     e.preventDefault();
     if (!regMovement) return;
     if (!regForm.reason.trim()) { setRegError("El motivo es obligatorio."); return; }
-    setRegSaving(true); setRegError("");
-    try {
-      const payload: Record<string, string> = { reason: regForm.reason.trim() };
-      if (regForm.documentNumber.trim()) payload.documentNumber = regForm.documentNumber.trim();
-      if (regForm.supplier.trim()) payload.supplier = regForm.supplier.trim();
-      if (regForm.carrier.trim()) payload.carrier = regForm.carrier.trim();
-      if (regForm.driver.trim()) payload.driver = regForm.driver.trim();
-      if (regForm.destination.trim()) payload.destination = regForm.destination.trim();
-      if (regForm.notes.trim()) payload.notes = regForm.notes.trim();
-      if (regForm.sapLot.trim()) payload.sapLot = regForm.sapLot.trim();
-      if (regForm.fechaVencimiento) payload.fechaVencimiento = regForm.fechaVencimiento;
-      if (regForm.fechaFabricacion) payload.fechaFabricacion = regForm.fechaFabricacion;
-      if (regForm.proveedor.trim()) payload.proveedor = regForm.proveedor.trim();
-      await regularizeMovement(regMovement.id, payload as Parameters<typeof regularizeMovement>[1]);
-      closeReg();
-      await refreshPending();
-    } catch (err) { setRegError(getFriendlyApiError(err)); }
-    finally { setRegSaving(false); }
+    setRegError("");
+    const payload: Record<string, string> = { reason: regForm.reason.trim() };
+    if (regForm.documentNumber.trim()) payload.documentNumber = regForm.documentNumber.trim();
+    if (regForm.supplier.trim()) payload.supplier = regForm.supplier.trim();
+    if (regForm.carrier.trim()) payload.carrier = regForm.carrier.trim();
+    if (regForm.driver.trim()) payload.driver = regForm.driver.trim();
+    if (regForm.destination.trim()) payload.destination = regForm.destination.trim();
+    if (regForm.notes.trim()) payload.notes = regForm.notes.trim();
+    if (regForm.sapLot.trim()) payload.sapLot = regForm.sapLot.trim();
+    if (regForm.fechaVencimiento) payload.fechaVencimiento = regForm.fechaVencimiento;
+    if (regForm.fechaFabricacion) payload.fechaFabricacion = regForm.fechaFabricacion;
+    if (regForm.proveedor.trim()) payload.proveedor = regForm.proveedor.trim();
+    regularizeMut.mutate({ id: regMovement.id, payload: payload as Parameters<typeof regularizeMovement>[1] });
   }
 
   function renderFefoRows() {
     if (fefoLoading) return <p style={{ color: "var(--muted)", fontSize: 13, margin: 0 }}>Cargando lotes...</p>;
     const hasQuery = isTransfer ? !!product && !!fromLocationId : exitMode === "product" ? !!product : !!appliedExitSapLot;
     if (fefoRows.length === 0 && hasQuery) {
-      return <div style={{ background: "#fef3c7", border: "1px solid #fbbf24", borderRadius: 8, padding: "10px 14px", fontSize: 13 }}>Sin stock disponible{isTransfer && fromLocationId ? " en esta ubicación." : "."}</div>;
+      return <div style={{ background: "var(--badge-adjout-bg)", border: "1px solid var(--badge-adjout-border)", color: "var(--badge-adjout-text)", borderRadius: 8, padding: "10px 14px", fontSize: 13 }}>Sin stock disponible{isTransfer && fromLocationId ? " en esta ubicación." : "."}</div>;
     }
     return (
       <div style={{ display: "grid", gap: 8 }}>
@@ -319,8 +358,8 @@ export default function MovementsPage() {
           const hasPallets = row.lot.pallets.length > 0;
           const allSelected = hasPallets && !blocked && row.selectedIds.size === row.lot.pallets.length;
           return (
-            <div key={row.lot.id} style={{ border: `1.5px solid ${blocked ? "#f97316" : row.selectedIds.size > 0 ? "var(--primary)" : "var(--border)"}`, borderRadius: 10, overflow: "hidden", opacity: blocked ? 0.75 : 1 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 10, padding: "9px 12px", alignItems: "center", background: blocked ? "#fff7ed" : row.selectedIds.size > 0 ? "rgba(37,99,235,.06)" : "var(--bg)", cursor: blocked ? "not-allowed" : "pointer" }}
+            <div key={row.lot.id} style={{ border: `1.5px solid ${blocked ? "var(--warning)" : row.selectedIds.size > 0 ? "var(--primary)" : "var(--border)"}`, borderRadius: 10, overflow: "hidden", opacity: blocked ? 0.75 : 1 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 10, padding: "9px 12px", alignItems: "center", background: blocked ? "var(--badge-adjout-bg)" : row.selectedIds.size > 0 ? "var(--primary-light)" : "var(--bg)", cursor: blocked ? "not-allowed" : "pointer" }}
                 onClick={() => !blocked && toggleExpanded(lotIdx)}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   {hasPallets && !blocked && (
@@ -333,7 +372,7 @@ export default function MovementsPage() {
                     <span style={{ fontWeight: 800, fontSize: 14 }}>{row.lot.lotCode}</span>
                     {row.lot.sapLot && <span style={{ fontSize: 11, color: "var(--primary)", fontWeight: 600, marginLeft: 8 }}>{row.lot.sapLot}</span>}
                     {exitMode === "sapLot" && !isTransfer && row.lot.product && <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: 8 }}>{row.lot.product.code}</span>}
-                    {blocked && <span style={{ fontSize: 10, background: "#f97316", color: "#fff", borderRadius: 4, padding: "1px 6px", marginLeft: 8, fontWeight: 700 }}>PROVISORIO</span>}
+                    {blocked && <span className="badge badge--adj-out" style={{ fontSize: 10, marginLeft: 8 }}>PROVISORIO</span>}
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 14, alignItems: "center", fontSize: 12, flexWrap: "wrap" }}>
@@ -351,7 +390,7 @@ export default function MovementsPage() {
               {row.expanded && (
                 <div style={{ padding: "4px 0", borderTop: "1px solid var(--border)" }}>
                   {hasPallets ? row.lot.pallets.map((p, pIdx) => (
-                    <label key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 16px", cursor: blocked ? "not-allowed" : "pointer", background: row.selectedIds.has(p.id) ? "rgba(37,99,235,.05)" : undefined, borderBottom: pIdx < row.lot.pallets.length - 1 ? "1px solid var(--border)" : undefined }}>
+                    <label key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 16px", cursor: blocked ? "not-allowed" : "pointer", background: row.selectedIds.has(p.id) ? "var(--primary-light)" : undefined, borderBottom: pIdx < row.lot.pallets.length - 1 ? "1px solid var(--border)" : undefined }}>
                       <input type="checkbox" checked={row.selectedIds.has(p.id)} disabled={blocked}
                         onChange={() => !blocked && togglePallet(lotIdx, p.id)}
                         style={{ width: 15, height: 15 }} />
@@ -386,8 +425,8 @@ export default function MovementsPage() {
 
       {/* ── Pendientes de regularización ── */}
       {pending.length > 0 && (
-        <section className="card" style={{ marginBottom: 12, borderLeft: "4px solid #f97316" }}>
-          <h3 style={{ marginTop: 0, fontSize: 15, fontWeight: 800, color: "#ea580c" }}>
+        <section className="card" style={{ marginBottom: 12, borderLeft: "4px solid var(--warning)" }}>
+          <h3 style={{ marginTop: 0, fontSize: 15, fontWeight: 800, color: "var(--badge-adjout-text)" }}>
             Pendientes de regularización ({pending.length})
           </h3>
           <p style={{ fontSize: 13, color: "var(--muted)", marginTop: -4, marginBottom: 10 }}>
@@ -396,7 +435,7 @@ export default function MovementsPage() {
           <div style={{ overflowX: "auto" }}>
             <table className="table">
               <thead>
-                <tr><th>Fecha</th><th>Material</th><th>Cantidad</th><th>Observación</th><th></th></tr>
+                <tr><th scope="col">Fecha</th><th scope="col">Material</th><th scope="col">Cantidad</th><th scope="col">Observación</th><th scope="col"></th></tr>
               </thead>
               <tbody>
                 {pending.map((m) => (
@@ -420,9 +459,8 @@ export default function MovementsPage() {
 
       {/* ── Modal Regularización ── */}
       {regMovement && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}
-          onClick={(e) => e.target === e.currentTarget && closeReg()}>
-          <div style={{ background: "var(--card)", borderRadius: 14, padding: 28, width: "100%", maxWidth: 560, boxShadow: "0 8px 40px rgba(0,0,0,.25)", overflowY: "auto", maxHeight: "90vh" }}>
+        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && closeReg()}>
+          <div className="modal" style={{ width: "100%", maxWidth: 560, overflowY: "auto", maxHeight: "90vh" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800 }}>Regularizar entrada provisoria</h3>
               <button onClick={closeReg} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "var(--muted)", lineHeight: 1 }}>×</button>
@@ -434,8 +472,8 @@ export default function MovementsPage() {
             </div>
             <form onSubmit={handleRegularize} style={{ display: "grid", gap: 10 }}>
               <div>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#dc2626", textTransform: "uppercase", marginBottom: 3 }}>Motivo de regularización *</label>
-                <textarea className="input" rows={2} value={regForm.reason} onChange={(e) => setRegForm((p) => ({ ...p, reason: e.target.value }))} placeholder="Describí por qué se regulariza..." required />
+                <label htmlFor="reg-reason" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--danger)", textTransform: "uppercase", marginBottom: 3 }}>Motivo de regularización *</label>
+                <textarea id="reg-reason" className="input" rows={2} value={regForm.reason} onChange={(e) => setRegForm((p) => ({ ...p, reason: e.target.value }))} placeholder="Describí por qué se regulariza..." required aria-required="true" />
               </div>
               <div style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.4, paddingBottom: 2, borderBottom: "1px solid var(--border)" }}>Datos del movimiento</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
@@ -461,7 +499,7 @@ export default function MovementsPage() {
                 <div><label style={{ display: "block", fontSize: 11, color: "var(--muted)", marginBottom: 2 }}>F. Fabricación</label>
                   <input className="input" type="date" value={regForm.fechaFabricacion} onChange={(e) => setRegForm((p) => ({ ...p, fechaFabricacion: e.target.value }))} /></div>
               </div>
-              {regError && <p style={{ color: "#dc2626", fontSize: 13, margin: 0 }}>{regError}</p>}
+              {regError && <p className="form-error" role="alert">{regError}</p>}
               <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
                 <button className="btn btn--primary" type="submit" disabled={regSaving}>{regSaving ? "Guardando..." : "Regularizar y cerrar"}</button>
                 <button type="button" className="btn" onClick={closeReg}>Cancelar</button>
@@ -473,11 +511,70 @@ export default function MovementsPage() {
 
       {/* ── Formulario ── */}
       <section className="card">
-        <h3 style={{ marginTop: 0, fontSize: 15, fontWeight: 800 }}>Registrar movimiento</h3>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Registrar movimiento</h3>
+          {/* Wizard step indicator — only for ENTRY */}
+          {movType === "ENTRY" && (
+            <nav aria-label="Pasos del asistente de entrada" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              {WIZARD_STEPS.map((step, idx) => (
+                <div key={step.n} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  {idx > 0 && (
+                    <div style={{ width: 24, height: 1, background: wizardStep > step.n - 1 ? "var(--primary)" : "var(--border)" }} aria-hidden="true" />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => wizardStep > step.n - 1 && setWizardStep(step.n)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      background: "none",
+                      border: "none",
+                      cursor: wizardStep > step.n - 1 ? "pointer" : "default",
+                      padding: "2px 4px",
+                    }}
+                    aria-current={wizardStep === step.n ? "step" : undefined}
+                    aria-label={`Paso ${step.n}: ${step.label}`}
+                  >
+                    <span
+                      style={{
+                        width: 22,
+                        height: 22,
+                        borderRadius: "50%",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        background: wizardStep === step.n
+                          ? "var(--primary)"
+                          : wizardStep > step.n
+                          ? "var(--success)"
+                          : "var(--panel-hi)",
+                        color: wizardStep >= step.n ? "#fff" : "var(--muted)",
+                        border: wizardStep === step.n ? "none" : `1px solid ${wizardStep > step.n ? "var(--success)" : "var(--border)"}`,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {wizardStep > step.n ? "✓" : step.n}
+                    </span>
+                    <span style={{ fontSize: 12, fontWeight: wizardStep === step.n ? 700 : 400, color: wizardStep === step.n ? "var(--text)" : "var(--muted)" }}>
+                      {step.label}
+                    </span>
+                  </button>
+                </div>
+              ))}
+            </nav>
+          )}
+        </div>
+
         <form onSubmit={handleSubmit} style={{ display: "grid", gap: 14 }}>
 
-          {/* Tipo y material */}
-          <div className="form-section-title">Tipo y material</div>
+          {/* Tipo y material — always visible (step 1 for ENTRY, always for others) */}
+          {(movType !== "ENTRY" || wizardStep === 1) && (
+            <div className="form-section-title">Tipo y material</div>
+          )}
+          {(movType !== "ENTRY" || wizardStep === 1) && (
           <div style={{ display: "grid", gridTemplateColumns: "200px 1fr auto", gap: 8, alignItems: "center" }}>
             <select className="input" value={movType}
               onChange={(e) => {
@@ -485,6 +582,7 @@ export default function MovementsPage() {
                 setProduct(null); setFefoRows([]); setLotGroups([newLotGroup()]);
                 setExitMode("product"); setAppliedExitSapLot("");
                 setAdjustmentReason(""); setAdjustmentCategory(""); setIsProvisional(false);
+                setWizardStep(1);
               }}>
               <option value="ENTRY">Entrada</option>
               <option value="EXIT">Salida</option>
@@ -495,9 +593,10 @@ export default function MovementsPage() {
             <ProductSearch value={product} onChange={setProduct} />
             <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} title="Fecha (vacío = hoy)" style={{ width: 150 }} />
           </div>
+          )}
 
           {/* Depósito/Ubicación */}
-          {!isTransfer && (
+          {(movType !== "ENTRY" || wizardStep === 1) && !isTransfer && (
             <>
               <div className="form-section-title">Depósito y ubicación</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
@@ -514,7 +613,7 @@ export default function MovementsPage() {
           )}
 
           {/* Transferencia: origen → destino + selección palets */}
-          {isTransfer && (
+          {(movType !== "ENTRY" || wizardStep === 1) && isTransfer && (
             <>
               <div className="form-section-title">Origen → Destino</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
@@ -547,13 +646,13 @@ export default function MovementsPage() {
           )}
 
           {/* Ajustes: motivo obligatorio */}
-          {isAdjustment && (
+          {(movType !== "ENTRY" || wizardStep === 1) && isAdjustment && (
             <>
               <div className="form-section-title">Motivo del ajuste</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div>
-                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#dc2626", textTransform: "uppercase", marginBottom: 3 }}>Motivo *</label>
-                  <select className="input" value={adjustmentReason} onChange={(e) => setAdjustmentReason(e.target.value)} required style={{ borderColor: !adjustmentReason ? "#fca5a5" : undefined }}>
+                  <label htmlFor="adj-reason" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--danger)", textTransform: "uppercase", marginBottom: 3 }}>Motivo *</label>
+                  <select id="adj-reason" className="input" value={adjustmentReason} onChange={(e) => setAdjustmentReason(e.target.value)} required style={{ borderColor: !adjustmentReason ? "var(--danger)" : undefined }} aria-required="true">
                     <option value="">Seleccionar...</option>
                     {ADJUSTMENT_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                   </select>
@@ -563,14 +662,14 @@ export default function MovementsPage() {
                   <input className="input" placeholder="Ej: Zona fría, Zona seca..." value={adjustmentCategory} onChange={(e) => setAdjustmentCategory(e.target.value)} />
                 </div>
               </div>
-              <div style={{ background: "#fef3c7", border: "1px solid #fbbf24", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#92400e" }}>
+              <div style={{ background: "var(--badge-adjout-bg)", border: "1px solid var(--badge-adjout-border)", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "var(--badge-adjout-text)" }}>
                 Solo para diferencias de inventario, mermas, roturas o sobrantes físicos. El ajuste queda registrado en auditoría.
               </div>
             </>
           )}
 
-          {/* Entrada: lotes y palets */}
-          {isEntry && (
+          {/* Entrada: lotes y palets (Step 2 only for ENTRY wizard) */}
+          {isEntry && (movType !== "ENTRY" || wizardStep === 2) && (
             <>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
                 <div className="form-section-title" style={{ marginBottom: 0 }}>Lotes y palets</div>
@@ -586,7 +685,7 @@ export default function MovementsPage() {
                   const expected = Number(group.expectedTotal);
                   const mismatch = group.expectedTotal && expected > 0 && gt !== expected;
                   return (
-                    <div key={group.id} style={{ border: `1.5px solid ${mismatch ? "#f97316" : "var(--border)"}`, borderRadius: 10, overflow: "hidden" }}>
+                    <div key={group.id} style={{ border: `1.5px solid ${mismatch ? "var(--warning)" : "var(--border)"}`, borderRadius: 10, overflow: "hidden" }}>
                       <div style={{ background: "var(--bg)", padding: "8px 10px", display: "grid", gridTemplateColumns: "1fr 120px 120px 110px 32px", gap: 6, alignItems: "center", borderBottom: "1px solid var(--border)" }}>
                         <input className="input" placeholder="Código de lote *" value={group.lotCode}
                           onChange={(e) => updateGroup(group.id, "lotCode", e.target.value)} style={{ fontSize: 13, fontWeight: 700 }} />
@@ -601,13 +700,13 @@ export default function MovementsPage() {
                             onChange={(e) => updateGroup(group.id, "fechaFabricacion", e.target.value)} style={{ fontSize: 12, padding: "5px 6px" }} />
                         </div>
                         <div>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: mismatch ? "#f97316" : "var(--muted)", textTransform: "uppercase", marginBottom: 2 }}>Total esp.</div>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: mismatch ? "var(--warning)" : "var(--muted)", textTransform: "uppercase", marginBottom: 2 }}>Total esp.</div>
                           <input className="input" type="number" min={1} placeholder="Opcional"
                             value={group.expectedTotal} onChange={(e) => updateGroup(group.id, "expectedTotal", e.target.value)}
-                            style={{ fontSize: 12, padding: "5px 6px", borderColor: mismatch ? "#f97316" : undefined }} />
+                            style={{ fontSize: 12, padding: "5px 6px", borderColor: mismatch ? "var(--warning)" : undefined }} />
                         </div>
                         <button type="button" onClick={() => removeLotGroup(group.id)} disabled={lotGroups.length === 1}
-                          style={{ background: "none", border: "none", cursor: "pointer", color: "#dc2626", fontSize: 18, padding: 0 }}>×</button>
+                          style={{ background: "none", border: "none", cursor: "pointer", color: "var(--danger)", fontSize: 18, padding: 0 }}>×</button>
                       </div>
                       <div style={{ padding: "6px 10px 4px" }}>
                         {group.pallets.map((p, pIdx) => (
@@ -616,12 +715,12 @@ export default function MovementsPage() {
                             <input className="input" type="number" min={1} placeholder="Unidades *"
                               value={p.quantity} onChange={(e) => updatePalletQty(group.id, p.id, e.target.value)} style={{ fontSize: 13 }} />
                             <button type="button" onClick={() => removePallet(group.id, p.id)} disabled={group.pallets.length === 1}
-                              style={{ background: "none", border: "none", cursor: "pointer", color: "#dc2626", fontSize: 16, padding: 0 }}>×</button>
+                              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--danger)", fontSize: 16, padding: 0 }}>×</button>
                           </div>
                         ))}
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 4, borderTop: "1px solid var(--border)" }}>
                           <button type="button" className="btn" onClick={() => addPallet(group.id)} style={{ fontSize: 12, padding: "3px 10px" }}>+ Palet</button>
-                          <span style={{ fontSize: 12, color: mismatch ? "#f97316" : "var(--muted)", fontWeight: mismatch ? 700 : 400 }}>
+                          <span style={{ fontSize: 12, color: mismatch ? "var(--warning)" : "var(--muted)", fontWeight: mismatch ? 700 : 400 }}>
                             {group.pallets.length} palet{group.pallets.length !== 1 ? "s" : ""} · <strong>{gt.toLocaleString("es-PY")}</strong> unid.
                             {mismatch && ` · esperado: ${expected.toLocaleString("es-PY")}`}
                           </span>
@@ -635,11 +734,11 @@ export default function MovementsPage() {
 
               {/* Checkbox provisoria (solo ENTRY, no ajuste) */}
               {movType === "ENTRY" && (
-                <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: isProvisional ? "#fff7ed" : "var(--bg)", border: `1.5px solid ${isProvisional ? "#f97316" : "var(--border)"}`, borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: isProvisional ? "var(--badge-adjout-bg)" : "var(--bg)", border: `1.5px solid ${isProvisional ? "var(--warning)" : "var(--border)"}`, borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
                   <input type="checkbox" checked={isProvisional} onChange={(e) => setIsProvisional(e.target.checked)} style={{ width: 16, height: 16 }} />
                   <span>
                     Marcar como <strong>entrada provisoria</strong>
-                    {isProvisional && <span style={{ marginLeft: 8, fontSize: 11, background: "#f97316", color: "#fff", borderRadius: 4, padding: "1px 6px" }}>REQUIERE REGULARIZACIÓN</span>}
+                    {isProvisional && <span className="badge badge--adj-out" style={{ marginLeft: 8, fontSize: 10 }}>REQUIERE REGULARIZACIÓN</span>}
                   </span>
                   <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--muted)", fontWeight: 400, textAlign: "right" }}>Datos incompletos aceptados. Bloquea palets hasta regularizar.</span>
                 </label>
@@ -648,7 +747,7 @@ export default function MovementsPage() {
           )}
 
           {/* Salida: FEFO con palets */}
-          {isExit && (
+          {isExit && (movType !== "ENTRY" || wizardStep === 2) && (
             <>
               <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 <div className="form-section-title" style={{ marginBottom: 0 }}>{isAdjustment ? "Palets del ajuste" : "Selección FEFO"}</div>
@@ -684,42 +783,182 @@ export default function MovementsPage() {
             </>
           )}
 
-          {/* Datos logísticos */}
-          <div className="form-section-title">Datos logísticos</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8 }}>
-            {!isTransfer && <input className="input" placeholder="N° remito / documento" value={documentNumber} onChange={(e) => setDocumentNumber(e.target.value)} />}
-            {isEntry && <input className="input" placeholder="Proveedor" value={supplier} onChange={(e) => setSupplier(e.target.value)} />}
-            {!isTransfer && <input className="input" placeholder="Transportadora" value={carrier} onChange={(e) => setCarrier(e.target.value)} />}
-            {!isTransfer && <input className="input" placeholder="Conductor" value={driver} onChange={(e) => setDriver(e.target.value)} />}
-            {isExit && <input className="input" placeholder="Destino" value={destination} onChange={(e) => setDestination(e.target.value)} />}
-            {!isTransfer && (
-              <select className="input" value={encargadoId} onChange={(e) => setEncargadoId(e.target.value)}>
-                <option value="">Encargado recepción</option>
-                {users.map((u) => <option key={u.id} value={u.id}>{u.fullName || u.username} ({u.role})</option>)}
-              </select>
-            )}
-          </div>
+          {/* Datos logísticos — step 1 for ENTRY, always for others */}
+          {(movType !== "ENTRY" || wizardStep === 1) && (
+            <>
+              <div className="form-section-title">Datos logísticos</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8 }}>
+                {!isTransfer && <input className="input" placeholder="N° remito / documento" value={documentNumber} onChange={(e) => setDocumentNumber(e.target.value)} />}
+                {isEntry && <input className="input" placeholder="Proveedor" value={supplier} onChange={(e) => setSupplier(e.target.value)} />}
+                {!isTransfer && <input className="input" placeholder="Transportadora" value={carrier} onChange={(e) => setCarrier(e.target.value)} />}
+                {!isTransfer && <input className="input" placeholder="Conductor" value={driver} onChange={(e) => setDriver(e.target.value)} />}
+                {isExit && <input className="input" placeholder="Destino" value={destination} onChange={(e) => setDestination(e.target.value)} />}
+                {!isTransfer && (
+                  <select className="input" value={encargadoId} onChange={(e) => setEncargadoId(e.target.value)}>
+                    <option value="">Encargado recepción</option>
+                    {users.map((u) => <option key={u.id} value={u.id}>{u.fullName || u.username} ({u.role})</option>)}
+                  </select>
+                )}
+              </div>
 
-          <textarea className="input"
-            placeholder={isProvisional ? "Observaciones (OBLIGATORIO para entrada provisoria)" : "Observaciones (opcional)"}
-            value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
-            style={{ borderColor: isProvisional && !notes.trim() ? "#fca5a5" : undefined }} />
-          {isProvisional && !notes.trim() && (
-            <p style={{ margin: "-10px 0 0", fontSize: 12, color: "#dc2626" }}>Observación obligatoria para entradas provisorias.</p>
+              <textarea className="input"
+                placeholder={isProvisional ? "Observaciones (OBLIGATORIO para entrada provisoria)" : "Observaciones (opcional)"}
+                value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
+                aria-label="Observaciones"
+                style={{ borderColor: isProvisional && !notes.trim() ? "var(--danger)" : undefined }} />
+              {isProvisional && !notes.trim() && (
+                <p className="form-error" role="alert" style={{ margin: "-6px 0 0" }}>Observación obligatoria para entradas provisorias.</p>
+              )}
+            </>
           )}
 
-          {formError && (
-            <div style={{ background: "#fef2f2", border: "1.5px solid #fecaca", borderRadius: 8, padding: "10px 12px" }}>
-              <span style={{ color: "#dc2626", fontSize: 13, fontWeight: 600 }}>{formError}</span>
+          {/* ── ENTRY WIZARD Step 3: Confirmation Summary ── */}
+          {movType === "ENTRY" && wizardStep === 3 && (
+            <div style={{ display: "grid", gap: 10 }}>
+              <div className="form-section-title" style={{ color: "var(--primary)" }}>
+                Resumen de la entrada — revisá antes de confirmar
+              </div>
+
+              {/* Material + depósito */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13 }}>
+                <div style={{ padding: "10px 12px", background: "var(--bg)", border: "1px solid var(--border-dim)", borderRadius: 8 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "var(--muted)", marginBottom: 4 }}>Material</div>
+                  <strong>{product?.code ?? "—"}</strong>
+                  <div style={{ color: "var(--muted)", fontSize: 12 }}>{product?.description}</div>
+                </div>
+                <div style={{ padding: "10px 12px", background: "var(--bg)", border: "1px solid var(--border-dim)", borderRadius: 8 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "var(--muted)", marginBottom: 4 }}>Depósito/Ubicación</div>
+                  <strong>{warehouses.find((w) => w.id === warehouseId)?.name ?? "—"}</strong>
+                  {locationId && <div style={{ color: "var(--muted)", fontSize: 12 }}>{locations.find((l) => l.id === locationId)?.code}</div>}
+                </div>
+              </div>
+
+              {/* Documento */}
+              {(documentNumber || supplier || carrier || driver || encargadoId || date) && (
+                <div style={{ padding: "10px 12px", background: "var(--bg)", border: "1px solid var(--border-dim)", borderRadius: 8, fontSize: 12 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "var(--muted)", marginBottom: 6 }}>Datos logísticos</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px" }}>
+                    {documentNumber && <span>Remito: <strong>{documentNumber}</strong></span>}
+                    {supplier && <span>Proveedor: <strong>{supplier}</strong></span>}
+                    {carrier && <span>Transportadora: <strong>{carrier}</strong></span>}
+                    {driver && <span>Conductor: <strong>{driver}</strong></span>}
+                    {date && <span>Fecha: <strong>{new Date(date).toLocaleDateString("es-PY")}</strong></span>}
+                    {encargadoId && <span>Encargado: <strong>{users.find((u) => u.id === encargadoId)?.fullName || users.find((u) => u.id === encargadoId)?.username}</strong></span>}
+                  </div>
+                  {notes && <div style={{ marginTop: 6, color: "var(--text-variant)", fontStyle: "italic" }}>"{notes}"</div>}
+                </div>
+              )}
+
+              {/* Lote SAP + lotes */}
+              <div style={{ padding: "10px 12px", background: "var(--bg)", border: "1px solid var(--border-dim)", borderRadius: 8 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "var(--muted)", marginBottom: 6 }}>
+                  Lotes y palets
+                  {entrySapLot && <span style={{ marginLeft: 8, fontFamily: "monospace", color: "var(--primary-text)", fontSize: 11, textTransform: "none" }}>SAP: {entrySapLot}</span>}
+                </div>
+                {lotGroups.map((g) => {
+                  const gt = groupTotal(g);
+                  return (
+                    <div key={g.id} style={{ borderBottom: "1px solid var(--border-dim)", paddingBottom: 8, marginBottom: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, fontSize: 13 }}>
+                        <strong>{g.lotCode || <span style={{ color: "var(--danger)" }}>Sin código</span>}</strong>
+                        {g.fechaVencimiento && <span style={{ fontSize: 11, color: "var(--muted)" }}>Venc: {g.fechaVencimiento}</span>}
+                        {g.fechaFabricacion && <span style={{ fontSize: 11, color: "var(--muted)" }}>Fab: {g.fechaFabricacion}</span>}
+                        <span style={{ marginLeft: "auto", fontWeight: 700, color: "var(--success)" }}>
+                          {g.pallets.length} palet{g.pallets.length !== 1 ? "s" : ""} · {gt.toLocaleString("es-PY")} unid.
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {g.pallets.map((p, idx) => (
+                          <span key={p.id} style={{ fontSize: 12, padding: "2px 8px", background: "var(--panel-hi)", border: "1px solid var(--border-dim)", borderRadius: 4 }}>
+                            P{idx + 1}: <strong>{p.quantity || "—"}</strong>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--success)" }}>
+                  Total: {lotGroups.reduce((s, g) => s + groupTotal(g), 0).toLocaleString("es-PY")} unidades en {lotGroups.reduce((s, g) => s + g.pallets.length, 0)} palets
+                </div>
+              </div>
+
+              {isProvisional && (
+                <div style={{ padding: "10px 14px", background: "var(--badge-adjout-bg)", border: "1.5px solid var(--badge-adjout-border)", borderRadius: 8, fontSize: 13, color: "var(--badge-adjout-text)", fontWeight: 600 }} role="alert">
+                  ⚠ Esta entrada quedará como <strong>PROVISORIA</strong> — los palets quedarán bloqueados hasta regularizar.
+                </div>
+              )}
             </div>
           )}
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <button className="btn btn--primary" type="submit" disabled={saving || !product || (isAdjustment && !adjustmentReason)}>
-              {saving ? "Guardando..." : isProvisional ? "Registrar entrada provisoria" : "Registrar movimiento"}
-            </button>
-            <button type="button" className="btn" onClick={resetForm}>Limpiar</button>
-          </div>
+          {formError && (
+            <div className="form-error" role="alert">{formError}</div>
+          )}
+
+          {/* Navigation buttons */}
+          {movType === "ENTRY" ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {wizardStep > 1 && (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setWizardStep((s) => s - 1)}
+                  aria-label="Paso anterior"
+                >
+                  ← Anterior
+                </button>
+              )}
+              {wizardStep < 3 && (
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={() => {
+                    // Step 1 → 2: validate product
+                    if (wizardStep === 1 && !product) {
+                      setFormError("Seleccioná un material antes de continuar.");
+                      return;
+                    }
+                    // Step 2 → 3: validate lots
+                    if (wizardStep === 2) {
+                      const hasValid = lotGroups.some((g) => g.lotCode.trim() && g.pallets.some((p) => Number(p.quantity) > 0));
+                      if (!hasValid) {
+                        setFormError("Agregá al menos un lote con código y cantidad.");
+                        return;
+                      }
+                      for (const g of lotGroups) {
+                        const expected = Number(g.expectedTotal);
+                        if (g.expectedTotal && expected > 0 && groupTotal(g) !== expected) {
+                          setFormError(`Lote "${g.lotCode}": total (${groupTotal(g)}) ≠ esperado (${expected}).`);
+                          return;
+                        }
+                      }
+                    }
+                    setFormError("");
+                    setWizardStep((s) => s + 1);
+                  }}
+                >
+                  Siguiente →
+                </button>
+              )}
+              {wizardStep === 3 && (
+                <button
+                  className="btn btn--primary"
+                  type="submit"
+                  disabled={saving}
+                  aria-label={isProvisional ? "Registrar entrada provisoria" : "Confirmar y registrar entrada"}
+                >
+                  {saving ? "Guardando..." : isProvisional ? "Registrar entrada provisoria" : "✓ Confirmar entrada"}
+                </button>
+              )}
+              <button type="button" className="btn" onClick={resetForm}>Limpiar</button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <button className="btn btn--primary" type="submit" disabled={saving || !product || (isAdjustment && !adjustmentReason)}>
+                {saving ? "Guardando..." : isProvisional ? "Registrar entrada provisoria" : "Registrar movimiento"}
+              </button>
+              <button type="button" className="btn" onClick={resetForm}>Limpiar</button>
+            </div>
+          )}
         </form>
       </section>
     </div>

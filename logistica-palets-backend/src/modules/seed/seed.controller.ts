@@ -16,7 +16,9 @@ export class SeedController {
   @Post('from-excel')
   @Roles('ADMIN')
   async seedFromExcel(@Body() body: { maxMovimientos?: number; soloProductos?: boolean }) {
-    if (process.env.NODE_ENV === 'production' && !process.env.ALLOW_SEED) {
+    // OJO: comparar contra 'true' explícito. `!process.env.ALLOW_SEED` sería
+    // false cuando ALLOW_SEED="false" (string truthy), dejando el seed abierto.
+    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_SEED !== 'true') {
       throw new BadRequestException('Seed deshabilitado en producción. Setear ALLOW_SEED=true para habilitar.');
     }
     this.logger.log('Iniciando seed desde Excel...');

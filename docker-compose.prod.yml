@@ -1,0 +1,79 @@
+# =============================================================================
+# RL Logística — PRODUCCIÓN
+# Uso:
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#
+# Seguridad:
+#  - La DB NO expone puertos al host (solo red interna del compose).
+#  - Backend y frontend se publican únicamente en 127.0.0.1, para que un reverse
+#    proxy (Nginx/Traefik con SSL) en el host los enrute. NUNCA exponer estos
+#    puertos directamente a internet sin TLS.
+#  - Secretos vienen de .env.prod (gitignored), nunca hardcodeados.
+# =============================================================================
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: rl_logistica_db_prod
+    restart: unless-stopped
+    env_file: [.env.prod]
+    volumes:
+      - postgres_data_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+    # Sin sección 'ports': la base de datos no es accesible desde el host.
+
+  backend:
+    build:
+      context: ./logistica-palets-backend
+      dockerfile: Dockerfile
+    container_name: rl_logistica_backend_prod
+    restart: unless-stopped
+    env_file: [.env.prod]
+    environment:
+      # Overrides defensivos: valores internos fijos, independientes del .env.
+      PORT: 3000
+      DB_HOST: db
+      DB_PORT: 5432
+      NODE_ENV: production
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('http').get('http://localhost:3000/api/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks: [internal]
+
+  frontend:
+    build:
+      context: ./logistica-palets-frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL}
+    container_name: rl_logistica_frontend_prod
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:8080:80"
+    networks: [internal]
+
+volumes:
+  postgres_data_prod:
+
+networks:
+  internal:
+    driver: bridge

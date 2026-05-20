@@ -1,18 +1,45 @@
 import { useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { useAuth } from "../auth/AuthContext";
-import type { SeedStats } from "../api/seed";
+import type { SeedResult } from "../api/seed";
 import { resetData, seedFromExcel } from "../api/seed";
+import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 
 export default function SeedPage() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [maxMov, setMaxMov] = useState(300);
   const [soloProductos, setSoloProductos] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [resetting, setResetting] = useState(false);
-  const [result, setResult] = useState<{ mensaje: string; stats: SeedStats } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<SeedResult | null>(null);
   const [log, setLog] = useState<string[]>([]);
+
+  const seedMut = useMutation({
+    mutationFn: (vars: { maxMovimientos: number; soloProductos: boolean }) => seedFromExcel(vars),
+    onMutate: (vars) => {
+      setResult(null);
+      setLog([
+        "Iniciando carga masiva desde Excel...",
+        `Cargando hasta ${vars.maxMovimientos} movimientos por tipo...`,
+      ]);
+    },
+    onSuccess: (res) => {
+      setResult(res);
+      setLog((l) => [...l, "✓ Proceso completado."]);
+      toast.success(res.mensaje);
+    },
+    onError: (err) => toast.error(getFriendlyApiError(err)),
+  });
+
+  const resetMut = useMutation({
+    mutationFn: () => resetData(),
+    onSuccess: (res) => {
+      setLog(["✓ Datos eliminados: " + res.mensaje]);
+      setResult(null);
+      toast.success("Base de datos vaciada");
+    },
+    onError: (err) => toast.error(getFriendlyApiError(err)),
+  });
 
   if (user?.role !== "ADMIN") {
     return (
@@ -22,57 +49,36 @@ export default function SeedPage() {
     );
   }
 
-  async function handleSeed(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    setResult(null);
-    setLog(["Iniciando carga masiva desde Excel..."]);
-
-    try {
-      setLog((l) => [...l, `Cargando hasta ${maxMov} movimientos por tipo...`]);
-      const res = await seedFromExcel({ maxMovimientos: maxMov, soloProductos });
-      setResult(res);
-      setLog((l) => [...l, "✓ Proceso completado."]);
-    } catch (e) {
-      setError(getFriendlyApiError(e));
-    } finally {
-      setLoading(false);
-    }
+  function handleSeed(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    seedMut.mutate({ maxMovimientos: maxMov, soloProductos });
   }
 
-  async function handleReset() {
-    if (!confirm("⚠ ¿Eliminar TODOS los datos del sistema? Esta acción no se puede deshacer.")) return;
-    if (!confirm("Confirmación final: se eliminarán productos, lotes, movimientos, stock. ¿Continuar?")) return;
-    setResetting(true);
-    setError(null);
-    try {
-      const res = await resetData();
-      setLog(["✓ Datos eliminados: " + res.mensaje]);
-      setResult(null);
-    } catch (e) {
-      setError(getFriendlyApiError(e));
-    } finally {
-      setResetting(false);
-    }
+  function handleReset() {
+    if (!window.confirm("⚠ ¿Eliminar TODOS los datos del sistema? Esta acción no se puede deshacer.")) return;
+    if (!window.confirm("Confirmación final: se eliminarán productos, lotes, movimientos, stock. ¿Continuar?")) return;
+    resetMut.mutate();
   }
+
+  const loading = seedMut.isPending;
+  const resetting = resetMut.isPending;
 
   return (
     <div style={{ maxWidth: 800, margin: "0 auto" }}>
-      <h1 className="page-title" style={{ marginBottom: 8 }}>Carga Masiva de Datos</h1>
+      <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.5, marginBottom: 8 }}>Carga Masiva de Datos</h1>
       <p style={{ color: "var(--muted)", marginBottom: 28, fontSize: 14 }}>
         Importa productos, lotes, stock y movimientos históricos desde el Excel de RL Logística.
         El archivo debe estar en la raíz del proyecto o configurado en <code>SEED_EXCEL</code>.
       </p>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, alignItems: "start" }}>
-
-        {/* Panel izquierdo: configuración */}
-        <form className="card" onSubmit={handleSeed}>
+        <form className="card" onSubmit={handleSeed} aria-label="Configuración de carga">
           <h3 style={{ fontWeight: 700, marginBottom: 20 }}>Opciones de importación</h3>
 
           <div className="form-group">
-            <label className="label">Máximo de movimientos por tipo</label>
+            <label htmlFor="seed-maxmov" style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+              Máximo de movimientos por tipo
+            </label>
             <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>
               Limita entradas + salidas históricas. El Excel tiene ~3.000 entradas y ~7.000 salidas.
               Para prueba inicial recomendamos 50-300.
@@ -82,7 +88,7 @@ export default function SeedPage() {
                 <button
                   key={n}
                   type="button"
-                  className={`btn btn--sm${maxMov === n ? " btn--primary" : ""}`}
+                  className={`btn${maxMov === n ? " btn--primary" : ""}`}
                   onClick={() => setMaxMov(n)}
                 >
                   {n === 999 ? "Todos (lento)" : n}
@@ -90,6 +96,7 @@ export default function SeedPage() {
               ))}
             </div>
             <input
+              id="seed-maxmov"
               className="input"
               type="number"
               min={1}
@@ -97,10 +104,11 @@ export default function SeedPage() {
               value={maxMov}
               onChange={(e) => setMaxMov(Number(e.target.value))}
               style={{ marginTop: 8, width: 120 }}
+              aria-label="Cantidad máxima"
             />
           </div>
 
-          <div className="form-group" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div className="form-group" style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16 }}>
             <input
               type="checkbox"
               id="solo-prod"
@@ -116,7 +124,7 @@ export default function SeedPage() {
             </label>
           </div>
 
-          <div style={{ background: "var(--surface)", borderRadius: "var(--radius)", padding: "12px 16px", marginBottom: 16, fontSize: 13 }}>
+          <div style={{ background: "var(--panel-mid)", borderRadius: "var(--radius)", padding: "12px 16px", margin: "16px 0", fontSize: 13 }}>
             <strong>¿Qué se va a cargar?</strong>
             <ul style={{ margin: "8px 0 0 16px", color: "var(--muted)", lineHeight: 1.8 }}>
               <li>429 productos únicos (materiales AMBEV)</li>
@@ -137,38 +145,31 @@ export default function SeedPage() {
           </button>
         </form>
 
-        {/* Panel derecho: resultado y reset */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-
-          {/* Log en vivo */}
           {log.length > 0 && (
-            <div className="card" style={{ padding: "14px 16px" }}>
+            <div className="card" style={{ padding: "14px 16px" }} aria-live="polite">
               <h4 style={{ fontWeight: 600, marginBottom: 10, fontSize: 13 }}>Log</h4>
               <div style={{ fontFamily: "monospace", fontSize: 12, lineHeight: 1.9 }}>
                 {log.map((l, i) => <div key={i}>{l}</div>)}
-                {loading && <div style={{ color: "var(--primary)" }}>⏳ procesando...</div>}
+                {loading && <div style={{ color: "var(--primary-text)" }}>⏳ procesando...</div>}
               </div>
             </div>
           )}
 
-          {/* Error */}
-          {error && <div className="form-error">{error}</div>}
-
-          {/* Resultado */}
           {result && (
-            <div className="card" style={{ background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
-              <h4 style={{ fontWeight: 700, color: "#15803d", marginBottom: 14 }}>✓ {result.mensaje}</h4>
+            <div className="card form-success" style={{ padding: 20 }}>
+              <h4 style={{ fontWeight: 700, marginBottom: 14 }}>✓ {result.mensaje}</h4>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 {[
-                  { label: "Productos creados",  value: result.stats.productosCreados },
-                  { label: "Ya existían",         value: result.stats.productosOmitidos },
-                  { label: "Lotes",               value: result.stats.lotesCreados },
-                  { label: "Stock inicial",        value: result.stats.stockCargado },
+                  { label: "Productos creados", value: result.stats.productosCreados },
+                  { label: "Ya existían", value: result.stats.productosOmitidos },
+                  { label: "Lotes", value: result.stats.lotesCreados },
+                  { label: "Stock inicial", value: result.stats.stockCargado },
                   { label: "Entradas históricas", value: result.stats.entradasCreadas },
-                  { label: "Salidas históricas",  value: result.stats.salidasCreadas },
+                  { label: "Salidas históricas", value: result.stats.salidasCreadas },
                 ].map(({ label, value }) => (
-                  <div key={label} style={{ textAlign: "center", padding: "10px 8px", background: "white", borderRadius: "var(--radius)" }}>
-                    <div style={{ fontSize: 24, fontWeight: 700, color: "var(--primary)" }}>{value}</div>
+                  <div key={label} style={{ textAlign: "center", padding: "10px 8px", background: "var(--panel)", borderRadius: "var(--radius)", border: "1px solid var(--border)" }}>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: "var(--primary-text)" }}>{value}</div>
                     <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{label}</div>
                   </div>
                 ))}
@@ -176,16 +177,15 @@ export default function SeedPage() {
             </div>
           )}
 
-          {/* Reset */}
-          <div className="card" style={{ border: "1px solid #fecaca", background: "#fef2f2" }}>
-            <h4 style={{ fontWeight: 700, color: "#dc2626", marginBottom: 8 }}>Zona peligrosa</h4>
-            <p style={{ fontSize: 13, color: "#7f1d1d", marginBottom: 14 }}>
+          <div className="card" style={{ borderColor: "var(--badge-exit-border)" }}>
+            <h4 style={{ fontWeight: 700, color: "var(--danger)", marginBottom: 8 }}>Zona peligrosa</h4>
+            <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 14 }}>
               Elimina <strong>todos</strong> los productos, lotes, movimientos y stock de la base de datos.
               Solo usar en entorno de desarrollo para empezar desde cero.
             </p>
             <button
-              className="btn"
-              style={{ color: "#dc2626", borderColor: "#fca5a5", width: "100%" }}
+              className="btn btn--danger"
+              style={{ width: "100%" }}
               onClick={handleReset}
               disabled={loading || resetting}
             >

@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
+import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { createLocation, deleteLocation, listLocations, type Location } from "../api/locations";
-import { listWarehouses, type Warehouse } from "../api/warehouses";
+import { listWarehouses } from "../api/warehouses";
 import { useAuth } from "../auth/AuthContext";
 import { canCreate, canDelete } from "../auth/rbac";
+import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 
 export default function LocationsPage() {
@@ -10,15 +12,13 @@ export default function LocationsPage() {
   const role = user?.role;
   const allowCreate = role ? canCreate("locations", role) : false;
   const allowDelete = role ? canDelete("locations", role) : false;
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const codeId = useId();
+  const whId = useId();
 
-  const [items, setItems] = useState<Location[]>([]);
-  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [code, setCode] = useState("");
   const [warehouseId, setWarehouseId] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [formError, setFormError] = useState("");
   const [submitted, setSubmitted] = useState(false);
 
   const codeError = useMemo(() => {
@@ -28,118 +28,144 @@ export default function LocationsPage() {
     return "";
   }, [code]);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const [locations, warehouseData] = await Promise.all([listLocations(), listWarehouses()]);
-      setItems(locations);
-      setWarehouses(warehouseData);
-      setWarehouseId((current) => current || warehouseData[0]?.id || "");
-    } catch (err) {
-      setError(getFriendlyApiError(err));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const [locationsQ, warehousesQ] = useQueries({
+    queries: [
+      { queryKey: ["locations"], queryFn: listLocations },
+      { queryKey: ["warehouses"], queryFn: listWarehouses },
+    ],
+  });
+
+  const items = locationsQ.data ?? [];
+  const warehouses = warehousesQ.data ?? [];
+  const isLoading = locationsQ.isLoading || warehousesQ.isLoading;
+  const isError = locationsQ.isError || warehousesQ.isError;
 
   useEffect(() => {
-    refresh().catch(() => undefined);
-  }, [refresh]);
+    if (!warehouseId && warehouses[0]) setWarehouseId(warehouses[0].id);
+  }, [warehouses, warehouseId]);
 
-  async function handleCreate(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSubmitted(true);
-    setFormError("");
-
-    if (!allowCreate || codeError || !warehouseId) {
-      return;
-    }
-
-    setSaving(true);
-    try {
-      await createLocation({ code: code.trim(), warehouseId });
+  const createMut = useMutation({
+    mutationFn: createLocation,
+    onSuccess: (created) => {
+      queryClient.invalidateQueries({ queryKey: ["locations"] });
+      toast.success(`Ubicación ${created.code} creada`);
       setCode("");
       setSubmitted(false);
-      await refresh();
-    } catch (err) {
-      setFormError(getFriendlyApiError(err));
-    } finally {
-      setSaving(false);
-    }
+    },
+    onError: (err) => toast.error(getFriendlyApiError(err)),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => deleteLocation(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["locations"] });
+      toast.success("Ubicación eliminada");
+    },
+    onError: (err) => toast.error(getFriendlyApiError(err)),
+  });
+
+  const saving = createMut.isPending || deleteMut.isPending;
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSubmitted(true);
+    if (!allowCreate || codeError || !warehouseId) return;
+    createMut.mutate({ code: code.trim(), warehouseId });
   }
 
-  async function handleDelete(item: Location) {
-    if (!allowDelete || !window.confirm(`Eliminar ubicación ${item.code}?`)) {
-      return;
-    }
+  function handleDelete(item: Location) {
+    if (!allowDelete) return;
+    if (!window.confirm(`Eliminar ubicación ${item.code}?`)) return;
+    deleteMut.mutate(item.id);
+  }
 
-    setSaving(true);
-    setFormError("");
-    try {
-      await deleteLocation(item.id);
-      await refresh();
-    } catch (err) {
-      setFormError(getFriendlyApiError(err));
-    } finally {
-      setSaving(false);
-    }
+  function refetchAll() {
+    locationsQ.refetch();
+    warehousesQ.refetch();
   }
 
   return (
     <div>
-      <h2>Ubicaciones</h2>
-      {!allowCreate ? <p style={{ color: "#6b7280" }}>Modo lectura.</p> : null}
+      <div style={{ marginBottom: 20 }}>
+        <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.5, marginBottom: 4 }}>Ubicaciones</h1>
+        <p style={{ color: "var(--muted)", fontSize: 14, marginBottom: 0 }}>
+          {!allowCreate ? "Modo lectura." : "Racks, pisos y ubicaciones temporales por depósito."}
+        </p>
+      </div>
 
-      <form onSubmit={handleCreate} style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-        <input className="input" disabled={!allowCreate || saving} value={code} onChange={(event) => setCode(event.target.value)} placeholder="Código" />
-        <select className="input" disabled={!allowCreate || saving || warehouses.length === 0} value={warehouseId} onChange={(event) => setWarehouseId(event.target.value)}>
+      <form onSubmit={handleSubmit} style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }} aria-label="Nueva ubicación">
+        <input
+          id={codeId}
+          className="input"
+          disabled={!allowCreate || saving}
+          value={code}
+          onChange={(event) => setCode(event.target.value)}
+          placeholder="Código (ej: A1-01-02)"
+          aria-label="Código de ubicación"
+          aria-invalid={submitted && !!codeError}
+          aria-describedby={submitted && codeError ? `${codeId}-err` : undefined}
+        />
+        <select
+          id={whId}
+          className="input"
+          disabled={!allowCreate || saving || warehouses.length === 0}
+          value={warehouseId}
+          onChange={(event) => setWarehouseId(event.target.value)}
+          aria-label="Depósito"
+          aria-invalid={submitted && !warehouseId}
+        >
           <option value="">Seleccionar depósito</option>
-          {warehouses.map((warehouse) => (
-            <option key={warehouse.id} value={warehouse.id}>
-              {warehouse.name}
-            </option>
+          {warehouses.map((w) => (
+            <option key={w.id} value={w.id}>{w.name}</option>
           ))}
         </select>
         <button className="btn btn--primary" type="submit" disabled={!allowCreate || saving || warehouses.length === 0}>
-          {saving ? "Guardando..." : "Guardar"}
+          {createMut.isPending ? "Guardando..." : "Guardar"}
         </button>
       </form>
 
-      {submitted && codeError ? <p style={{ color: "#b91c1c", marginTop: -4 }}>{codeError}</p> : null}
-      {submitted && !warehouseId ? <p style={{ color: "#b91c1c", marginTop: -4 }}>Seleccioná un depósito.</p> : null}
-      {formError ? <p style={{ color: "#b91c1c" }}>{formError}</p> : null}
+      {submitted && codeError ? <p id={`${codeId}-err`} className="form-error" role="alert">{codeError}</p> : null}
+      {submitted && !warehouseId ? <p className="form-error" role="alert">Seleccioná un depósito.</p> : null}
 
-      {loading ? <p>Cargando...</p> : null}
-      {error ? (
-        <div>
-          <p style={{ color: "#b91c1c", marginBottom: 8 }}>No se pudo cargar.</p>
-          <button className="btn" onClick={refresh}>
-            Reintentar
-          </button>
+      {isLoading ? <p aria-busy="true" style={{ color: "var(--muted)" }}>Cargando…</p> : null}
+      {isError ? (
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }} role="alert">
+          <p className="form-error" style={{ marginBottom: 0 }}>No se pudo cargar.</p>
+          <button className="btn btn--primary" onClick={refetchAll}>Reintentar</button>
         </div>
       ) : null}
 
-      {!loading && !error ? (
+      {!isLoading && !isError ? (
         items.length === 0 ? (
           <p>No hay registros</p>
         ) : (
-          <table className="table">
+          <table className="table" aria-label="Lista de ubicaciones">
             <thead>
               <tr>
-                <th>Código</th>
-                <th>Depósito</th>
-                <th>ID</th>
-                <th />
+                <th scope="col">Código</th>
+                <th scope="col">Depósito</th>
+                <th scope="col">ID</th>
+                <th scope="col" />
               </tr>
             </thead>
             <tbody>
               {items.map((item) => (
                 <tr key={item.id}>
-                  <td>{item.code}</td>
+                  <td><strong>{item.code}</strong></td>
                   <td>{item.warehouse?.name ?? item.warehouseId ?? "-"}</td>
-                  <td style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.id}</td>
-                  <td>{allowDelete ? <button className="btn" onClick={() => handleDelete(item)}>Eliminar</button> : null}</td>
+                  <td style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--muted)", fontSize: 12 }}>{item.id}</td>
+                  <td style={{ textAlign: "right" }}>
+                    {allowDelete ? (
+                      <button
+                        className="btn btn--danger"
+                        onClick={() => handleDelete(item)}
+                        disabled={saving}
+                        aria-label={`Eliminar ubicación ${item.code}`}
+                      >
+                        Eliminar
+                      </button>
+                    ) : null}
+                  </td>
                 </tr>
               ))}
             </tbody>

@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { Pallet } from './entities/pallet.entity';
 import { CreatePalletDto } from './dto/create-pallet.dto';
 import { UpdatePalletDto } from './dto/update-pallet.dto';
@@ -10,6 +10,7 @@ import { Location } from '../locations/entities/location.entity';
 @Injectable()
 export class PalletsService {
   constructor(
+    private readonly dataSource: DataSource,
     @InjectRepository(Pallet) private readonly palletRepo: Repository<Pallet>,
     @InjectRepository(Lot) private readonly lotRepo: Repository<Lot>,
     @InjectRepository(Location) private readonly locationRepo: Repository<Location>,
@@ -67,5 +68,127 @@ export class PalletsService {
     const pallet = await this.findOne(id);
     await this.palletRepo.remove(pallet);
     return { deleted: true };
+  }
+
+  /**
+   * Full movement history for a single pallet.
+   * Joins movement_details → movements → products / locations (from/to) / warehouses.
+   * Falls back to searching movements.palletId for legacy single-pallet movements.
+   */
+  async history(id: string) {
+    const pallet = await this.findOne(id); // throws 404 if not found
+
+    // Events from movement_details (multi-pallet movements)
+    const detailEvents = await this.dataSource.query(
+      `
+      SELECT
+        m.id          AS "movementId",
+        m.type,
+        m.date,
+        md.quantity,
+        m."documentNumber",
+        m.supplier,
+        m.carrier,
+        m.driver,
+        m.destination,
+        m.notes,
+        m.status,
+        p.code        AS "productCode",
+        p.description AS "productDescription",
+        -- from location
+        l_from.id     AS "fromLocationId",
+        l_from.code   AS "fromLocationCode",
+        w_from.name   AS "fromWarehouseName",
+        -- to location (or current location for ENTRY)
+        l_to.id       AS "toLocationId",
+        l_to.code     AS "toLocationCode",
+        w_to.name     AS "toWarehouseName"
+      FROM movement_details md
+      JOIN movements m   ON m.id = md."movementId"
+      JOIN products  p   ON p.id = m."productId"
+      LEFT JOIN locations l_from ON l_from.id = md."locationId"
+      LEFT JOIN warehouses w_from ON w_from.id = m."fromWarehouseId"
+      LEFT JOIN locations l_to   ON l_to.id   = m."toLocationId"
+      LEFT JOIN warehouses w_to  ON w_to.id   = m."toWarehouseId"
+      WHERE md."palletId" = $1
+      ORDER BY m.date ASC
+      `,
+      [id],
+    );
+
+    // Legacy events directly on movements (movements without details)
+    const directEvents = await this.dataSource.query(
+      `
+      SELECT
+        m.id          AS "movementId",
+        m.type,
+        m.date,
+        m.quantity,
+        m."documentNumber",
+        m.supplier,
+        m.carrier,
+        m.driver,
+        m.destination,
+        m.notes,
+        m.status,
+        p.code        AS "productCode",
+        p.description AS "productDescription",
+        l_from.id     AS "fromLocationId",
+        l_from.code   AS "fromLocationCode",
+        w_from.name   AS "fromWarehouseName",
+        l_to.id       AS "toLocationId",
+        l_to.code     AS "toLocationCode",
+        w_to.name     AS "toWarehouseName"
+      FROM movements m
+      JOIN products p ON p.id = m."productId"
+      LEFT JOIN locations  l_from ON l_from.id = m."fromLocationId"
+      LEFT JOIN warehouses w_from ON w_from.id = m."fromWarehouseId"
+      LEFT JOIN locations  l_to   ON l_to.id   = m."toLocationId"
+      LEFT JOIN warehouses w_to   ON w_to.id   = m."toWarehouseId"
+      WHERE m."palletId" = $1
+        AND NOT EXISTS (
+          SELECT 1 FROM movement_details md2
+          WHERE md2."movementId" = m.id AND md2."palletId" = $1
+        )
+      ORDER BY m.date ASC
+      `,
+      [id],
+    );
+
+    // Merge and sort chronologically, deduplicate by movementId
+    const seen = new Set<string>();
+    const events = [...detailEvents, ...directEvents]
+      .filter((e) => {
+        if (seen.has(e.movementId)) return false;
+        seen.add(e.movementId);
+        return true;
+      })
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    return {
+      pallet,
+      product: events[0]
+        ? { code: events[0].productCode, description: events[0].productDescription }
+        : null,
+      history: events.map((e) => ({
+        movementId: e.movementId,
+        type: e.type,
+        date: e.date,
+        quantity: Number(e.quantity),
+        documentNumber: e.documentNumber ?? null,
+        supplier: e.supplier ?? null,
+        carrier: e.carrier ?? null,
+        driver: e.driver ?? null,
+        destination: e.destination ?? null,
+        notes: e.notes ?? null,
+        status: e.status,
+        from: e.fromLocationId
+          ? { locationId: e.fromLocationId, locationCode: e.fromLocationCode, warehouseName: e.fromWarehouseName }
+          : null,
+        to: e.toLocationId
+          ? { locationId: e.toLocationId, locationCode: e.toLocationCode, warehouseName: e.toWarehouseName }
+          : null,
+      })),
+    };
   }
 }

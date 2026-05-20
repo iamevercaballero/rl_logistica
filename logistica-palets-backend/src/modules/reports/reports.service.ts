@@ -49,6 +49,25 @@ export class ReportsService {
     return { start, end: now };
   }
 
+  /** Returns the equivalent previous period window (same duration, immediately before current). */
+  private getPreviousRangeDates(range: 'today' | 'week' | 'month') {
+    const now = new Date();
+    if (range === 'today') {
+      // Previous period = yesterday
+      const end = new Date(now);
+      end.setHours(0, 0, 0, 0);
+      const start = new Date(end);
+      start.setDate(start.getDate() - 1);
+      return { start, end };
+    }
+    const days = range === 'week' ? 7 : 30;
+    const end = new Date(now);
+    end.setDate(end.getDate() - days);
+    const start = new Date(end);
+    start.setDate(start.getDate() - days);
+    return { start, end };
+  }
+
   async stock(query: StockQueryDto) {
     const qb = this.dataSource
       .createQueryBuilder()
@@ -408,20 +427,46 @@ export class ReportsService {
   async kpis(query: KpisQueryDto) {
     const range = query.range ?? 'today';
     const { start, end } = this.getRangeDates(range);
+    const { start: prevStart, end: prevEnd } = this.getPreviousRangeDates(range);
 
-    const [stockRaw, movementsRaw, stockByWarehouseRaw] = await Promise.all([
+    // Expiry thresholds: lots expiring in ≤60 days
+    const now = new Date();
+    const in15 = new Date(now); in15.setDate(in15.getDate() + 15);
+    const in60 = new Date(now); in60.setDate(in60.getDate() + 60);
+
+    const [
+      stockRaw,
+      movementsRaw,
+      prevMovementsRaw,
+      stockByWarehouseRaw,
+      pendingRaw,
+      expiringRaw,
+    ] = await Promise.all([
+      // Current stock totals
       this.dataSource
         .createQueryBuilder()
         .from('stocks', 's')
         .select('COUNT(DISTINCT s."productId")', 'materials')
         .addSelect('COALESCE(SUM(s."currentQuantity"), 0)', 'totalQuantity')
         .getRawOne(),
+
+      // Movements in current period
       this.dataSource
         .createQueryBuilder()
         .from('movements', 'm')
         .select('COUNT(m.id)', 'movementsInRange')
         .where('m.date >= :start AND m.date <= :end', { start, end })
         .getRawOne(),
+
+      // Movements in previous period (for trend delta)
+      this.dataSource
+        .createQueryBuilder()
+        .from('movements', 'm')
+        .select('COUNT(m.id)', 'prevMovements')
+        .where('m.date >= :prevStart AND m.date < :prevEnd', { prevStart, prevEnd })
+        .getRawOne(),
+
+      // Stock by warehouse
       this.dataSource
         .createQueryBuilder()
         .from('stocks', 's')
@@ -433,14 +478,57 @@ export class ReportsService {
         .addGroupBy('w.name')
         .orderBy('w.name', 'ASC')
         .getRawMany(),
+
+      // Pending regularizations count
+      this.dataSource
+        .createQueryBuilder()
+        .from('movements', 'm')
+        .select('COUNT(m.id)', 'pending')
+        .where('m.status = :status', { status: 'PENDING_REGULARIZATION' })
+        .getRawOne(),
+
+      // Lots expiring within 60 days (with available pallets)
+      this.dataSource
+        .createQueryBuilder()
+        .from('lots', 'l')
+        .select('l.id', 'id')
+        .addSelect('l."fechaVencimiento"', 'fechaVencimiento')
+        .addSelect('l."stockActual"', 'stockActual')
+        .where('l."fechaVencimiento" IS NOT NULL')
+        .andWhere('l."fechaVencimiento" <= :in60', { in60 })
+        .andWhere('l."fechaVencimiento" >= :now', { now })
+        .andWhere('l."stockActual" > 0')
+        .orderBy('l."fechaVencimiento"', 'ASC')
+        .limit(50)
+        .getRawMany(),
     ]);
+
+    const currentMov = this.parseNumber(movementsRaw?.movementsInRange);
+    const prevMov = this.parseNumber(prevMovementsRaw?.prevMovements);
+
+    // Trend delta %: null when previous is 0 (no comparison baseline)
+    let movementsDelta: number | null = null;
+    if (prevMov > 0) {
+      movementsDelta = Math.round(((currentMov - prevMov) / prevMov) * 100);
+    } else if (currentMov > 0) {
+      movementsDelta = 100; // went from 0 to something → +100%
+    }
+
+    const expiringCritical = expiringRaw.filter(
+      (r) => new Date(r.fechaVencimiento) <= in15,
+    ).length;
 
     return {
       range,
       totalMaterials: this.parseNumber(stockRaw?.materials),
       totalQuantity: this.parseNumber(stockRaw?.totalQuantity),
-      movementsCount: this.parseNumber(movementsRaw?.movementsInRange),
-      movementsInRange: this.parseNumber(movementsRaw?.movementsInRange),
+      movementsCount: currentMov,
+      movementsInRange: currentMov,
+      movementsPrev: prevMov,
+      movementsDelta,
+      pendingRegularizations: this.parseNumber(pendingRaw?.pending),
+      expiringLots: expiringRaw.length,
+      expiringCritical,
       stockByWarehouse: stockByWarehouseRaw.map((row) => ({
         warehouseId: row.warehouseId,
         warehouseName: row.warehouseName,

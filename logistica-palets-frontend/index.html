@@ -1,10 +1,25 @@
 <!doctype html>
-<html lang="en">
+<html lang="es" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>logistica-palets-frontend</title>
+    <title>RL Logística — WMS</title>
+    <script>
+      // Aplica el tema antes del primer paint para evitar flash.
+      (function () {
+        try {
+          var stored = localStorage.getItem('rl-theme');
+          var theme = (stored === 'dark' || stored === 'light')
+            ? stored
+            : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+          document.documentElement.setAttribute('data-theme', theme);
+          document.documentElement.style.colorScheme = theme;
+        } catch (_) {
+          document.documentElement.setAttribute('data-theme', 'dark');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

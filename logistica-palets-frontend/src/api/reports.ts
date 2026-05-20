@@ -108,6 +108,11 @@ export type KpisResponse = {
   totalQuantity: number;
   movementsCount: number;
   movementsInRange: number;
+  movementsPrev: number;
+  movementsDelta: number | null;   // % change vs previous equivalent period; null when no baseline
+  pendingRegularizations: number;
+  expiringLots: number;            // lots expiring within 60 days with stock > 0
+  expiringCritical: number;        // subset expiring within 15 days
   stockByWarehouse: StockByWarehouseRow[];
 };
 

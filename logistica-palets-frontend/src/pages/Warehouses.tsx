@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createWarehouse, deleteWarehouse, listWarehouses, type Warehouse } from "../api/warehouses";
 import { useAuth } from "../auth/AuthContext";
 import { canCreate, canDelete } from "../auth/rbac";
+import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 
 export default function WarehousesPage() {
@@ -9,14 +11,13 @@ export default function WarehousesPage() {
   const role = user?.role;
   const allowCreate = role ? canCreate("warehouses", role) : false;
   const allowDelete = role ? canDelete("warehouses", role) : false;
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const nameId = useId();
+  const addrId = useId();
 
-  const [items, setItems] = useState<Warehouse[]>([]);
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [formError, setFormError] = useState("");
   const [submitted, setSubmitted] = useState(false);
 
   const nameError = useMemo(() => {
@@ -26,117 +27,130 @@ export default function WarehousesPage() {
     return "";
   }, [name]);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      setItems(await listWarehouses());
-    } catch (err) {
-      setError(getFriendlyApiError(err));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const { data: items = [], isLoading, isError, refetch } = useQuery({
+    queryKey: ["warehouses"],
+    queryFn: listWarehouses,
+  });
 
-  useEffect(() => {
-    refresh().catch(() => undefined);
-  }, [refresh]);
-
-  async function handleCreate(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSubmitted(true);
-    setFormError("");
-
-    if (!allowCreate || nameError) {
-      return;
-    }
-
-    setSaving(true);
-    try {
-      await createWarehouse({ name: name.trim(), address: address.trim(), active: true });
+  const createMut = useMutation({
+    mutationFn: createWarehouse,
+    onSuccess: (created) => {
+      queryClient.invalidateQueries({ queryKey: ["warehouses"] });
+      toast.success(`Depósito ${created.name} creado`);
       setName("");
       setAddress("");
       setSubmitted(false);
-      await refresh();
-    } catch (err) {
-      setFormError(getFriendlyApiError(err));
-    } finally {
-      setSaving(false);
-    }
+    },
+    onError: (err) => toast.error(getFriendlyApiError(err)),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => deleteWarehouse(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["warehouses"] });
+      toast.success("Depósito eliminado");
+    },
+    onError: (err) => toast.error(getFriendlyApiError(err)),
+  });
+
+  const saving = createMut.isPending || deleteMut.isPending;
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSubmitted(true);
+    if (!allowCreate || nameError) return;
+    createMut.mutate({ name: name.trim(), address: address.trim(), active: true });
   }
 
-  async function handleDelete(item: Warehouse) {
-    if (!allowDelete || !window.confirm(`Eliminar depósito ${item.name}?`)) {
-      return;
-    }
-
-    setSaving(true);
-    setFormError("");
-    try {
-      await deleteWarehouse(item.id);
-      await refresh();
-    } catch (err) {
-      setFormError(getFriendlyApiError(err));
-    } finally {
-      setSaving(false);
-    }
+  function handleDelete(item: Warehouse) {
+    if (!allowDelete) return;
+    if (!window.confirm(`Eliminar depósito ${item.name}?`)) return;
+    deleteMut.mutate(item.id);
   }
 
   return (
     <div>
-      <h2>Depósitos</h2>
-      {!allowCreate ? <p style={{ color: "#6b7280" }}>Modo lectura.</p> : null}
+      <div style={{ marginBottom: 20 }}>
+        <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.5, marginBottom: 4 }}>Depósitos</h1>
+        <p style={{ color: "var(--muted)", fontSize: 14, marginBottom: 0 }}>
+          {!allowCreate ? "Modo lectura." : "Crear y administrar depósitos."}
+        </p>
+      </div>
 
-      <form onSubmit={handleCreate} style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-        <input className="input" disabled={!allowCreate || saving} value={name} onChange={(event) => setName(event.target.value)} placeholder="Nombre" />
+      <form onSubmit={handleSubmit} style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }} aria-label="Nuevo depósito">
         <input
+          id={nameId}
+          className="input"
+          disabled={!allowCreate || saving}
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="Nombre"
+          aria-label="Nombre del depósito"
+          aria-invalid={submitted && !!nameError}
+          aria-describedby={submitted && nameError ? `${nameId}-err` : undefined}
+        />
+        <input
+          id={addrId}
           className="input"
           disabled={!allowCreate || saving}
           value={address}
           onChange={(event) => setAddress(event.target.value)}
           placeholder="Dirección"
+          aria-label="Dirección"
           style={{ minWidth: 320 }}
         />
         <button className="btn btn--primary" type="submit" disabled={!allowCreate || saving}>
-          {saving ? "Guardando..." : "Guardar"}
+          {createMut.isPending ? "Guardando..." : "Guardar"}
         </button>
       </form>
 
-      {submitted && nameError ? <p style={{ color: "#b91c1c", marginTop: -4 }}>{nameError}</p> : null}
-      {formError ? <p style={{ color: "#b91c1c" }}>{formError}</p> : null}
+      {submitted && nameError ? <p id={`${nameId}-err`} className="form-error" role="alert">{nameError}</p> : null}
 
-      {loading ? <p>Cargando...</p> : null}
-      {error ? (
-        <div>
-          <p style={{ color: "#b91c1c", marginBottom: 8 }}>No se pudo cargar.</p>
-          <button className="btn" onClick={refresh}>
-            Reintentar
-          </button>
+      {isLoading ? <p aria-busy="true" style={{ color: "var(--muted)" }}>Cargando…</p> : null}
+      {isError ? (
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }} role="alert">
+          <p className="form-error" style={{ marginBottom: 0 }}>No se pudo cargar.</p>
+          <button className="btn btn--primary" onClick={() => refetch()}>Reintentar</button>
         </div>
       ) : null}
 
-      {!loading && !error ? (
+      {!isLoading && !isError ? (
         items.length === 0 ? (
           <p>No hay registros</p>
         ) : (
-          <table className="table">
+          <table className="table" aria-label="Lista de depósitos">
             <thead>
               <tr>
-                <th>Nombre</th>
-                <th>Dirección</th>
-                <th>Activo</th>
-                <th>ID</th>
-                <th />
+                <th scope="col">Nombre</th>
+                <th scope="col">Dirección</th>
+                <th scope="col">Estado</th>
+                <th scope="col">ID</th>
+                <th scope="col" />
               </tr>
             </thead>
             <tbody>
               {items.map((item) => (
                 <tr key={item.id}>
-                  <td>{item.name}</td>
+                  <td><strong>{item.name}</strong></td>
                   <td>{item.address || "-"}</td>
-                  <td>{String(item.active)}</td>
-                  <td style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.id}</td>
-                  <td>{allowDelete ? <button className="btn" onClick={() => handleDelete(item)}>Eliminar</button> : null}</td>
+                  <td>
+                    <span className={item.active ? "badge badge--entry" : "badge"}>
+                      {item.active ? "Activo" : "Inactivo"}
+                    </span>
+                  </td>
+                  <td style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--muted)", fontSize: 12 }}>{item.id}</td>
+                  <td style={{ textAlign: "right" }}>
+                    {allowDelete ? (
+                      <button
+                        className="btn btn--danger"
+                        onClick={() => handleDelete(item)}
+                        disabled={saving}
+                        aria-label={`Eliminar depósito ${item.name}`}
+                      >
+                        Eliminar
+                      </button>
+                    ) : null}
+                  </td>
                 </tr>
               ))}
             </tbody>

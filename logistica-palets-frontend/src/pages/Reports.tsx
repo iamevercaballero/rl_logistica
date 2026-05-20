@@ -8,6 +8,7 @@ import {
   getStockReport,
   getTraceReport,
   upsertSapStock,
+  type StockItemRow,
 } from "../api/reports";
 import { getMovements, regularizeMovement } from "../api/movements";
 import { listLots } from "../api/lots";
@@ -15,6 +16,51 @@ import { listWarehouses } from "../api/warehouses";
 import { listProducts } from "../api/products";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
+import { DataTable, createColumnHelper } from "../design-system/DataTable";
+
+/* ── DataTable column defs for stock tab ──────────────────────────────────── */
+const stockColHelper = createColumnHelper<StockItemRow>();
+const STOCK_COLUMNS = [
+  stockColHelper.accessor((r) => `${r.material.code} · ${r.material.description}`, {
+    id: "material",
+    header: "Material",
+    cell: (info) => {
+      const r = info.row.original;
+      return (
+        <span>
+          <strong>{r.material.code}</strong>
+          <span style={{ color: "var(--muted)", marginLeft: 4 }}>· {r.material.description}</span>
+        </span>
+      );
+    },
+  }),
+  stockColHelper.accessor((r) => r.warehouse?.name ?? "-", {
+    id: "deposito",
+    header: "Depósito",
+  }),
+  stockColHelper.accessor((r) => r.location?.code ?? "-", {
+    id: "ubicacion",
+    header: "Ubicación",
+    meta: { align: "center" as const },
+  }),
+  stockColHelper.accessor("currentQuantity", {
+    header: "Cantidad",
+    meta: { align: "right" as const },
+    cell: (info) => {
+      const r = info.row.original;
+      return `${info.getValue().toLocaleString("es-AR")} ${r.material.unitOfMeasure ?? ""}`.trim();
+    },
+  }),
+  stockColHelper.accessor("updatedAt", {
+    header: "Actualizado",
+    meta: { align: "right" as const, noFilter: true },
+    cell: (info) => (
+      <span style={{ color: "var(--muted)", fontSize: 12 }}>
+        {new Date(info.getValue()).toLocaleString("es-AR")}
+      </span>
+    ),
+  }),
+];
 
 const MOVE_LABEL: Record<string, string> = {
   ENTRY: "Entrada",
@@ -292,24 +338,18 @@ export default function ReportsPage() {
                   </ResponsiveContainer>
                 </div>
               )}
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th scope="col">Material</th><th scope="col">Depósito</th><th scope="col">Ubicación</th><th scope="col">Cantidad</th><th scope="col">Actualizado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stock.items.map((item) => (
-                    <tr key={item.id}>
-                      <td><strong>{item.material.code}</strong> · {item.material.description}</td>
-                      <td>{item.warehouse?.name ?? "-"}</td>
-                      <td>{item.location?.code ?? "-"}</td>
-                      <td>{item.currentQuantity.toLocaleString("es-AR")} {item.material.unitOfMeasure ?? ""}</td>
-                      <td style={{ color: "var(--muted)", fontSize: 12 }}>{new Date(item.updatedAt).toLocaleString("es-AR")}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <DataTable
+                data={stock.items}
+                columns={STOCK_COLUMNS}
+                enableSorting
+                enableFiltering
+                enableColumnVisibility
+                enableExport
+                exportFilename={`stock-${new Date().toISOString().slice(0, 10)}`}
+                maxHeight={480}
+                emptyMessage="Sin posiciones de stock"
+                caption="Stock actual por depósito"
+              />
             </>
           )}
         </section>

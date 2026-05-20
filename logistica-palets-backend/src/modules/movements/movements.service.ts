@@ -13,13 +13,19 @@ import { Stock } from '../stocks/entities/stock.entity';
 import { Lot } from '../lots/entities/lot.entity';
 import { Pallet } from '../pallets/entities/pallet.entity';
 import { DeepPartial } from 'typeorm/common/DeepPartial';
+import { EventsGateway } from '../events/events.gateway';
+import { CacheService } from '../cache/cache.service';
 
 @Injectable()
 export class MovementsService {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly events: EventsGateway,
+    private readonly cache: CacheService,
+  ) {}
 
   async create(dto: CreateMovementDto, userId: string) {
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       const product = await manager.findOne(Product, { where: { id: dto.productId } });
       if (!product || !product.active) {
         throw new NotFoundException('Material inexistente o inactivo');
@@ -189,12 +195,31 @@ export class MovementsService {
         await this.updateLotStock(manager, dto.lotId, isIncrease ? totalQty : -totalQty);
       }
 
-      return { movementId: movement.id, stockImpact: this.describeImpact(dto.type) };
+      return {
+        movementId: movement.id,
+        stockImpact: this.describeImpact(dto.type),
+        type: dto.type,
+        warehouseId: resolved.warehouseId ?? null,
+      };
     });
+
+    // Post-transaction: invalidate cache + broadcast (fire-and-forget, non-blocking)
+    void Promise.all([
+      this.cache.delPattern('kpis:*'),
+      this.cache.delPattern('stock:*'),
+    ]);
+    this.events.emitMovementCreated({
+      movementId: result.movementId,
+      type: result.type,
+      warehouseId: result.warehouseId,
+    });
+    this.events.emitStockUpdated({ warehouseId: result.warehouseId });
+
+    return { movementId: result.movementId, stockImpact: result.stockImpact };
   }
 
   async regularize(id: string, dto: RegularizeMovementDto, userId: string) {
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       const movement = await manager.findOne(Movement, { where: { id } });
       if (!movement) throw new NotFoundException('Movimiento no encontrado');
       if (movement.status !== 'PENDING_REGULARIZATION') {
@@ -267,6 +292,11 @@ export class MovementsService {
 
       return { regularized: true, changes: logs.length };
     });
+
+    // Regularization changes pending count → invalidate kpis cache
+    void this.cache.delPattern('kpis:*');
+
+    return result;
   }
 
   async findAll(query: MovementsQueryDto) {

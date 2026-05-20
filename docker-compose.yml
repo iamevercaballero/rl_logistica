@@ -17,6 +17,19 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    container_name: rl_logistica_redis
+    restart: unless-stopped
+    command: redis-server --save "" --appendonly no --maxmemory 128mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: ./logistica-palets-backend
@@ -25,6 +38,8 @@ services:
     restart: unless-stopped
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     environment:
       PORT: 3000
@@ -42,6 +57,9 @@ services:
       DB_MIGRATIONS_RUN: "${DB_MIGRATIONS_RUN:-true}"
       DB_LOGGING: "${DB_LOGGING:-false}"
       ALLOW_SEED: "${ALLOW_SEED:-false}"
+      # Redis cache + WebSocket event bus
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       # Datos del emisor (RL Logística) para facturación electrónica
       EMISOR_RUC: ${EMISOR_RUC:-80000000}
       EMISOR_DV: ${EMISOR_DV:-0}
@@ -77,3 +95,4 @@ services:
 
 volumes:
   postgres_data:
+  # Redis uses ephemeral storage (cache is rebuild-safe; no persistence volume needed)

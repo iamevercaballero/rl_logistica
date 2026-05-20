@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bar,
   BarChart,
@@ -21,6 +21,7 @@ import {
   getStockReport,
   type ReportRange,
 } from "../api/reports";
+import { useSocket, type StockUpdatedPayload } from "../contexts/SocketContext";
 
 /* ── Constants ────────────────────────────────────────────────────────────── */
 const MOVE_LABEL: Record<string, string> = {
@@ -203,10 +204,38 @@ function buildTimeSeriesData(movements: ReturnType<typeof Array.prototype.slice>
   return Array.from(map.values()).slice(-14); // last 14 data points
 }
 
+/* ── LiveDot — animated indicator shown when WS is connected ─────────────── */
+function LiveDot({ connected }: { connected: boolean }) {
+  if (!connected) return null;
+  return (
+    <span
+      title="Actualización en tiempo real activa"
+      aria-label="Conectado en tiempo real"
+      style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: "50%",
+          background: "var(--success)",
+          boxShadow: "0 0 0 2px rgba(16,185,129,0.25)",
+          display: "inline-block",
+          animation: "live-pulse 2s ease-in-out infinite",
+        }}
+      />
+      <span style={{ fontSize: 11, color: "var(--success)", fontWeight: 600 }}>En vivo</span>
+    </span>
+  );
+}
+
 /* ── Main page ────────────────────────────────────────────────────────────── */
 export default function DashboardPage() {
   const [range, setRange] = useState<ReportRange>("today");
   const [warehouseId, setWarehouseId] = useState("");
+  const qc = useQueryClient();
+  const { connected, on, off } = useSocket();
 
   const [warehousesQ, kpisQ, movementsQ, stockQ] = useQueries({
     queries: [
@@ -276,6 +305,20 @@ export default function DashboardPage() {
     month: "últimos 30 días",
   };
 
+  // ── WebSocket: invalidate queries when the backend pushes a stock update ──
+  useEffect(() => {
+    const handler = (_payload: StockUpdatedPayload) => {
+      // Invalidate all KPI and stock queries so the next render shows fresh data.
+      // TanStack Query will re-fetch in the background (no loading flash).
+      void qc.invalidateQueries({ queryKey: ["kpis"] });
+      void qc.invalidateQueries({ queryKey: ["stock"] });
+      void qc.invalidateQueries({ queryKey: ["movements", "report"] });
+    };
+
+    on("stock:updated", handler);
+    return () => off("stock:updated", handler);
+  }, [on, off, qc]);
+
   function refetchAll() {
     void kpisQ.refetch();
     void movementsQ.refetch();
@@ -298,9 +341,12 @@ export default function DashboardPage() {
         }}
       >
         <div>
-          <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.5, marginBottom: 4 }}>
-            Dashboard
-          </h1>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+            <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.5, margin: 0 }}>
+              Dashboard
+            </h1>
+            <LiveDot connected={connected} />
+          </div>
           <p style={{ color: "var(--muted)", marginBottom: 0, fontSize: 14 }}>
             Resumen operativo · {rangeLabel[range]}
           </p>

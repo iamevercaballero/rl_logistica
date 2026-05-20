@@ -17,6 +17,8 @@ import { listProducts } from "../api/products";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { DataTable, createColumnHelper } from "../design-system/DataTable";
+import { exportStockPDF, exportMovementsPDF } from "../lib/exportPdf";
+import { exportStockExcel, exportMovementsExcel } from "../lib/exportExcel";
 
 /* ── DataTable column defs for stock tab ──────────────────────────────────── */
 const stockColHelper = createColumnHelper<StockItemRow>();
@@ -294,15 +296,35 @@ export default function ReportsPage() {
         <section className="card" aria-label="Stock actual por depósito">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
             <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Stock actual por depósito</h3>
-            <select
-              className="input"
-              value={stockWarehouseId}
-              onChange={(e) => setStockWarehouseId(e.target.value)}
-              aria-label="Filtrar por depósito"
-            >
-              <option value="">Todos los depósitos</option>
-              {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-            </select>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <select
+                className="input"
+                value={stockWarehouseId}
+                onChange={(e) => setStockWarehouseId(e.target.value)}
+                aria-label="Filtrar por depósito"
+              >
+                <option value="">Todos los depósitos</option>
+                {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+              </select>
+              {stock && (
+                <>
+                  <button
+                    className="btn"
+                    onClick={() => exportStockPDF(stock.items, `stock-${new Date().toISOString().slice(0, 10)}`)}
+                    title="Exportar PDF"
+                  >
+                    📄 PDF
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={() => void exportStockExcel(stock.items, `stock-${new Date().toISOString().slice(0, 10)}`)}
+                    title="Exportar Excel"
+                  >
+                    📊 Excel
+                  </button>
+                </>
+              )}
+            </div>
           </div>
 
           {stockQ.isLoading && <p style={{ color: "var(--muted)", fontSize: 14 }} aria-busy="true">Cargando...</p>}
@@ -391,6 +413,16 @@ export default function ReportsPage() {
             <button className="btn" onClick={() => { setFilters(initialFilters); setAppliedFilters(initialFilters); setMovPage(1); }}>
               Limpiar
             </button>
+            {movements.length > 0 && (
+              <>
+                <button className="btn" onClick={() => exportMovementsPDF(movements, `movimientos-${new Date().toISOString().slice(0,10)}`)} title="Exportar PDF">
+                  📄 PDF
+                </button>
+                <button className="btn" onClick={() => void exportMovementsExcel(movements, `movimientos-${new Date().toISOString().slice(0,10)}`)} title="Exportar Excel">
+                  📊 Excel
+                </button>
+              </>
+            )}
           </div>
 
           {movementsQ.isLoading && <p style={{ color: "var(--muted)", fontSize: 14 }} aria-busy="true">Cargando...</p>}

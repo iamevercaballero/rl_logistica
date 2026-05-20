@@ -2,10 +2,12 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
 import { LoggerModule } from 'nestjs-pino';
 import { APP_GUARD } from '@nestjs/core';
 import { CacheModule } from './modules/cache/cache.module';
 import { EventsModule } from './modules/events/events.module';
+import { AlertsModule } from './modules/alerts/alerts.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { ProductsModule } from './modules/products/products.module';
@@ -25,6 +27,9 @@ import { AppController } from './app.controller';
     ConfigModule.forRoot({
       isGlobal: true
     }),
+
+    // Cron jobs (@Cron decorators in services)
+    ScheduleModule.forRoot(),
 
     // Structured logging: JSON en prod, pretty-print en dev
     LoggerModule.forRoot({
@@ -104,6 +109,7 @@ import { AppController } from './app.controller';
     ReportsModule,
     BillingModule,
     SeedModule,
+    AlertsModule,
   ],
   controllers: [AppController],
   providers: [

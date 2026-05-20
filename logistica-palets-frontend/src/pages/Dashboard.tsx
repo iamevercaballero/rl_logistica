@@ -21,6 +21,7 @@ import {
   getStockReport,
   type ReportRange,
 } from "../api/reports";
+import { getActiveAlerts, type ActiveAlert } from "../api/alerts";
 import { useSocket, type StockUpdatedPayload } from "../contexts/SocketContext";
 
 /* ── Constants ────────────────────────────────────────────────────────────── */
@@ -204,6 +205,131 @@ function buildTimeSeriesData(movements: ReturnType<typeof Array.prototype.slice>
   return Array.from(map.values()).slice(-14); // last 14 data points
 }
 
+/* ── AlertsPanel ─────────────────────────────────────────────────────────── */
+const ALERT_TYPE_LABEL: Record<string, string> = {
+  STOCK_BELOW_MIN: "Stock bajo mínimo",
+  LOT_EXPIRING_CRITICAL: "Lote por vencer (crítico)",
+  LOT_EXPIRING_WARNING: "Lote por vencer",
+  PENDING_REGULARIZATION_STALE: "Regularización pendiente",
+};
+
+function AlertsPanel({ alerts }: { alerts: ActiveAlert[] }) {
+  if (alerts.length === 0) return null;
+
+  const criticals = alerts.filter((a) => a.severity === "critical");
+  const warnings = alerts.filter((a) => a.severity === "warning");
+
+  return (
+    <section
+      className="card"
+      aria-label="Alertas activas"
+      style={{
+        marginBottom: 12,
+        borderColor: criticals.length > 0 ? "rgba(239,68,68,0.35)" : "rgba(245,158,11,0.35)",
+      }}
+    >
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <svg
+            width="16" height="16" viewBox="0 0 24 24" fill="none"
+            stroke={criticals.length > 0 ? "var(--danger)" : "var(--warning)"}
+            strokeWidth="2" aria-hidden="true"
+          >
+            <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            <line x1="12" y1="9" x2="12" y2="13" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
+          <h3
+            style={{
+              fontSize: 14, fontWeight: 700, margin: 0,
+              color: criticals.length > 0 ? "var(--danger)" : "var(--warning)",
+            }}
+          >
+            Alertas activas
+          </h3>
+          {criticals.length > 0 && (
+            <span
+              style={{
+                background: "rgba(239,68,68,0.12)", color: "var(--danger)",
+                border: "1px solid rgba(239,68,68,0.35)", borderRadius: 999,
+                padding: "1px 8px", fontSize: 11, fontWeight: 700,
+              }}
+              role="status"
+              aria-label={`${criticals.length} alertas críticas`}
+            >
+              {criticals.length} crítica{criticals.length !== 1 ? "s" : ""}
+            </span>
+          )}
+          {warnings.length > 0 && (
+            <span
+              style={{
+                background: "rgba(245,158,11,0.12)", color: "var(--warning)",
+                border: "1px solid rgba(245,158,11,0.35)", borderRadius: 999,
+                padding: "1px 8px", fontSize: 11, fontWeight: 700,
+              }}
+              role="status"
+              aria-label={`${warnings.length} advertencias`}
+            >
+              {warnings.length} advertencia{warnings.length !== 1 ? "s" : ""}
+            </span>
+          )}
+        </div>
+        <span style={{ fontSize: 11, color: "var(--muted)" }}>
+          {alerts.length} alerta{alerts.length !== 1 ? "s" : ""} en total
+        </span>
+      </div>
+
+      {/* Alert list — criticals first, then warnings */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 260, overflowY: "auto" }}>
+        {[...criticals, ...warnings].map((a) => {
+          const isCrit = a.severity === "critical";
+          return (
+            <div
+              key={a.id}
+              style={{
+                display: "flex", alignItems: "flex-start", gap: 10,
+                padding: "8px 12px", borderRadius: 8,
+                background: isCrit ? "rgba(239,68,68,0.06)" : "rgba(245,158,11,0.06)",
+                border: `1px solid ${isCrit ? "rgba(239,68,68,0.2)" : "rgba(245,158,11,0.2)"}`,
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  display: "inline-block", flexShrink: 0,
+                  width: 8, height: 8, borderRadius: "50%", marginTop: 5,
+                  background: isCrit ? "var(--danger)" : "var(--warning)",
+                }}
+              />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <span
+                    style={{
+                      fontSize: 11, fontWeight: 700, padding: "1px 7px", borderRadius: 999,
+                      color: isCrit ? "var(--danger)" : "var(--warning)",
+                      background: isCrit ? "rgba(239,68,68,0.12)" : "rgba(245,158,11,0.12)",
+                      border: `1px solid ${isCrit ? "rgba(239,68,68,0.3)" : "rgba(245,158,11,0.3)"}`,
+                    }}
+                  >
+                    {ALERT_TYPE_LABEL[a.type] ?? a.type}
+                  </span>
+                  <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                    {formatRelativeDate(a.triggeredAt)}
+                  </span>
+                </div>
+                <p style={{ fontSize: 12, color: "var(--text)", margin: "3px 0 0", lineHeight: 1.4 }}>
+                  {a.message}
+                </p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 /* ── LiveDot — animated indicator shown when WS is connected ─────────────── */
 function LiveDot({ connected }: { connected: boolean }) {
   if (!connected) return null;
@@ -262,6 +388,14 @@ export default function DashboardPage() {
   const expiringQ = useQuery({
     queryKey: ["lots", "fefo", "expiring"],
     queryFn: () => fefoLots(),
+    staleTime: 5 * 60_000,
+    refetchInterval: 5 * 60_000,
+  });
+
+  // Active alerts — refetch every 5 min (cron runs every 10 min server-side)
+  const alertsQ = useQuery({
+    queryKey: ["alerts", "active"],
+    queryFn: getActiveAlerts,
     staleTime: 5 * 60_000,
     refetchInterval: 5 * 60_000,
   });
@@ -480,6 +614,11 @@ export default function DashboardPage() {
           </>
         ) : null}
       </div>
+
+      {/* ── Active alerts panel ──────────────────────────────────────────── */}
+      {!alertsQ.isLoading && (alertsQ.data?.length ?? 0) > 0 && (
+        <AlertsPanel alerts={alertsQ.data!} />
+      )}
 
       {/* ── Charts + feed row ────────────────────────────────────────────── */}
       {!isLoading && kpis && (

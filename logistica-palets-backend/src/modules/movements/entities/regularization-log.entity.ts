@@ -1,5 +1,6 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
+@Index('idx_regularization_movement', ['movementId'])
 @Entity('regularization_logs')
 export class RegularizationLog {
   @PrimaryGeneratedColumn('uuid')

@@ -1,4 +1,4 @@
-import { Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { Factura } from './factura.entity';
 
 export const afectacionesIVA = ['IVA10', 'IVA5', 'EXENTA', 'EXONERADA'] as const;
@@ -12,6 +12,7 @@ const afectacionCode: Record<AfectacionIVA, string> = {
 };
 export { afectacionCode };
 
+@Index('idx_items_factura_factura', ['facturaId'])
 @Entity('items_factura')
 export class ItemFactura {
   @PrimaryGeneratedColumn('uuid')

@@ -1,15 +1,30 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User, UserRole } from './entities/user.entity';
 
 @Injectable()
-export class UsersService {
+export class UsersService implements OnApplicationBootstrap {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
   ) {}
+
+  async onApplicationBootstrap() {
+    const count = await this.userRepo.count();
+    if (count > 0) return;
+
+    const username = process.env.BOOTSTRAP_ADMIN_USER ?? 'admin';
+    const password = process.env.BOOTSTRAP_ADMIN_PASSWORD ?? 'admin123';
+    const passwordHash = await bcrypt.hash(password, 10);
+    await this.userRepo.save(
+      this.userRepo.create({ username, passwordHash, role: 'ADMIN', active: true, fullName: 'Administrador' }),
+    );
+    this.logger.warn(`Fresh install: usuario admin creado (usuario: ${username}). Cambiá la contraseña.`);
+  }
 
   findAll() {
     return this.userRepo.find({

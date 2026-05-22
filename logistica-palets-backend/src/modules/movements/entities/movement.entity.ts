@@ -1,4 +1,4 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
 export const movementTypes = [
   'ENTRY',
@@ -24,6 +24,11 @@ export const adjustmentReasons = [
 ] as const;
 export type AdjustmentReason = (typeof adjustmentReasons)[number];
 
+@Index('idx_movement_created_at', ['createdAt'])
+@Index('idx_movement_product', ['productId'])
+@Index('idx_movement_type_status', ['type', 'status'])
+@Index('idx_movement_pallet', ['palletId'])
+@Index('idx_movement_lot', ['lotId'])
 @Entity('movements')
 export class Movement {
   @PrimaryGeneratedColumn('uuid')

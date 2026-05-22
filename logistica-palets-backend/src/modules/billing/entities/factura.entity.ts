@@ -23,6 +23,9 @@ const tiposDECode: Record<TipoDE, string> = {
 };
 export { tiposDECode };
 
+@Index('idx_facturas_cliente', ['clienteId'])
+@Index('idx_facturas_fecha', ['fecha'])
+@Index('idx_facturas_estado', ['estado'])
 @Entity('facturas')
 export class Factura {
   @PrimaryGeneratedColumn('uuid')

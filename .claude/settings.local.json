@@ -33,7 +33,14 @@
       "Bash(grep -n \"REPORT_TO\\\\|MAIL\\\\|SMTP\\\\|mailer\\\\|nodemailer\" src/ -r)",
       "Bash(ls src/modules/mail)",
       "Bash(node \"C:\\\\Users\\\\Usuario\\\\Documents\\\\cursos\\\\rl-logistica\\\\scripts\\\\generate-pwa-icons.mjs\")",
-      "Bash(node -e \"const c=require\\('crypto'\\); console.log\\('JWT_SECRET='+c.randomBytes\\(48\\).toString\\('base64'\\)\\); console.log\\('JWT_REFRESH_SECRET='+c.randomBytes\\(48\\).toString\\('base64'\\)\\); console.log\\('DB_PASSWORD_PROD='+c.randomBytes\\(24\\).toString\\('base64url'\\)\\); console.log\\('DB_PASSWORD_TEST='+c.randomBytes\\(24\\).toString\\('base64url'\\)\\); console.log\\('POSTGRES_PASSWORD_PROD='+c.randomBytes\\(24\\).toString\\('base64url'\\)\\); console.log\\('POSTGRES_PASSWORD_TEST='+c.randomBytes\\(24\\).toString\\('base64url'\\)\\)\")"
+      "Bash(node -e \"const c=require\\('crypto'\\); console.log\\('JWT_SECRET='+c.randomBytes\\(48\\).toString\\('base64'\\)\\); console.log\\('JWT_REFRESH_SECRET='+c.randomBytes\\(48\\).toString\\('base64'\\)\\); console.log\\('DB_PASSWORD_PROD='+c.randomBytes\\(24\\).toString\\('base64url'\\)\\); console.log\\('DB_PASSWORD_TEST='+c.randomBytes\\(24\\).toString\\('base64url'\\)\\); console.log\\('POSTGRES_PASSWORD_PROD='+c.randomBytes\\(24\\).toString\\('base64url'\\)\\); console.log\\('POSTGRES_PASSWORD_TEST='+c.randomBytes\\(24\\).toString\\('base64url'\\)\\)\")",
+      "Bash(curl -s http://localhost:3000/api/health)",
+      "Bash(curl -s http://localhost:3000/api/auth/login -X POST -H \"Content-Type: application/json\" -d '{}')",
+      "Bash(docker exec rl_logistica_backend *)",
+      "Bash(curl -s -X POST http://localhost:3000/api/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"admin\",\"password\":\"admin123\"}')",
+      "Bash(python3 -m json.tool)",
+      "Read(//usr/bin/**)",
+      "Read(//Users/ever/.nvm/versions/**)"
     ]
   }
 }

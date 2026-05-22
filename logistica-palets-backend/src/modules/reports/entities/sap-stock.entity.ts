@@ -1,5 +1,6 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
+@Index('idx_sap_snapshot_date_product', ['date', 'productId'])
 @Entity('sap_stock_snapshots')
 export class SapStockSnapshot {
   @PrimaryGeneratedColumn('uuid')

@@ -1,6 +1,9 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { Product } from '../../products/entities/product.entity';
 
+@Index('idx_lot_status', ['status'])
+@Index('idx_lot_product', ['productId'])
+@Index('idx_lot_vencimiento', ['fechaVencimiento'])
 @Entity('lots')
 export class Lot {
   @PrimaryGeneratedColumn('uuid')

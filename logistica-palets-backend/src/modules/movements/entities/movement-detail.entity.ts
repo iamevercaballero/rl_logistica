@@ -1,5 +1,9 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
+@Index('idx_movement_detail_movement', ['movementId'])
+@Index('idx_movement_detail_pallet', ['palletId'])
+@Index('idx_movement_detail_lot', ['lotId'])
+@Index('idx_movement_detail_location', ['locationId'])
 @Entity('movement_details')
 export class MovementDetail {
   @PrimaryGeneratedColumn('uuid')

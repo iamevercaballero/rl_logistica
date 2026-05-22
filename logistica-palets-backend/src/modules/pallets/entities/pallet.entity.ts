@@ -1,5 +1,8 @@
-import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, Index } from 'typeorm';
 
+@Index('idx_pallet_current_location', ['currentLocationId'])
+@Index('idx_pallet_lot', ['lotId'])
+@Index('idx_pallet_status', ['status'])
 @Entity('pallets')
 export class Pallet {
   @PrimaryGeneratedColumn('uuid')

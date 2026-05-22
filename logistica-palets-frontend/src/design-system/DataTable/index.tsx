@@ -81,7 +81,7 @@ export interface ServerPagination {
 
 export interface DataTableProps<T> {
   data: T[];
-  columns: ColumnDef<T, unknown>[];
+  columns: ColumnDef<T, any>[];
 
   // Features
   enableSorting?: boolean;
@@ -132,7 +132,7 @@ function SortIcon({ direction }: { direction: false | 'asc' | 'desc' }) {
 /* ── CSV export ───────────────────────────────────────────────────────────── */
 function exportToCsv<T>(
   rows: Row<T>[],
-  columns: ColumnDef<T, unknown>[],
+  columns: ColumnDef<T, any>[],
   filename: string,
 ) {
   const headers = columns
@@ -283,7 +283,7 @@ function PaginationBar({
 export function DataTable<T>({
   data,
   columns,
-  enableSorting = true,
+  enableSorting: _enableSorting = true,
   enableFiltering = false,
   enableColumnVisibility = false,
   enableSelection = false,
@@ -322,7 +322,7 @@ export function DataTable<T>({
   }, [colVisOpen]);
 
   /* Build columns: inject select + expand columns */
-  const allColumns: ColumnDef<T, unknown>[] = [
+  const allColumns: ColumnDef<T, any>[] = [
     ...(renderSubComponent
       ? [
           {
@@ -344,7 +344,7 @@ export function DataTable<T>({
             ),
             enableSorting: false,
             enableHiding: false,
-          } as ColumnDef<T, unknown>,
+          } as ColumnDef<T, any>,
         ]
       : []),
     ...(enableSelection
@@ -374,7 +374,7 @@ export function DataTable<T>({
             ),
             enableSorting: false,
             enableHiding: false,
-          } as ColumnDef<T, unknown>,
+          } as ColumnDef<T, any>,
         ]
       : []),
     ...columns,

@@ -643,7 +643,7 @@ export default function DashboardPage() {
                         fontSize: 12,
                         color: "var(--text)",
                       }}
-                      formatter={(value: number) => [value.toLocaleString("es-AR"), "Cantidad"]}
+                      formatter={(value: number | undefined) => [(value ?? 0).toLocaleString("es-AR"), "Cantidad"]}
                     />
                     <Bar dataKey="quantity" radius={[5, 5, 0, 0]}>
                       {chartData.map((_, i) => (

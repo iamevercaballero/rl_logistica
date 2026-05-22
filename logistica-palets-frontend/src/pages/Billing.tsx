@@ -99,7 +99,7 @@ export default function BillingPage() {
 
   // Cliente creation form
   const [clienteForm, setClienteForm] = useState({
-    ruc: "", dv: "", razonSocial: "", tipoContribuyente: "JURIDICA" as const,
+    ruc: "", dv: "", razonSocial: "", tipoContribuyente: "JURIDICA" as "JURIDICA" | "FISICA",
   });
   const [clienteError, setClienteError] = useState<string | null>(null);
 

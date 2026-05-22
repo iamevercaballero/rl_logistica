@@ -825,7 +825,7 @@ export default function MovementsPage() {
           )}
 
           {/* Salida: FEFO con palets */}
-          {isExit && (movType !== "ENTRY" || wizardStep === 2) && (
+          {isExit && (
             <>
               <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 <div className="form-section-title" style={{ marginBottom: 0 }}>{isAdjustment ? "Palets del ajuste" : "Selección FEFO"}</div>

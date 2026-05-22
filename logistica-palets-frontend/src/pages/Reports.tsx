@@ -149,7 +149,7 @@ export default function ReportsPage() {
   const [warehousesQ, productsQ] = useQueries({
     queries: [
       { queryKey: ["warehouses"], queryFn: listWarehouses, staleTime: 5 * 60_000 },
-      { queryKey: ["products"],   queryFn: listProducts,   staleTime: 5 * 60_000 },
+      { queryKey: ["products"],   queryFn: () => listProducts(),   staleTime: 5 * 60_000 },
     ],
   });
 

@@ -228,9 +228,9 @@ export async function exportMovementsExcel(
     const row = ws.addRow([
       new Date(r.date).toLocaleDateString("es-AR"),
       MOVE_LABEL[r.type] ?? r.type,
-      r.product?.code ? `${r.product.code} - ${r.product.description}` : "-",
+      r.material?.code ? `${r.material.code} - ${r.material.description}` : "-",
       r.quantity,
-      r.warehouseName ?? "-",
+      r.warehouse?.name ?? "-",
       r.documentNumber ?? "-",
       r.supplier ?? "-",
       r.carrier ?? "-",

@@ -125,9 +125,9 @@ export function exportMovementsPDF(
     body: data.map((r) => [
       new Date(r.date).toLocaleDateString("es-AR"),
       MOVE_LABEL[r.type] ?? r.type,
-      r.product?.code ?? "-",
+      r.material?.code ?? "-",
       r.quantity.toLocaleString("es-AR"),
-      r.warehouseName ?? "-",
+      r.warehouse?.name ?? "-",
       r.documentNumber ?? "-",
       r.supplier ?? r.carrier ?? "-",
     ]),

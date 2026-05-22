@@ -272,16 +272,6 @@ export default function PalletsPage() {
   const [submitted, setSubmitted] = useState(false);
   const [historyPalletId, setHistoryPalletId] = useState<string | null>(null);
 
-  // Barcode scanner: USB mode always active; camera scan populates code field
-  const scanVideoRef = useRef<HTMLVideoElement>(null);
-  const { cameraActive, cameraSupported, startCamera, stopCamera } = useBarcodeScanner({
-    enabled: allowCreate && !saving,
-    onScan: (scanned) => {
-      setCode(scanned);
-      toast.success(`Código escaneado: ${scanned}`);
-    },
-  });
-
   const codeError = useMemo(() => {
     const value = code.trim();
     if (!value) return "Ingresá un código.";
@@ -340,6 +330,16 @@ export default function PalletsPage() {
   });
 
   const saving = createMut.isPending || deleteMut.isPending;
+
+  // Barcode scanner: USB mode always active; camera scan populates code field
+  const scanVideoRef = useRef<HTMLVideoElement>(null);
+  const { cameraActive, cameraSupported, startCamera, stopCamera } = useBarcodeScanner({
+    enabled: allowCreate && !saving,
+    onScan: (scanned) => {
+      setCode(scanned);
+      toast.success(`Código escaneado: ${scanned}`);
+    },
+  });
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();

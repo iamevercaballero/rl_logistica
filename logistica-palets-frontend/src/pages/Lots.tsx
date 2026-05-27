@@ -1,11 +1,11 @@
 import { Fragment, useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createLot, deleteLot, generateSapLot, listLots, type Lot } from "../api/lots";
+import { deleteLot, listLots, updateLot, type Lot } from "../api/lots";
 import { listProducts } from "../api/products";
 import { getAllPalletsByLot, type LotPallet } from "../api/pallets";
 import { listLocations } from "../api/locations";
 import { useAuth } from "../auth/AuthContext";
-import { canCreate, canDelete } from "../auth/rbac";
+import { canDelete, canUpdate } from "../auth/rbac";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 
@@ -40,14 +40,12 @@ function PalletStatusBadge({ status }: { status: string }) {
   return <span className={cls[status] ?? "badge"}>{label[status] ?? status}</span>;
 }
 
-/** Returns days until expiry (negative = already expired). */
 function daysUntilExpiry(fecha: string): number {
   const now = new Date(); now.setHours(0, 0, 0, 0);
   const target = new Date(fecha); target.setHours(0, 0, 0, 0);
   return Math.round((target.getTime() - now.getTime()) / 86_400_000);
 }
 
-/** Color-coded expiry badge. Thresholds: ≤0 expired, ≤15 critical, ≤60 warning, >60 ok. */
 function ExpiryBadge({ fecha }: { fecha?: string | null }) {
   if (!fecha) return null;
   const d = daysUntilExpiry(fecha);
@@ -58,61 +56,39 @@ function ExpiryBadge({ fecha }: { fecha?: string | null }) {
   let label: string;
 
   if (d < 0) {
-    color = "var(--danger)";
-    bg = "rgba(239,68,68,0.12)";
-    border = "rgba(239,68,68,0.35)";
+    color = "var(--danger)"; bg = "rgba(239,68,68,0.12)"; border = "rgba(239,68,68,0.35)";
     label = `Vencido (${Math.abs(d)}d)`;
   } else if (d === 0) {
-    color = "var(--danger)";
-    bg = "rgba(239,68,68,0.12)";
-    border = "rgba(239,68,68,0.35)";
+    color = "var(--danger)"; bg = "rgba(239,68,68,0.12)"; border = "rgba(239,68,68,0.35)";
     label = "¡Vence hoy!";
   } else if (d <= 15) {
-    color = "var(--danger)";
-    bg = "rgba(239,68,68,0.10)";
-    border = "rgba(239,68,68,0.28)";
+    color = "var(--danger)"; bg = "rgba(239,68,68,0.10)"; border = "rgba(239,68,68,0.28)";
     label = `${d}d`;
   } else if (d <= 60) {
-    color = "var(--warning)";
-    bg = "rgba(245,158,11,0.10)";
-    border = "rgba(245,158,11,0.28)";
+    color = "var(--warning)"; bg = "rgba(245,158,11,0.10)"; border = "rgba(245,158,11,0.28)";
     label = `${d}d`;
   } else {
-    color = "var(--success)";
-    bg = "rgba(16,185,129,0.10)";
-    border = "rgba(16,185,129,0.25)";
+    color = "var(--success)"; bg = "rgba(16,185,129,0.10)"; border = "rgba(16,185,129,0.25)";
     label = `${d}d`;
   }
 
   return (
     <span
       style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 4,
-        padding: "2px 7px",
-        borderRadius: 999,
-        fontSize: 11,
-        fontWeight: 700,
-        color,
-        background: bg,
-        border: `1px solid ${border}`,
-        whiteSpace: "nowrap",
+        display: "inline-flex", alignItems: "center", gap: 4,
+        padding: "2px 7px", borderRadius: 999, fontSize: 11, fontWeight: 700,
+        color, background: bg, border: `1px solid ${border}`, whiteSpace: "nowrap",
       }}
       aria-label={`${d < 0 ? "Vencido hace" : "Vence en"} ${Math.abs(d)} días`}
     >
       {d <= 15 && d >= 0 && (
-        <span
-          style={{ width: 5, height: 5, borderRadius: "50%", background: color, display: "inline-block", flexShrink: 0 }}
-          aria-hidden="true"
-        />
+        <span style={{ width: 5, height: 5, borderRadius: "50%", background: color, display: "inline-block", flexShrink: 0 }} aria-hidden="true" />
       )}
       {label}
     </span>
   );
 }
 
-/** Row background for critical lots */
 function expiryRowStyle(fecha?: string | null): React.CSSProperties {
   if (!fecha) return {};
   const d = daysUntilExpiry(fecha);
@@ -167,18 +143,14 @@ function ExpandedPalletsRow({ lotId, locationMap, colCount }: { lotId: string; l
                     {active.map((p) => (
                       <tr key={p.id}>
                         <td style={{ fontFamily: "monospace", fontWeight: 600, letterSpacing: 0 }}>{p.code}</td>
-                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                          {p.quantity.toLocaleString("es-PY")}
-                        </td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{p.quantity.toLocaleString("es-PY")}</td>
                         <td><PalletStatusBadge status={p.status} /></td>
                         <td style={{ color: "var(--text-variant)" }}>
                           {p.currentLocationId
                             ? (locationMap[p.currentLocationId] ?? <span style={{ fontFamily: "monospace", fontSize: 11, color: "var(--muted)" }}>{p.currentLocationId.slice(0, 8)}…</span>)
                             : <span style={{ color: "var(--muted)" }}>—</span>}
                         </td>
-                        <td style={{ color: "var(--muted)", fontVariantNumeric: "tabular-nums" }}>
-                          {fmtDate(p.createdAt)}
-                        </td>
+                        <td style={{ color: "var(--muted)", fontVariantNumeric: "tabular-nums" }}>{fmtDate(p.createdAt)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -207,13 +179,9 @@ function ExpandedPalletsRow({ lotId, locationMap, colCount }: { lotId: string; l
                     {exited.map((p) => (
                       <tr key={p.id}>
                         <td style={{ fontFamily: "monospace", textDecoration: "line-through", color: "var(--muted)", letterSpacing: 0 }}>{p.code}</td>
-                        <td style={{ textAlign: "right", color: "var(--muted)", fontVariantNumeric: "tabular-nums", textDecoration: "line-through" }}>
-                          {p.quantity.toLocaleString("es-PY")}
-                        </td>
+                        <td style={{ textAlign: "right", color: "var(--muted)", fontVariantNumeric: "tabular-nums", textDecoration: "line-through" }}>{p.quantity.toLocaleString("es-PY")}</td>
                         <td><span className="badge">Despachado</span></td>
-                        <td style={{ color: "var(--muted)", fontVariantNumeric: "tabular-nums" }}>
-                          {fmtDate(p.createdAt)}
-                        </td>
+                        <td style={{ color: "var(--muted)", fontVariantNumeric: "tabular-nums" }}>{fmtDate(p.createdAt)}</td>
                         <td style={{ fontVariantNumeric: "tabular-nums" }}>
                           {p.exitedAt
                             ? <span style={{ color: "var(--danger)", fontWeight: 600 }}>{fmtDate(p.exitedAt)}</span>
@@ -227,9 +195,7 @@ function ExpandedPalletsRow({ lotId, locationMap, colCount }: { lotId: string; l
             )}
 
             {pallets.length === 0 && (
-              <p style={{ margin: 0, color: "var(--muted)", fontSize: 13 }}>
-                Sin pallets registrados para este lote.
-              </p>
+              <p style={{ margin: 0, color: "var(--muted)", fontSize: 13 }}>Sin pallets registrados para este lote.</p>
             )}
           </div>
         )}
@@ -238,24 +204,28 @@ function ExpandedPalletsRow({ lotId, locationMap, colCount }: { lotId: string; l
   );
 }
 
+type EditForm = {
+  lotCode: string;
+  sapLot: string;
+  fechaVencimiento: string;
+  fechaFabricacion: string;
+  proveedor: string;
+};
+
 export default function LotsPage() {
   const { user } = useAuth();
   const role = user?.role;
-  const allowCreate = role ? canCreate("lots", role) : false;
+  const allowEdit = role ? canUpdate("lots", role) : false;
   const allowDelete = role ? canDelete("lots", role) : false;
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   const [filterProductId, setFilterProductId] = useState("");
   const [filterSapLot, setFilterSapLot] = useState("");
-
-  const [productId, setProductId] = useState("");
-  const [lotCode, setLotCode] = useState("");
-  const [fechaVencimiento, setFechaVencimiento] = useState("");
-  const [fechaFabricacion, setFechaFabricacion] = useState("");
-  const [sapLot, setSapLot] = useState(() => generateSapLot());
-
   const [expandedLotId, setExpandedLotId] = useState<string | null>(null);
+
+  const [editingLot, setEditingLot] = useState<Lot | null>(null);
+  const [editForm, setEditForm] = useState<EditForm>({ lotCode: "", sapLot: "", fechaVencimiento: "", fechaFabricacion: "", proveedor: "" });
 
   const [lotsQ, productsQ, locationsQ] = useQueries({
     queries: [
@@ -283,15 +253,13 @@ export default function LotsPage() {
     return true;
   }), [items, filterProductId, filterSapLot]);
 
-  const createMut = useMutation({
-    mutationFn: createLot,
-    onSuccess: (created) => {
+  const updateMut = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: Parameters<typeof updateLot>[1] }) =>
+      updateLot(id, payload),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["lots"] });
-      toast.success(`Lote ${created.lotCode} creado`);
-      setLotCode("");
-      setFechaVencimiento("");
-      setFechaFabricacion("");
-      setSapLot(generateSapLot());
+      toast.success("Lote actualizado");
+      setEditingLot(null);
     },
     onError: (err) => toast.error(getFriendlyApiError(err)),
   });
@@ -305,17 +273,31 @@ export default function LotsPage() {
     onError: (err) => toast.error(getFriendlyApiError(err)),
   });
 
-  const saving = createMut.isPending || deleteMut.isPending;
+  const saving = updateMut.isPending || deleteMut.isPending;
 
-  function handleCreate(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!allowCreate || !lotCode.trim() || !productId) return;
-    createMut.mutate({
-      lotCode: lotCode.trim(),
-      productId,
-      fechaVencimiento: fechaVencimiento || undefined,
-      fechaFabricacion: fechaFabricacion || undefined,
-      sapLot: sapLot.trim() || undefined,
+  function openEdit(lot: Lot) {
+    setEditingLot(lot);
+    setEditForm({
+      lotCode: lot.lotCode,
+      sapLot: lot.sapLot ?? "",
+      fechaVencimiento: lot.fechaVencimiento ?? "",
+      fechaFabricacion: lot.fechaFabricacion ?? "",
+      proveedor: lot.proveedor ?? "",
+    });
+  }
+
+  function handleUpdate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingLot || !editForm.lotCode.trim()) return;
+    updateMut.mutate({
+      id: editingLot.id,
+      payload: {
+        lotCode: editForm.lotCode.trim(),
+        sapLot: editForm.sapLot.trim() || undefined,
+        fechaVencimiento: editForm.fechaVencimiento || undefined,
+        fechaFabricacion: editForm.fechaFabricacion || undefined,
+        proveedor: editForm.proveedor.trim() || undefined,
+      },
     });
   }
 
@@ -336,60 +318,79 @@ export default function LotsPage() {
       <div style={{ marginBottom: 20 }}>
         <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.5, marginBottom: 4 }}>Lotes</h1>
         <p style={{ color: "var(--muted)", fontSize: 14 }}>
-          Administrá lotes con fecha de vencimiento para FEFO automático en salidas.
+          Consultá, filtrá y editá lotes de inventario. Los lotes se crean automáticamente al registrar entradas en Movimientos.
         </p>
       </div>
 
-      {allowCreate && (
-        <section className="card" style={{ marginBottom: 12 }}>
-          <h3 style={{ marginTop: 0, fontSize: 15, fontWeight: 700, marginBottom: 12 }}>Nuevo lote</h3>
-          <form onSubmit={handleCreate} style={{ display: "grid", gap: 8 }} aria-label="Nuevo lote">
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8 }}>
-              <select
-                className="input"
-                value={productId}
-                onChange={(e) => setProductId(e.target.value)}
-                required
-                aria-label="Material"
-              >
-                <option value="">Seleccionar material *</option>
-                {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.description}</option>)}
-              </select>
-              <input
-                className="input"
-                placeholder="Código de lote *"
-                value={lotCode}
-                onChange={(e) => setLotCode(e.target.value)}
-                required
-                aria-label="Código de lote"
-              />
-              <input
-                className="input"
-                value={sapLot}
-                onChange={(e) => setSapLot(e.target.value)}
-                placeholder="Lote SAP"
-                aria-label="Lote SAP"
-              />
+      {/* Edit modal */}
+      {editingLot && (
+        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setEditingLot(null)}>
+          <div className="modal" style={{ width: "100%", maxWidth: 480, overflowY: "auto", maxHeight: "90vh" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800 }}>Editar lote</h3>
+              <button onClick={() => setEditingLot(null)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "var(--muted)", lineHeight: 1 }}>×</button>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8 }}>
+            <div style={{ background: "var(--bg)", borderRadius: 8, padding: "8px 12px", marginBottom: 14, fontSize: 13, color: "var(--muted)" }}>
+              <strong style={{ color: "var(--text)" }}>{editingLot.product?.code}</strong>
+              {editingLot.product?.description && <span> · {editingLot.product.description}</span>}
+            </div>
+            <form onSubmit={handleUpdate} style={{ display: "grid", gap: 10 }}>
               <div>
-                <label htmlFor="lot-fvenc" style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--muted)", marginBottom: 3, textTransform: "uppercase", letterSpacing: ".3px" }}>F. Vencimiento</label>
-                <input id="lot-fvenc" className="input" type="date" value={fechaVencimiento} onChange={(e) => setFechaVencimiento(e.target.value)} style={{ width: "100%" }} />
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>
+                  Código de lote *
+                </label>
+                <input
+                  className="input"
+                  value={editForm.lotCode}
+                  onChange={(e) => setEditForm((f) => ({ ...f, lotCode: e.target.value }))}
+                  required
+                  style={{ fontWeight: 700 }}
+                />
               </div>
               <div>
-                <label htmlFor="lot-ffab" style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--muted)", marginBottom: 3, textTransform: "uppercase", letterSpacing: ".3px" }}>F. Fabricación</label>
-                <input id="lot-ffab" className="input" type="date" value={fechaFabricacion} onChange={(e) => setFechaFabricacion(e.target.value)} style={{ width: "100%" }} />
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>
+                  Lote SAP
+                </label>
+                <input
+                  className="input"
+                  value={editForm.sapLot}
+                  onChange={(e) => setEditForm((f) => ({ ...f, sapLot: e.target.value }))}
+                  placeholder="Ej: Z052608201"
+                  style={{ fontFamily: "monospace" }}
+                />
               </div>
-              <div style={{ display: "flex", alignItems: "flex-end" }}>
-                <button className="btn btn--primary" type="submit" disabled={saving || !lotCode.trim() || !productId} style={{ width: "100%" }}>
-                  {createMut.isPending ? "Guardando..." : "Guardar lote"}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>
+                    F. Fabricación
+                  </label>
+                  <input className="input" type="date" value={editForm.fechaFabricacion} onChange={(e) => setEditForm((f) => ({ ...f, fechaFabricacion: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>
+                    F. Vencimiento
+                  </label>
+                  <input className="input" type="date" value={editForm.fechaVencimiento} onChange={(e) => setEditForm((f) => ({ ...f, fechaVencimiento: e.target.value }))} />
+                </div>
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>
+                  Proveedor
+                </label>
+                <input className="input" value={editForm.proveedor} onChange={(e) => setEditForm((f) => ({ ...f, proveedor: e.target.value }))} placeholder="Opcional" />
+              </div>
+              <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+                <button className="btn btn--primary" type="submit" disabled={saving || !editForm.lotCode.trim()}>
+                  {updateMut.isPending ? "Guardando..." : "Guardar cambios"}
                 </button>
+                <button type="button" className="btn" onClick={() => setEditingLot(null)}>Cancelar</button>
               </div>
-            </div>
-          </form>
-        </section>
+            </form>
+          </div>
+        </div>
       )}
 
+      {/* Filters */}
       <section className="card" style={{ marginBottom: 12 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <select
@@ -431,7 +432,7 @@ export default function LotsPage() {
         filtered.length === 0 ? (
           <div className="empty">
             <p className="empty__title">Sin lotes</p>
-            <p className="empty__desc">Creá el primer lote o registrá entradas — los lotes se crean automáticamente.</p>
+            <p className="empty__desc">Los lotes se crean automáticamente al registrar entradas en el módulo de Movimientos.</p>
           </div>
         ) : (
           <div className="card" style={{ padding: 0, overflow: "hidden" }}>
@@ -445,7 +446,7 @@ export default function LotsPage() {
                   <th scope="col">F. Fabricación</th>
                   <th scope="col">F. Vencimiento</th>
                   <th scope="col">En stock</th>
-                  <th scope="col" style={{ width: 80 }} />
+                  <th scope="col" style={{ width: 120 }} />
                 </tr>
               </thead>
               <tbody>
@@ -467,18 +468,7 @@ export default function LotsPage() {
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                             <span style={{ fontWeight: 600 }}>{item.lotCode}</span>
                             {item.status === "PENDING_REGULARIZATION" && (
-                              <span
-                                style={{
-                                  fontSize: 10,
-                                  fontWeight: 700,
-                                  padding: "1px 6px",
-                                  borderRadius: 999,
-                                  background: "rgba(245,158,11,0.10)",
-                                  color: "var(--warning)",
-                                  border: "1px solid rgba(245,158,11,0.28)",
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
+                              <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: "rgba(245,158,11,0.10)", color: "var(--warning)", border: "1px solid rgba(245,158,11,0.28)", whiteSpace: "nowrap" }}>
                                 Pend. regularizar
                               </span>
                             )}
@@ -514,17 +504,30 @@ export default function LotsPage() {
                           </span>
                         </td>
                         <td onClick={(e) => e.stopPropagation()}>
-                          {allowDelete && (
-                            <button
-                              className="btn"
-                              style={{ fontSize: 12, padding: "2px 10px", height: 28 }}
-                              onClick={() => handleDelete(item)}
-                              disabled={saving}
-                              aria-label={`Eliminar lote ${item.lotCode}`}
-                            >
-                              Eliminar
-                            </button>
-                          )}
+                          <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                            {allowEdit && (
+                              <button
+                                className="btn"
+                                style={{ fontSize: 12, padding: "2px 10px", height: 28 }}
+                                onClick={() => openEdit(item)}
+                                disabled={saving}
+                                aria-label={`Editar lote ${item.lotCode}`}
+                              >
+                                Editar
+                              </button>
+                            )}
+                            {allowDelete && (
+                              <button
+                                className="btn"
+                                style={{ fontSize: 12, padding: "2px 10px", height: 28, color: "var(--danger)" }}
+                                onClick={() => handleDelete(item)}
+                                disabled={saving}
+                                aria-label={`Eliminar lote ${item.lotCode}`}
+                              >
+                                Eliminar
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                       {isOpen && <ExpandedPalletsRow lotId={item.id} locationMap={locationMap} colCount={COL_COUNT} />}

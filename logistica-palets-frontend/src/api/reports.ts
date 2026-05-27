@@ -141,7 +141,7 @@ export async function getTraceReport(materialId: string) {
   return data;
 }
 
-export async function getDailyStockReport(params?: { date?: string; productId?: string; warehouseId?: string; locationId?: string }) {
+export async function getDailyStockReport(params?: { date?: string; dateFrom?: string; dateTo?: string; productId?: string; warehouseId?: string; locationId?: string }) {
   const { data } = await api.get<DailyStockRow[]>("/reports/daily-stock", { params });
   return data;
 }

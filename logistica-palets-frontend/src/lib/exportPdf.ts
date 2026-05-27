@@ -10,8 +10,10 @@
  */
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import type { StockItemRow, ReportMovementRow } from "../api/reports";
+import type { StockItemRow, ReportMovementRow, DailyStockRow, ReportTraceEvent } from "../api/reports";
 import type { PalletHistoryEvent } from "../api/pallets";
+import type { Movement } from "../api/movements";
+import type { Lot } from "../api/lots";
 
 /* ── Constants ────────────────────────────────────────────────────────────── */
 
@@ -134,6 +136,165 @@ export function exportMovementsPDF(
     columnStyles: {
       3: { halign: "right" },
     },
+  });
+
+  addPageNumbers(doc);
+  doc.save(`${filename}.pdf`);
+}
+
+/* ── Daily stock (control diario) ────────────────────────────────────────── */
+
+export function exportDailyStockPDF(
+  data: DailyStockRow[],
+  dateLabel: string,
+  filename = "control-diario",
+) {
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  const startY = addDocHeader(doc, `Control diario de stock — ${dateLabel}`);
+
+  autoTable(doc, {
+    ...tableStyles,
+    startY,
+    head: [["Material", "UM", "Stock inicial", "Entradas", "Salidas", "Stock final"]],
+    body: data.map((r) => [
+      `${r.material.code} · ${r.material.description}`,
+      r.material.unitOfMeasure ?? "",
+      r.stockInicial.toLocaleString("es-AR"),
+      r.entradas > 0 ? `+${r.entradas.toLocaleString("es-AR")}` : "0",
+      r.salidas > 0 ? `-${r.salidas.toLocaleString("es-AR")}` : "0",
+      r.stockFinal.toLocaleString("es-AR"),
+    ]),
+    columnStyles: {
+      1: { halign: "center", cellWidth: 14 },
+      2: { halign: "right", cellWidth: 24 },
+      3: { halign: "right", cellWidth: 24 },
+      4: { halign: "right", cellWidth: 24 },
+      5: { halign: "right", cellWidth: 24 },
+    },
+  });
+
+  addPageNumbers(doc);
+  doc.save(`${filename}.pdf`);
+}
+
+/* ── Entradas report ─────────────────────────────────────────────────────── */
+
+const MOVE_LABEL_MAP: Record<string, string> = {
+  ENTRY: "Entrada", EXIT: "Salida", TRANSFER: "Transferencia",
+  ADJUSTMENT_IN: "Ajuste +", ADJUSTMENT_OUT: "Ajuste -",
+};
+
+export function exportEntradasPDF(data: Movement[], filename = "entradas") {
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  const startY = addDocHeader(doc, "Reporte de Entradas");
+
+  autoTable(doc, {
+    ...tableStyles,
+    startY,
+    head: [["Fecha", "Material", "Lote", "Lote SAP", "N° Doc.", "Cantidad", "Pallets", "Depósito/Ubic.", "Proveedor", "Transportista", "Chofer", "Notas", "Estado"]],
+    body: data.map((r) => [
+      new Date(r.date).toLocaleDateString("es-AR"),
+      `${r.material.code} · ${r.material.description}`,
+      r.lotCode ?? "-",
+      r.sapLot ?? "-",
+      r.documentNumber ?? "-",
+      `${r.quantity.toLocaleString("es-AR")} ${r.material.unitOfMeasure ?? ""}`.trim(),
+      r.pallets != null ? String(r.pallets) : "-",
+      `${r.warehouse?.name ?? "-"}${r.location?.code ? ` / ${r.location.code}` : ""}`,
+      r.supplier ?? "-",
+      r.carrier ?? "-",
+      r.driver ?? "-",
+      r.notes ?? "-",
+      r.status === "PENDING_REGULARIZATION" ? "Pendiente" : "Normal",
+    ]),
+    columnStyles: { 5: { halign: "right" }, 6: { halign: "center" } },
+  });
+
+  addPageNumbers(doc);
+  doc.save(`${filename}.pdf`);
+}
+
+/* ── Salidas report ──────────────────────────────────────────────────────── */
+
+export function exportSalidasPDF(data: Movement[], filename = "salidas") {
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  const startY = addDocHeader(doc, "Reporte de Salidas");
+
+  autoTable(doc, {
+    ...tableStyles,
+    startY,
+    head: [["Fecha", "Material", "Lote", "Lote SAP", "Cantidad", "Pallets", "Desde", "Destino", "Transportista", "Chofer", "Notas"]],
+    body: data.map((r) => [
+      new Date(r.date).toLocaleDateString("es-AR"),
+      `${r.material.code} · ${r.material.description}`,
+      r.lotCode ?? "-",
+      r.sapLot ?? "-",
+      `${r.quantity.toLocaleString("es-AR")} ${r.material.unitOfMeasure ?? ""}`.trim(),
+      r.pallets != null ? String(r.pallets) : "-",
+      `${r.warehouse?.name ?? r.from?.warehouseName ?? "-"}${(r.location?.code ?? r.from?.locationCode) ? ` / ${r.location?.code ?? r.from?.locationCode}` : ""}`,
+      r.destination ?? "-",
+      r.carrier ?? "-",
+      r.driver ?? "-",
+      r.notes ?? "-",
+    ]),
+    columnStyles: { 4: { halign: "right" }, 5: { halign: "center" } },
+  });
+
+  addPageNumbers(doc);
+  doc.save(`${filename}.pdf`);
+}
+
+/* ── Lotes & SAP report ──────────────────────────────────────────────────── */
+
+export function exportLotesPDF(data: Lot[], filename = "lotes") {
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  const startY = addDocHeader(doc, "Reporte de Lotes & SAP");
+
+  autoTable(doc, {
+    ...tableStyles,
+    startY,
+    head: [["Código lote", "Lote SAP", "Material", "Vencimiento", "Fabricación", "Proveedor", "Stock", "Estado"]],
+    body: data.map((r) => [
+      r.lotCode,
+      r.sapLot ?? "-",
+      r.product ? `${r.product.code} · ${r.product.description}` : r.productId,
+      r.fechaVencimiento ? new Date(r.fechaVencimiento).toLocaleDateString("es-AR") : "-",
+      r.fechaFabricacion ? new Date(r.fechaFabricacion).toLocaleDateString("es-AR") : "-",
+      r.proveedor ?? "-",
+      r.stockActual.toLocaleString("es-AR"),
+      r.status === "PENDING_REGULARIZATION" ? "Pendiente" : "Normal",
+    ]),
+    columnStyles: { 6: { halign: "right" } },
+  });
+
+  addPageNumbers(doc);
+  doc.save(`${filename}.pdf`);
+}
+
+/* ── Trazabilidad report ─────────────────────────────────────────────────── */
+
+export function exportTrazabilidadPDF(
+  materialCode: string,
+  history: ReportTraceEvent[],
+  filename = "trazabilidad",
+) {
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  const startY = addDocHeader(doc, `Trazabilidad — ${materialCode}`);
+
+  autoTable(doc, {
+    ...tableStyles,
+    startY,
+    head: [["Fecha", "Tipo", "Cantidad", "Desde", "Destino", "Documento", "Notas"]],
+    body: history.map((e) => [
+      new Date(e.at).toLocaleDateString("es-AR"),
+      MOVE_LABEL_MAP[e.type] ?? e.type,
+      e.quantity.toLocaleString("es-AR"),
+      `${e.fromWarehouseName ?? e.warehouseName ?? "-"}${e.fromLocationCode ? ` / ${e.fromLocationCode}` : ""}`,
+      `${e.toWarehouseName ?? "-"}${e.toLocationCode ? ` / ${e.toLocationCode}` : ""}`,
+      e.documentNumber ?? "-",
+      e.notes ?? "-",
+    ]),
+    columnStyles: { 2: { halign: "right" } },
   });
 
   addPageNumbers(doc);

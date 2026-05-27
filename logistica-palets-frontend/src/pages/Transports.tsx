@@ -151,7 +151,6 @@ export default function TransportsPage() {
                 <th scope="col">Tipo</th>
                 <th scope="col">Descripción</th>
                 <th scope="col">Estado</th>
-                <th scope="col">ID</th>
                 <th scope="col" />
               </tr>
             </thead>
@@ -166,7 +165,6 @@ export default function TransportsPage() {
                       {item.active ? "Activo" : "Inactivo"}
                     </span>
                   </td>
-                  <td style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--muted)", fontSize: 12 }}>{item.id}</td>
                   <td style={{ textAlign: "right" }}>
                     {allowDelete ? (
                       <button

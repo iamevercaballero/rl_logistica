@@ -323,9 +323,12 @@ export class ReportsService {
   }
 
   async dailyStock(query: DailyStockQueryDto) {
-    const date = query.date?.slice(0, 10) ?? new Date().toISOString().slice(0, 10);
-    const dayStart = `${date}T00:00:00.000Z`;
-    const dayEnd = `${date}T23:59:59.999Z`;
+    const today = new Date().toISOString().slice(0, 10);
+    const from = (query.dateFrom ?? query.date ?? today).slice(0, 10);
+    const to   = (query.dateTo   ?? query.date ?? today).slice(0, 10);
+    const date = from; // kept for SAP snapshot lookup and response label
+    const dayStart = `${from}T00:00:00.000Z`;
+    const dayEnd   = `${to}T23:59:59.999Z`;
 
     const movementFilter = this.buildMovementScopeFilter(query, 2);
     const sapFilter = this.buildSapScopeFilter(query, 1);

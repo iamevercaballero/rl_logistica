@@ -1,13 +1,10 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   getDailyStockReport,
-  getDifferencesSapReport,
   getMovementsReport,
   getStockReport,
   getTraceReport,
-  upsertSapStock,
   type StockItemRow,
 } from "../api/reports";
 import { getMovements, regularizeMovement } from "../api/movements";
@@ -17,8 +14,8 @@ import { listProducts } from "../api/products";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { DataTable, createColumnHelper } from "../design-system/DataTable";
-import { exportStockPDF, exportMovementsPDF } from "../lib/exportPdf";
-import { exportStockExcel, exportMovementsExcel } from "../lib/exportExcel";
+import { exportStockPDF, exportMovementsPDF, exportDailyStockPDF, exportEntradasPDF, exportSalidasPDF, exportLotesPDF, exportTrazabilidadPDF } from "../lib/exportPdf";
+import { exportStockExcel, exportMovementsExcel, exportDailyStockExcel, exportEntradasExcel, exportSalidasExcel, exportLotesExcel, exportTrazabilidadExcel } from "../lib/exportExcel";
 
 /* ── DataTable column defs for stock tab ──────────────────────────────────── */
 const stockColHelper = createColumnHelper<StockItemRow>();
@@ -80,9 +77,7 @@ const MOVE_BADGE: Record<string, string> = {
   ADJUSTMENT_OUT: "badge badge--adj-out",
 };
 
-const BAR_COLORS = ["#2563eb", "#7c3aed", "#059669", "#d97706", "#dc2626", "#0891b2"];
-
-type Tab = "stock" | "movimientos" | "lotes" | "pendientes" | "diario" | "sap" | "trazabilidad";
+type Tab = "stock" | "movimientos" | "lotes" | "entradas" | "diario" | "salidas" | "trazabilidad";
 
 type MovementFilters = {
   warehouseId: string;
@@ -124,13 +119,32 @@ export default function ReportsPage() {
   const [appliedFilters, setAppliedFilters] = useState<MovementFilters>(initialFilters);
   const [movPage, setMovPage] = useState(1);
   const [movLimit, setMovLimit] = useState(20);
+  const [datePreset, setDatePreset] = useState("");
 
   // Lotes tab
   const [lotSapSearch, setLotSapSearch] = useState("");
   const [lotProductSearch, setLotProductSearch] = useState("");
   const [lotApplied, setLotApplied] = useState<{ sap: string; product: string } | null>(null);
 
-  // Pendientes tab
+  // Entradas tab
+  const [entProductId, setEntProductId] = useState("");
+  const [entDateFrom, setEntDateFrom] = useState("");
+  const [entDateTo, setEntDateTo] = useState("");
+  const [entDatePreset, setEntDatePreset] = useState("");
+  const [entApplied, setEntApplied] = useState({ productId: "", dateFrom: "", dateTo: "" });
+  const [entPage, setEntPage] = useState(1);
+  const [entLimit, setEntLimit] = useState(20);
+
+  // Salidas tab
+  const [salProductId, setSalProductId] = useState("");
+  const [salDateFrom, setSalDateFrom] = useState("");
+  const [salDateTo, setSalDateTo] = useState("");
+  const [salDatePreset, setSalDatePreset] = useState("");
+  const [salApplied, setSalApplied] = useState({ productId: "", dateFrom: "", dateTo: "" });
+  const [salPage, setSalPage] = useState(1);
+  const [salLimit, setSalLimit] = useState(20);
+
+  // Regularization modal (used from Entradas tab)
   const [regModal, setRegModal] = useState<{ id: string; label: string } | null>(null);
   const [regForm, setRegForm] = useState<RegPayload>(emptyReg);
   const [regError, setRegError] = useState("");
@@ -139,10 +153,10 @@ export default function ReportsPage() {
   const [traceMaterialId, setTraceMaterialId] = useState("");
   const [traceApplied, setTraceApplied] = useState("");
 
-  // Daily / SAP tabs
-  const [dailyDate, setDailyDate] = useState(today);
-  const [sapForm, setSapForm] = useState({ date: today, productId: "", warehouseId: "", sapQuantity: "" });
-  const [sapError, setSapError] = useState("");
+  // Daily tab
+  const [dailyDateFrom, setDailyDateFrom] = useState(today);
+  const [dailyDateTo, setDailyDateTo] = useState(today);
+  const [dailyDatePreset, setDailyDatePreset] = useState("hoy");
 
   // ── Catalog queries ───────────────────────────────────────────────────────
 
@@ -180,24 +194,33 @@ export default function ReportsPage() {
     enabled:  lotApplied !== null,
   });
 
-  const pendingQ = useQuery({
-    queryKey: ["movements", "pending"],
-    queryFn:  () => getMovements({ status: "PENDING_REGULARIZATION", limit: 100 }),
-    enabled:  activeTab === "pendientes",
-    staleTime: 0,
+  const entQ = useQuery({
+    queryKey: ["movements", "entradas", { page: entPage, limit: entLimit, ...entApplied }],
+    queryFn:  () => getMovements({
+      type: "ENTRY", page: entPage, limit: entLimit,
+      productId: entApplied.productId || undefined,
+      dateFrom:  entApplied.dateFrom  || undefined,
+      dateTo:    entApplied.dateTo    || undefined,
+    }),
+    enabled:  activeTab === "entradas",
+    placeholderData: (prev) => prev,
   });
 
-  const [dailyQ, diffQ] = useQueries({
-    queries: [
-      {
-        queryKey: ["daily", "stock", dailyDate],
-        queryFn:  () => getDailyStockReport({ date: dailyDate }),
-      },
-      {
-        queryKey: ["daily", "diff", dailyDate],
-        queryFn:  () => getDifferencesSapReport({ date: dailyDate }),
-      },
-    ],
+  const salQ = useQuery({
+    queryKey: ["movements", "salidas", { page: salPage, limit: salLimit, ...salApplied }],
+    queryFn:  () => getMovements({
+      type: "EXIT", page: salPage, limit: salLimit,
+      productId: salApplied.productId || undefined,
+      dateFrom:  salApplied.dateFrom  || undefined,
+      dateTo:    salApplied.dateTo    || undefined,
+    }),
+    enabled:  activeTab === "salidas",
+    placeholderData: (prev) => prev,
+  });
+
+  const dailyQ = useQuery({
+    queryKey: ["daily", "stock", dailyDateFrom, dailyDateTo],
+    queryFn:  () => getDailyStockReport({ dateFrom: dailyDateFrom, dateTo: dailyDateTo }),
   });
 
   const traceQ = useQuery({
@@ -208,16 +231,6 @@ export default function ReportsPage() {
   });
 
   // ── Mutations ─────────────────────────────────────────────────────────────
-
-  const upsertSapMut = useMutation({
-    mutationFn: upsertSapStock,
-    onSuccess: () => {
-      toast.success("Stock SAP guardado correctamente.");
-      setSapError("");
-      void qc.invalidateQueries({ queryKey: ["daily"] });
-    },
-    onError: (err) => setSapError(getFriendlyApiError(err)),
-  });
 
   const regularizeMut = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: Parameters<typeof regularizeMovement>[1] }) =>
@@ -235,31 +248,93 @@ export default function ReportsPage() {
 
   // ── Derived ───────────────────────────────────────────────────────────────
 
-  const warehouses      = warehousesQ.data ?? [];
-  const products        = productsQ.data  ?? [];
-  const stock           = stockQ.data     ?? null;
-  const movements       = movementsQ.data?.data ?? [];
-  const movMeta         = movementsQ.data?.meta ?? { page: movPage, limit: movLimit, total: 0, totalPages: 1 };
-  const lotResults      = lotsQ.data      ?? [];
-  const pendingMovements = pendingQ.data?.data ?? [];
-  const dailyStock      = dailyQ.data     ?? [];
-  const differencesSap  = diffQ.data      ?? [];
-  const traceResult     = traceQ.data     ?? null;
-
-  const stockChartData = useMemo(
-    () => (stock?.byWarehouse ?? []).map((row) => ({ name: row.warehouseName || "Sin depósito", quantity: row.quantity })),
-    [stock],
-  );
+  const warehouses   = warehousesQ.data ?? [];
+  const products     = productsQ.data  ?? [];
+  const stock        = stockQ.data     ?? null;
+  const movements    = movementsQ.data?.data ?? [];
+  const movMeta      = movementsQ.data?.meta ?? { page: movPage, limit: movLimit, total: 0, totalPages: 1 };
+  const lotResults   = lotsQ.data ?? [];
+  const entries      = entQ.data?.data ?? [];
+  const entMeta      = entQ.data?.meta ?? { page: entPage, limit: entLimit, total: 0, totalPages: 1 };
+  const salMovements = salQ.data?.data ?? [];
+  const salMeta      = salQ.data?.meta ?? { page: salPage, limit: salLimit, total: 0, totalPages: 1 };
+  const dailyStock   = dailyQ.data ?? [];
+  const traceResult  = traceQ.data ?? null;
 
   const tabs: { key: Tab; label: string }[] = [
     { key: "stock",        label: "Stock actual"  },
     { key: "movimientos",  label: "Historial"     },
     { key: "lotes",        label: "Lotes & SAP"   },
-    { key: "pendientes",   label: "Pendientes"    },
+    { key: "entradas",     label: "Entradas"      },
     { key: "diario",       label: "Control diario"},
-    { key: "sap",          label: "SAP"           },
+    { key: "salidas",      label: "Salidas"       },
     { key: "trazabilidad", label: "Trazabilidad"  },
   ];
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  function applyDatePreset(preset: string) {
+    setDatePreset(preset);
+    const now = new Date();
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    const today = fmt(now);
+    if (preset === "hoy") {
+      setFilters((p) => ({ ...p, dateFrom: today, dateTo: today }));
+    } else if (preset === "ayer") {
+      const ayer = fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
+      setFilters((p) => ({ ...p, dateFrom: ayer, dateTo: ayer }));
+    } else if (preset === "semana") {
+      const dow = now.getDay();
+      const lunes = fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((dow + 6) % 7)));
+      setFilters((p) => ({ ...p, dateFrom: lunes, dateTo: today }));
+    } else if (preset === "mes") {
+      const primeroDeMes = fmt(new Date(now.getFullYear(), now.getMonth(), 1));
+      setFilters((p) => ({ ...p, dateFrom: primeroDeMes, dateTo: today }));
+    } else if (preset === "30dias") {
+      const hace30 = fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30));
+      setFilters((p) => ({ ...p, dateFrom: hace30, dateTo: today }));
+    } else if (preset === "todo") {
+      setFilters((p) => ({ ...p, dateFrom: "", dateTo: "" }));
+    }
+  }
+
+  function applyDailyDatePreset(preset: string) {
+    setDailyDatePreset(preset);
+    const now = new Date();
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    const t = fmt(now);
+    if (preset === "hoy")    { setDailyDateFrom(t); setDailyDateTo(t); }
+    else if (preset === "ayer") { const d = fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)); setDailyDateFrom(d); setDailyDateTo(d); }
+    else if (preset === "semana") { setDailyDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7)))); setDailyDateTo(t); }
+    else if (preset === "mes")   { setDailyDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), 1))); setDailyDateTo(t); }
+    else if (preset === "30dias"){ setDailyDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30))); setDailyDateTo(t); }
+  }
+
+  function applyEntDatePreset(preset: string) {
+    setEntDatePreset(preset);
+    const now = new Date();
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    const today = fmt(now);
+    if (preset === "hoy")    { setEntDateFrom(today); setEntDateTo(today); }
+    else if (preset === "ayer") { const d = fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)); setEntDateFrom(d); setEntDateTo(d); }
+    else if (preset === "semana") { setEntDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7)))); setEntDateTo(today); }
+    else if (preset === "mes")   { setEntDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), 1))); setEntDateTo(today); }
+    else if (preset === "30dias"){ setEntDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30))); setEntDateTo(today); }
+    else if (preset === "todo")  { setEntDateFrom(""); setEntDateTo(""); }
+  }
+
+  function applySalDatePreset(preset: string) {
+    setSalDatePreset(preset);
+    const now = new Date();
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    const today = fmt(now);
+    if (preset === "hoy")    { setSalDateFrom(today); setSalDateTo(today); }
+    else if (preset === "ayer") { const d = fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)); setSalDateFrom(d); setSalDateTo(d); }
+    else if (preset === "semana") { setSalDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7)))); setSalDateTo(today); }
+    else if (preset === "mes")   { setSalDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), 1))); setSalDateTo(today); }
+    else if (preset === "30dias"){ setSalDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30))); setSalDateTo(today); }
+    else if (preset === "todo")  { setSalDateFrom(""); setSalDateTo(""); }
+  }
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -282,11 +357,6 @@ export default function ReportsPage() {
             onClick={() => setActiveTab(t.key)}
           >
             {t.label}
-            {t.key === "pendientes" && pendingMovements.length > 0 && (
-              <span style={{ marginLeft: 6, background: "var(--warning)", color: "#fff", borderRadius: 10, padding: "1px 7px", fontSize: 11, fontWeight: 700 }}>
-                {pendingMovements.length}
-              </span>
-            )}
           </button>
         ))}
       </div>
@@ -342,24 +412,6 @@ export default function ReportsPage() {
                 <span className="badge">Posiciones: <strong>{stock.stockRows}</strong></span>
                 <span className="badge">Cantidad total: <strong>{stock.totalQuantity.toLocaleString("es-AR")}</strong></span>
               </div>
-              {stockChartData.length > 0 && (
-                <div style={{ height: 220, marginBottom: 16 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={stockChartData} barSize={36}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                      <XAxis dataKey="name" tick={{ fontSize: 12, fill: "var(--muted)" }} axisLine={false} tickLine={false} />
-                      <YAxis tick={{ fontSize: 12, fill: "var(--muted)" }} axisLine={false} tickLine={false} />
-                      <Tooltip
-                        contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 13, color: "var(--text)" }}
-                        formatter={(v: number | undefined) => [(v ?? 0).toLocaleString("es-AR"), "Cantidad"]}
-                      />
-                      <Bar dataKey="quantity" radius={[6, 6, 0, 0]}>
-                        {stockChartData.map((_, i) => <Cell key={i} fill={BAR_COLORS[i % BAR_COLORS.length]} />)}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
               <DataTable
                 data={stock.items}
                 columns={STOCK_COLUMNS}
@@ -401,16 +453,39 @@ export default function ReportsPage() {
               <option value="ADJUSTMENT_IN">Ajuste entrada</option>
               <option value="ADJUSTMENT_OUT">Ajuste salida</option>
             </select>
-            <input className="input" type="date" value={filters.dateFrom} aria-label="Desde"
-              onChange={(e) => setFilters((p) => ({ ...p, dateFrom: e.target.value }))} />
-            <input className="input" type="date" value={filters.dateTo} aria-label="Hasta"
-              onChange={(e) => setFilters((p) => ({ ...p, dateTo: e.target.value }))} />
+            <select
+              className="input"
+              value={datePreset}
+              aria-label="Período"
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "personalizado") { setDatePreset("personalizado"); }
+                else applyDatePreset(v);
+              }}
+            >
+              <option value="">Período</option>
+              <option value="hoy">Hoy</option>
+              <option value="ayer">Ayer</option>
+              <option value="semana">Esta semana</option>
+              <option value="mes">Este mes</option>
+              <option value="30dias">Últimos 30 días</option>
+              <option value="todo">Todo</option>
+              <option value="personalizado">Personalizado…</option>
+            </select>
+            {datePreset === "personalizado" && (
+              <>
+                <input className="input" type="date" value={filters.dateFrom} aria-label="Desde"
+                  onChange={(e) => setFilters((p) => ({ ...p, dateFrom: e.target.value }))} />
+                <input className="input" type="date" value={filters.dateTo} aria-label="Hasta"
+                  onChange={(e) => setFilters((p) => ({ ...p, dateTo: e.target.value }))} />
+              </>
+            )}
             <input className="input" placeholder="Buscar" value={filters.search} style={{ minWidth: 200 }} aria-label="Buscar"
               onChange={(e) => setFilters((p) => ({ ...p, search: e.target.value }))} />
             <button className="btn btn--primary" onClick={() => { setAppliedFilters(filters); setMovPage(1); }}>
               Buscar
             </button>
-            <button className="btn" onClick={() => { setFilters(initialFilters); setAppliedFilters(initialFilters); setMovPage(1); }}>
+            <button className="btn" onClick={() => { setFilters(initialFilters); setAppliedFilters(initialFilters); setMovPage(1); setDatePreset(""); }}>
               Limpiar
             </button>
             {movements.length > 0 && (
@@ -438,7 +513,7 @@ export default function ReportsPage() {
                 <thead>
                   <tr>
                     <th scope="col">Fecha</th><th scope="col">Tipo</th><th scope="col">Material</th><th scope="col">Cantidad</th>
-                    <th scope="col">Ubicación</th><th scope="col">Documento</th><th scope="col">Proveedor</th>
+                    <th scope="col">Ubicación</th><th scope="col">Lote</th><th scope="col">Pallets</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -453,8 +528,8 @@ export default function ReportsPage() {
                           ? `${m.from?.locationCode ?? "-"} → ${m.to?.locationCode ?? "-"}`
                           : `${m.warehouse?.name ?? "-"} / ${m.location?.code ?? "-"}`}
                       </td>
-                      <td style={{ color: "var(--muted)", fontSize: 12 }}>{m.documentNumber ?? "-"}</td>
-                      <td style={{ color: "var(--muted)", fontSize: 12 }}>{m.supplier ?? "-"}</td>
+                      <td style={{ color: "var(--muted)", fontSize: 12 }}>{m.lotCode ?? "-"}</td>
+                      <td style={{ color: "var(--muted)", fontSize: 12, textAlign: "right" }}>{m.pallets != null ? m.pallets : "-"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -517,6 +592,12 @@ export default function ReportsPage() {
             <button className="btn" onClick={() => { setLotSapSearch(""); setLotProductSearch(""); setLotApplied(null); }}>
               Limpiar
             </button>
+            {lotResults.length > 0 && (
+              <>
+                <button className="btn" onClick={() => exportLotesPDF(lotResults, `lotes-${new Date().toISOString().slice(0,10)}`)} title="Exportar PDF">📄 PDF</button>
+                <button className="btn" onClick={() => void exportLotesExcel(lotResults, `lotes-${new Date().toISOString().slice(0,10)}`)} title="Exportar Excel">📊 Excel</button>
+              </>
+            )}
           </div>
 
           {lotsQ.isError && (
@@ -573,82 +654,145 @@ export default function ReportsPage() {
         </section>
       )}
 
-      {/* ── Tab: Pendientes de regularización ── */}
-      {activeTab === "pendientes" && (
+      {/* ── Tab: Entradas ── */}
+      {activeTab === "entradas" && (
         <section className="card">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
-            <div>
-              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Pendientes de regularización</h3>
-              <p style={{ color: "var(--muted)", fontSize: 13, marginTop: 2, marginBottom: 0 }}>
-                Movimientos provisionales que requieren datos definitivos antes de cerrar.
-              </p>
-            </div>
-            <button className="btn"
-              onClick={() => void qc.invalidateQueries({ queryKey: ["movements", "pending"] })}>
-              Actualizar
-            </button>
+          <h3 style={{ marginTop: 0, fontSize: 15, fontWeight: 800, marginBottom: 16 }}>Reporte de entradas</h3>
+
+          {/* Filtros */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+            <select className="input" value={entProductId} aria-label="Material"
+              onChange={(e) => setEntProductId(e.target.value)}>
+              <option value="">Todos los materiales</option>
+              {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.description}</option>)}
+            </select>
+            <select className="input" value={entDatePreset} aria-label="Período"
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "personalizado") setEntDatePreset("personalizado");
+                else applyEntDatePreset(v);
+              }}>
+              <option value="">Período</option>
+              <option value="hoy">Hoy</option>
+              <option value="ayer">Ayer</option>
+              <option value="semana">Esta semana</option>
+              <option value="mes">Este mes</option>
+              <option value="30dias">Últimos 30 días</option>
+              <option value="todo">Todo</option>
+              <option value="personalizado">Personalizado…</option>
+            </select>
+            {entDatePreset === "personalizado" && (
+              <>
+                <input className="input" type="date" value={entDateFrom} aria-label="Desde"
+                  onChange={(e) => setEntDateFrom(e.target.value)} />
+                <input className="input" type="date" value={entDateTo} aria-label="Hasta"
+                  onChange={(e) => setEntDateTo(e.target.value)} />
+              </>
+            )}
+            <button className="btn btn--primary" onClick={() => {
+              setEntApplied({ productId: entProductId, dateFrom: entDateFrom, dateTo: entDateTo });
+              setEntPage(1);
+            }}>Buscar</button>
+            <button className="btn" onClick={() => {
+              setEntProductId(""); setEntDateFrom(""); setEntDateTo(""); setEntDatePreset("");
+              setEntApplied({ productId: "", dateFrom: "", dateTo: "" });
+              setEntPage(1);
+            }}>Limpiar</button>
+            {entries.length > 0 && (
+              <>
+                <button className="btn" onClick={() => exportEntradasPDF(entries, `entradas-${new Date().toISOString().slice(0,10)}`)} title="Exportar PDF">📄 PDF</button>
+                <button className="btn" onClick={() => void exportEntradasExcel(entries, `entradas-${new Date().toISOString().slice(0,10)}`)} title="Exportar Excel">📊 Excel</button>
+              </>
+            )}
           </div>
 
-          {pendingQ.isError && (
-            <p className="form-error" role="alert" style={{ fontSize: 13 }}>
-              {getFriendlyApiError(pendingQ.error)}
-            </p>
-          )}
-          {pendingQ.isLoading && <p style={{ color: "var(--muted)", fontSize: 13 }} aria-busy="true">Cargando...</p>}
+          {entQ.isLoading && <p style={{ color: "var(--muted)", fontSize: 14 }} aria-busy="true">Cargando...</p>}
+          {entQ.isError && <div className="form-error" role="alert">No se pudo cargar el reporte.</div>}
 
-          {!pendingQ.isLoading && pendingMovements.length === 0 && !pendingQ.isError && (
-            <div style={{ textAlign: "center", padding: "32px 0", color: "var(--muted)" }}>
-              <div style={{ fontSize: 32, marginBottom: 8 }}>✓</div>
-              <p style={{ margin: 0, fontSize: 14 }}>No hay movimientos pendientes de regularización.</p>
-            </div>
+          {!entQ.isLoading && entries.length === 0 && !entQ.isError && (
+            <p style={{ color: "var(--muted)" }}>No hay entradas para los filtros aplicados.</p>
           )}
 
-          {pendingMovements.length > 0 && (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th scope="col">Fecha</th><th scope="col">Tipo</th><th scope="col">Material</th><th scope="col">Cantidad</th>
-                  <th scope="col">Documento</th><th scope="col">Proveedor</th><th scope="col">Notas</th><th scope="col"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {pendingMovements.map((m) => (
-                  <tr key={m.id}>
-                    <td style={{ color: "var(--muted)", fontSize: 12, whiteSpace: "nowrap" }}>
-                      {new Date(m.date).toLocaleString("es-AR")}
-                    </td>
-                    <td><span className={MOVE_BADGE[m.type] ?? "badge"}>{MOVE_LABEL[m.type] ?? m.type}</span></td>
-                    <td><strong>{m.material.code}</strong> · {m.material.description}</td>
-                    <td>{m.quantity.toLocaleString("es-AR")}</td>
-                    <td style={{ fontSize: 12, color: m.documentNumber ? "inherit" : "var(--muted)" }}>
-                      {m.documentNumber ?? "—"}
-                    </td>
-                    <td style={{ fontSize: 12, color: m.supplier ? "inherit" : "var(--muted)" }}>
-                      {m.supplier ?? "—"}
-                    </td>
-                    <td style={{ fontSize: 12, color: "var(--muted)", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {m.notes ?? "—"}
-                    </td>
-                    <td>
-                      <button
-                        className="btn btn--primary"
-                        style={{ fontSize: 12, padding: "4px 12px", whiteSpace: "nowrap" }}
-                        onClick={() => {
-                          setRegModal({
-                            id: m.id,
-                            label: `${m.material.code} · ${new Date(m.date).toLocaleDateString("es-AR")}`,
-                          });
-                          setRegForm(emptyReg);
-                          setRegError("");
-                        }}
-                      >
-                        Regularizar
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {entries.length > 0 && (
+            <>
+              <div style={{ overflowX: "auto" }}>
+                <table className="table" style={{ minWidth: 1100 }}>
+                  <thead>
+                    <tr>
+                      <th scope="col">Fecha</th>
+                      <th scope="col">Material</th>
+                      <th scope="col">Lote</th>
+                      <th scope="col">Lote SAP</th>
+                      <th scope="col">N° Documento</th>
+                      <th scope="col">Cantidad</th>
+                      <th scope="col">Pallets</th>
+                      <th scope="col">Depósito / Ubic.</th>
+                      <th scope="col">Proveedor</th>
+                      <th scope="col">Transportista</th>
+                      <th scope="col">Chofer</th>
+                      <th scope="col">Notas</th>
+                      <th scope="col">Estado</th>
+                      <th scope="col" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {entries.map((m) => (
+                      <tr key={m.id} style={m.status === "PENDING_REGULARIZATION" ? { background: "var(--badge-adjout-bg)" } : {}}>
+                        <td style={{ color: "var(--muted)", fontSize: 12, whiteSpace: "nowrap" }}>
+                          {new Date(m.date).toLocaleString("es-AR")}
+                        </td>
+                        <td><strong>{m.material.code}</strong><span style={{ color: "var(--muted)", marginLeft: 4 }}>· {m.material.description}</span></td>
+                        <td style={{ fontSize: 12 }}>{m.lotCode ?? "—"}</td>
+                        <td style={{ fontFamily: "monospace", fontSize: 12 }}>{m.sapLot ?? "—"}</td>
+                        <td style={{ fontSize: 12, color: "var(--muted)" }}>{m.documentNumber ?? "—"}</td>
+                        <td style={{ fontWeight: 600 }}>{m.quantity.toLocaleString("es-AR")} {m.material.unitOfMeasure ?? ""}</td>
+                        <td style={{ textAlign: "center" }}>{m.pallets != null ? m.pallets : "—"}</td>
+                        <td style={{ fontSize: 12 }}>
+                          {m.warehouse?.name ?? "—"}{m.location?.code ? ` / ${m.location.code}` : ""}
+                        </td>
+                        <td style={{ fontSize: 12 }}>{m.supplier ?? "—"}</td>
+                        <td style={{ fontSize: 12 }}>{m.carrier ?? "—"}</td>
+                        <td style={{ fontSize: 12 }}>{m.driver ?? "—"}</td>
+                        <td style={{ fontSize: 12, color: "var(--muted)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {m.notes ?? "—"}
+                        </td>
+                        <td>
+                          {m.status === "PENDING_REGULARIZATION"
+                            ? <span className="badge badge--adj-out">Pendiente</span>
+                            : <span className="badge badge--entry">Normal</span>}
+                        </td>
+                        <td>
+                          {m.status === "PENDING_REGULARIZATION" && (
+                            <button
+                              className="btn btn--primary"
+                              style={{ fontSize: 12, padding: "4px 10px", whiteSpace: "nowrap" }}
+                              onClick={() => {
+                                setRegModal({ id: m.id, label: `${m.material.code} · ${new Date(m.date).toLocaleDateString("es-AR")}` });
+                                setRegForm(emptyReg);
+                                setRegError("");
+                              }}
+                            >
+                              Regularizar
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
+                <button className="btn" disabled={entQ.isFetching || entMeta.page <= 1} onClick={() => setEntPage((p) => p - 1)}>Anterior</button>
+                <span style={{ fontSize: 13, color: "var(--muted)" }}>Página {entMeta.page} de {entMeta.totalPages} · {entMeta.total} registros</span>
+                <button className="btn" disabled={entQ.isFetching || entMeta.page >= entMeta.totalPages} onClick={() => setEntPage((p) => p + 1)}>Siguiente</button>
+                <select className="input" value={entLimit} aria-label="Registros por página"
+                  onChange={(e) => { setEntLimit(Number(e.target.value)); setEntPage(1); }}>
+                  <option value={10}>10 / pág.</option>
+                  <option value={20}>20 / pág.</option>
+                  <option value={50}>50 / pág.</option>
+                </select>
+              </div>
+            </>
           )}
         </section>
       )}
@@ -657,44 +801,71 @@ export default function ReportsPage() {
       {activeTab === "diario" && (
         <section className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
-            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Control diario de stock</h3>
-            <input
-              className="input"
-              type="date"
-              value={dailyDate}
-              onChange={(e) => setDailyDate(e.target.value)}
-              aria-label="Fecha de control"
-            />
+            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Control de stock</h3>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <select className="input" value={dailyDatePreset} aria-label="Período"
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === "personalizado") setDailyDatePreset("personalizado");
+                  else applyDailyDatePreset(v);
+                }}>
+                <option value="hoy">Hoy</option>
+                <option value="ayer">Ayer</option>
+                <option value="semana">Esta semana</option>
+                <option value="mes">Este mes</option>
+                <option value="30dias">Últimos 30 días</option>
+                <option value="personalizado">Personalizado…</option>
+              </select>
+              {dailyDatePreset === "personalizado" && (
+                <>
+                  <input className="input" type="date" value={dailyDateFrom} aria-label="Desde"
+                    onChange={(e) => setDailyDateFrom(e.target.value)} />
+                  <input className="input" type="date" value={dailyDateTo} aria-label="Hasta"
+                    onChange={(e) => setDailyDateTo(e.target.value)} />
+                </>
+              )}
+              {dailyStock.length > 0 && (
+                <>
+                  <button className="btn" onClick={() => {
+                    const label = dailyDateFrom === dailyDateTo ? dailyDateFrom : `${dailyDateFrom} a ${dailyDateTo}`;
+                    exportDailyStockPDF(dailyStock, label, `control-diario-${dailyDateFrom}`);
+                  }} title="Exportar PDF">📄 PDF</button>
+                  <button className="btn" onClick={() => {
+                    const label = dailyDateFrom === dailyDateTo ? dailyDateFrom : `${dailyDateFrom} a ${dailyDateTo}`;
+                    void exportDailyStockExcel(dailyStock, label, `control-diario-${dailyDateFrom}`);
+                  }} title="Exportar Excel">📊 Excel</button>
+                </>
+              )}
+            </div>
           </div>
           {dailyQ.isLoading && <p style={{ color: "var(--muted)", fontSize: 14 }} aria-busy="true">Cargando...</p>}
           {!dailyQ.isLoading && dailyStock.length === 0 ? (
-            <p style={{ color: "var(--muted)" }}>Sin registros para la fecha seleccionada.</p>
+            <p style={{ color: "var(--muted)" }}>Sin registros para el período seleccionado.</p>
           ) : dailyStock.length > 0 && (
             <table className="table">
               <thead>
                 <tr>
-                  <th scope="col">Material</th><th scope="col">Stock inicial</th><th scope="col">Entradas</th>
-                  <th scope="col">Salidas</th><th scope="col">Stock final</th><th scope="col">SAP</th><th scope="col">Diferencia</th>
+                  <th scope="col">Material</th>
+                  <th scope="col">UM</th>
+                  <th scope="col">Stock inicial</th>
+                  <th scope="col">Entradas</th>
+                  <th scope="col">Salidas</th>
+                  <th scope="col">Stock final</th>
                 </tr>
               </thead>
               <tbody>
                 {dailyStock.map((row) => (
                   <tr key={`${row.date}-${row.material.id}`}>
                     <td><strong>{row.material.code}</strong> · {row.material.description}</td>
+                    <td style={{ color: "var(--muted)", fontSize: 12 }}>{row.material.unitOfMeasure ?? "—"}</td>
                     <td>{row.stockInicial.toLocaleString("es-AR")}</td>
-                    <td style={{ color: "var(--success)", fontWeight: 600 }}>
-                      {row.entradas > 0 ? `+${row.entradas.toLocaleString("es-AR")}` : row.entradas}
+                    <td style={{ color: "var(--success)", fontWeight: row.entradas > 0 ? 700 : 400 }}>
+                      {row.entradas > 0 ? `+${row.entradas.toLocaleString("es-AR")}` : "0"}
                     </td>
-                    <td style={{ color: "var(--danger)", fontWeight: 600 }}>
-                      {row.salidas > 0 ? `-${row.salidas.toLocaleString("es-AR")}` : row.salidas}
+                    <td style={{ color: "var(--danger)", fontWeight: row.salidas > 0 ? 700 : 400 }}>
+                      {row.salidas > 0 ? `-${row.salidas.toLocaleString("es-AR")}` : "0"}
                     </td>
                     <td style={{ fontWeight: 700 }}>{row.stockFinal.toLocaleString("es-AR")}</td>
-                    <td>{row.stockSAP}</td>
-                    <td>
-                      <span className={row.diferencia === 0 ? "badge" : row.diferencia > 0 ? "badge badge--entry" : "badge badge--exit"}>
-                        {row.diferencia === 0 ? "✓" : row.diferencia > 0 ? `+${row.diferencia}` : row.diferencia}
-                      </span>
-                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -703,78 +874,123 @@ export default function ReportsPage() {
         </section>
       )}
 
-      {/* ── Tab: SAP ── */}
-      {activeTab === "sap" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <section className="card">
-            <h3 style={{ marginTop: 0, fontSize: 15, fontWeight: 800, marginBottom: 16 }}>Cargar stock SAP</h3>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                upsertSapMut.mutate({
-                  date: sapForm.date,
-                  productId: sapForm.productId,
-                  warehouseId: sapForm.warehouseId || undefined,
-                  sapQuantity: Number(sapForm.sapQuantity),
-                });
-              }}
-              style={{ display: "grid", gap: 10 }}
-              aria-label="Cargar stock SAP"
-            >
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
-                <input className="input" type="date" value={sapForm.date} aria-label="Fecha"
-                  onChange={(e) => setSapForm((p) => ({ ...p, date: e.target.value }))} />
-                <select className="input" value={sapForm.productId} aria-label="Material"
-                  onChange={(e) => setSapForm((p) => ({ ...p, productId: e.target.value }))}>
-                  <option value="">Seleccionar material</option>
-                  {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.description}</option>)}
-                </select>
-                <select className="input" value={sapForm.warehouseId} aria-label="Depósito"
-                  onChange={(e) => setSapForm((p) => ({ ...p, warehouseId: e.target.value }))}>
-                  <option value="">Depósito (opcional)</option>
-                  {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-                </select>
-                <input className="input" type="number" min={0} placeholder="Cantidad SAP" value={sapForm.sapQuantity}
-                  aria-label="Cantidad SAP"
-                  onChange={(e) => setSapForm((p) => ({ ...p, sapQuantity: e.target.value }))} />
-              </div>
-              {sapError && <p className="form-error" role="alert" style={{ margin: 0, fontSize: 13 }}>{sapError}</p>}
-              <div>
-                <button className="btn btn--primary" type="submit" disabled={upsertSapMut.isPending}>
-                  {upsertSapMut.isPending ? "Guardando..." : "Guardar stock SAP"}
-                </button>
-              </div>
-            </form>
-          </section>
+      {/* ── Tab: Salidas ── */}
+      {activeTab === "salidas" && (
+        <section className="card">
+          <h3 style={{ marginTop: 0, fontSize: 15, fontWeight: 800, marginBottom: 16 }}>Reporte de salidas</h3>
 
-          <section className="card">
-            <h3 style={{ marginTop: 0, fontSize: 15, fontWeight: 800, marginBottom: 16 }}>Diferencias contra SAP</h3>
-            {diffQ.isLoading && <p style={{ color: "var(--muted)", fontSize: 14 }} aria-busy="true">Cargando...</p>}
-            {!diffQ.isLoading && differencesSap.length === 0 ? (
-              <p style={{ color: "var(--muted)" }}>Sin diferencias para la fecha seleccionada.</p>
-            ) : differencesSap.length > 0 && (
-              <table className="table">
-                <thead>
-                  <tr><th scope="col">Material</th><th scope="col">Sistema</th><th scope="col">SAP</th><th scope="col">Diferencia</th></tr>
-                </thead>
-                <tbody>
-                  {differencesSap.map((row) => (
-                    <tr key={`diff-${row.date}-${row.material.id}`}>
-                      <td><strong>{row.material.code}</strong> · {row.material.description}</td>
-                      <td>{row.stockFinal.toLocaleString("es-AR")}</td>
-                      <td>{row.stockSAP}</td>
-                      <td>
-                        <span className={row.diferencia > 0 ? "badge badge--adj-out" : "badge badge--exit"}>
-                          {row.diferencia > 0 ? `+${row.diferencia}` : row.diferencia}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          {/* Filtros */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+            <select className="input" value={salProductId} aria-label="Material"
+              onChange={(e) => setSalProductId(e.target.value)}>
+              <option value="">Todos los materiales</option>
+              {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.description}</option>)}
+            </select>
+            <select className="input" value={salDatePreset} aria-label="Período"
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "personalizado") setSalDatePreset("personalizado");
+                else applySalDatePreset(v);
+              }}>
+              <option value="">Período</option>
+              <option value="hoy">Hoy</option>
+              <option value="ayer">Ayer</option>
+              <option value="semana">Esta semana</option>
+              <option value="mes">Este mes</option>
+              <option value="30dias">Últimos 30 días</option>
+              <option value="todo">Todo</option>
+              <option value="personalizado">Personalizado…</option>
+            </select>
+            {salDatePreset === "personalizado" && (
+              <>
+                <input className="input" type="date" value={salDateFrom} aria-label="Desde"
+                  onChange={(e) => setSalDateFrom(e.target.value)} />
+                <input className="input" type="date" value={salDateTo} aria-label="Hasta"
+                  onChange={(e) => setSalDateTo(e.target.value)} />
+              </>
             )}
-          </section>
-        </div>
+            <button className="btn btn--primary" onClick={() => {
+              setSalApplied({ productId: salProductId, dateFrom: salDateFrom, dateTo: salDateTo });
+              setSalPage(1);
+            }}>Buscar</button>
+            <button className="btn" onClick={() => {
+              setSalProductId(""); setSalDateFrom(""); setSalDateTo(""); setSalDatePreset("");
+              setSalApplied({ productId: "", dateFrom: "", dateTo: "" });
+              setSalPage(1);
+            }}>Limpiar</button>
+            {salMovements.length > 0 && (
+              <>
+                <button className="btn" onClick={() => exportSalidasPDF(salMovements, `salidas-${new Date().toISOString().slice(0,10)}`)} title="Exportar PDF">📄 PDF</button>
+                <button className="btn" onClick={() => void exportSalidasExcel(salMovements, `salidas-${new Date().toISOString().slice(0,10)}`)} title="Exportar Excel">📊 Excel</button>
+              </>
+            )}
+          </div>
+
+          {salQ.isLoading && <p style={{ color: "var(--muted)", fontSize: 14 }} aria-busy="true">Cargando...</p>}
+          {salQ.isError && <div className="form-error" role="alert">No se pudo cargar el reporte.</div>}
+
+          {!salQ.isLoading && salMovements.length === 0 && !salQ.isError && (
+            <p style={{ color: "var(--muted)" }}>No hay salidas para los filtros aplicados.</p>
+          )}
+
+          {salMovements.length > 0 && (
+            <>
+              <div style={{ overflowX: "auto" }}>
+                <table className="table" style={{ minWidth: 960 }}>
+                  <thead>
+                    <tr>
+                      <th scope="col">Fecha</th>
+                      <th scope="col">Material</th>
+                      <th scope="col">Lote</th>
+                      <th scope="col">Lote SAP</th>
+                      <th scope="col">Cantidad</th>
+                      <th scope="col">Pallets</th>
+                      <th scope="col">Desde</th>
+                      <th scope="col">Destino</th>
+                      <th scope="col">Transportista</th>
+                      <th scope="col">Chofer</th>
+                      <th scope="col">Notas</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {salMovements.map((m) => (
+                      <tr key={m.id}>
+                        <td style={{ color: "var(--muted)", fontSize: 12, whiteSpace: "nowrap" }}>
+                          {new Date(m.date).toLocaleString("es-AR")}
+                        </td>
+                        <td><strong>{m.material.code}</strong><span style={{ color: "var(--muted)", marginLeft: 4 }}>· {m.material.description}</span></td>
+                        <td style={{ fontSize: 12 }}>{m.lotCode ?? "—"}</td>
+                        <td style={{ fontFamily: "monospace", fontSize: 12 }}>{m.sapLot ?? "—"}</td>
+                        <td style={{ fontWeight: 600 }}>{m.quantity.toLocaleString("es-AR")} {m.material.unitOfMeasure ?? ""}</td>
+                        <td style={{ textAlign: "center" }}>{m.pallets != null ? m.pallets : "—"}</td>
+                        <td style={{ fontSize: 12 }}>
+                          {m.warehouse?.name ?? m.from?.warehouseName ?? "—"}{(m.location?.code ?? m.from?.locationCode) ? ` / ${m.location?.code ?? m.from?.locationCode}` : ""}
+                        </td>
+                        <td style={{ fontSize: 12 }}>{m.destination ?? "—"}</td>
+                        <td style={{ fontSize: 12 }}>{m.carrier ?? "—"}</td>
+                        <td style={{ fontSize: 12 }}>{m.driver ?? "—"}</td>
+                        <td style={{ fontSize: 12, color: "var(--muted)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {m.notes ?? "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
+                <button className="btn" disabled={salQ.isFetching || salMeta.page <= 1} onClick={() => setSalPage((p) => p - 1)}>Anterior</button>
+                <span style={{ fontSize: 13, color: "var(--muted)" }}>Página {salMeta.page} de {salMeta.totalPages} · {salMeta.total} registros</span>
+                <button className="btn" disabled={salQ.isFetching || salMeta.page >= salMeta.totalPages} onClick={() => setSalPage((p) => p + 1)}>Siguiente</button>
+                <select className="input" value={salLimit} aria-label="Registros por página"
+                  onChange={(e) => { setSalLimit(Number(e.target.value)); setSalPage(1); }}>
+                  <option value={10}>10 / pág.</option>
+                  <option value={20}>20 / pág.</option>
+                  <option value={50}>50 / pág.</option>
+                </select>
+              </div>
+            </>
+          )}
+        </section>
       )}
 
       {/* ── Tab: Trazabilidad ── */}
@@ -799,6 +1015,12 @@ export default function ReportsPage() {
             >
               Buscar trazabilidad
             </button>
+            {traceResult && traceResult.history.length > 0 && (
+              <>
+                <button className="btn" onClick={() => exportTrazabilidadPDF(traceResult.material.code, traceResult.history, `trazabilidad-${traceResult.material.code}`)} title="Exportar PDF">📄 PDF</button>
+                <button className="btn" onClick={() => void exportTrazabilidadExcel(traceResult.material.code, traceResult.history, `trazabilidad-${traceResult.material.code}`)} title="Exportar Excel">📊 Excel</button>
+              </>
+            )}
           </div>
 
           {traceQ.isError && (

@@ -40,7 +40,16 @@
       "Bash(curl -s -X POST http://localhost:3000/api/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"admin\",\"password\":\"admin123\"}')",
       "Bash(python3 -m json.tool)",
       "Read(//usr/bin/**)",
-      "Read(//Users/ever/.nvm/versions/**)"
+      "Read(//Users/ever/.nvm/versions/**)",
+      "Read(//usr/local/bin/**)",
+      "Read(//opt/homebrew/bin/**)",
+      "Bash(/usr/local/bin/npm run *)",
+      "Bash(find /opt /usr /Users/ever -name \"npm\" -type f 2>/dev/null | head -5; ls /opt/homebrew/bin/node 2>/dev/null)",
+      "Bash(export PATH=\"/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin\")",
+      "Bash(which node *)",
+      "Bash(echo \"not found\")",
+      "Read(//Applications/Cursor.app/Contents/Resources/app/node_modules/.bin/**)",
+      "Bash(echo \"no cursor tsc\")"
     ]
   }
 }

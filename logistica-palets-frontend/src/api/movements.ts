@@ -20,6 +20,7 @@ export type PalletItem = {
   fechaVencimiento?: string;
   fechaFabricacion?: string;
   sapLot?: string;
+  proveedor?: string;
 };
 
 export type Movement = {
@@ -36,6 +37,8 @@ export type Movement = {
   destination?: string | null;
   notes?: string | null;
   lotId?: string | null;
+  lotCode?: string | null;
+  sapLot?: string | null;
   adjustmentReason?: string | null;
   adjustmentCategory?: string | null;
   encargado?: { id: string; username: string; fullName?: string | null } | null;

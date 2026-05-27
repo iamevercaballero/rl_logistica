@@ -6,6 +6,29 @@ import { canCreate, canDelete } from "../auth/rbac";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 
+const UNITS_OF_MEASURE = [
+  { value: "UN", label: "UN — Unidad" },
+  { value: "KG", label: "KG — Kilogramo" },
+  { value: "LT", label: "LT — Litro" },
+  { value: "ML", label: "ML — Mililitro" },
+  { value: "GR", label: "GR — Gramo" },
+  { value: "TN", label: "TN — Tonelada" },
+  { value: "TS", label: "TS — Tonelada seca" },
+  { value: "MT", label: "MT — Metro" },
+  { value: "M2", label: "M2 — Metro cuadrado" },
+  { value: "M3", label: "M3 — Metro cúbico" },
+  { value: "PQ", label: "PQ — Paquete" },
+  { value: "CJ", label: "CJ — Caja" },
+  { value: "PL", label: "PL — Pallet" },
+  { value: "PC", label: "PC — Pieza" },
+  { value: "PR", label: "PR — Par" },
+  { value: "DO", label: "DO — Docena" },
+  { value: "GL", label: "GL — Galón" },
+  { value: "RL", label: "RL — Rollo" },
+  { value: "BL", label: "BL — Bolsa" },
+  { value: "FD", label: "FD — Fardo" },
+] as const;
+
 export default function ProductsPage() {
   const { user } = useAuth();
   const role = user?.role;
@@ -72,7 +95,7 @@ export default function ProductsPage() {
     createMut.mutate({
       code: code.trim(),
       description: description.trim(),
-      unitOfMeasure: unitOfMeasure.trim(),
+      unitOfMeasure: unitOfMeasure,
       active: true,
     });
   }
@@ -116,16 +139,19 @@ export default function ProductsPage() {
           aria-describedby={submitted && descriptionError ? `${descId}-err` : undefined}
           style={{ minWidth: 320 }}
         />
-        <input
+        <select
           id={umId}
           className="input"
           disabled={!allowCreate || saving}
           value={unitOfMeasure}
           onChange={(event) => setUnitOfMeasure(event.target.value)}
-          placeholder="UM"
           aria-label="Unidad de medida"
-          style={{ width: 120 }}
-        />
+          style={{ width: 200 }}
+        >
+          {UNITS_OF_MEASURE.map((u) => (
+            <option key={u.value} value={u.value}>{u.label}</option>
+          ))}
+        </select>
         <button className="btn btn--primary" type="submit" disabled={!allowCreate || saving}>
           {createMut.isPending ? "Guardando..." : "Guardar material"}
         </button>

@@ -144,7 +144,6 @@ export default function LocationsPage() {
               <tr>
                 <th scope="col">Código</th>
                 <th scope="col">Depósito</th>
-                <th scope="col">ID</th>
                 <th scope="col" />
               </tr>
             </thead>
@@ -153,7 +152,6 @@ export default function LocationsPage() {
                 <tr key={item.id}>
                   <td><strong>{item.code}</strong></td>
                   <td>{item.warehouse?.name ?? item.warehouseId ?? "-"}</td>
-                  <td style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--muted)", fontSize: 12 }}>{item.id}</td>
                   <td style={{ textAlign: "right" }}>
                     {allowDelete ? (
                       <button

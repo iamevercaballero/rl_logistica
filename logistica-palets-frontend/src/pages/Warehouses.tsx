@@ -124,7 +124,6 @@ export default function WarehousesPage() {
                 <th scope="col">Nombre</th>
                 <th scope="col">Dirección</th>
                 <th scope="col">Estado</th>
-                <th scope="col">ID</th>
                 <th scope="col" />
               </tr>
             </thead>
@@ -138,7 +137,6 @@ export default function WarehousesPage() {
                       {item.active ? "Activo" : "Inactivo"}
                     </span>
                   </td>
-                  <td style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--muted)", fontSize: 12 }}>{item.id}</td>
                   <td style={{ textAlign: "right" }}>
                     {allowDelete ? (
                       <button

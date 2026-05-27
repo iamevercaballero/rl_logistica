@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Bar,
-  BarChart,
   CartesianGrid,
-  Cell,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -41,7 +38,6 @@ const MOVE_BADGE: Record<string, string> = {
   ADJUSTMENT_OUT: "badge badge--adjout",
 };
 
-const BAR_COLORS = ["#2563eb", "#7c3aed", "#059669", "#d97706", "#dc2626", "#0891b2"];
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
 function formatRelativeDate(value: string) {
@@ -420,17 +416,6 @@ export default function DashboardPage() {
   const isLoading = kpisQ.isLoading;
   const isError = kpisQ.isError;
 
-  const chartData = useMemo(
-    () =>
-      stockByWarehouse
-        .filter((item) => item.warehouseName)
-        .map((item) => ({
-          name: item.warehouseName,
-          quantity: Number(item.quantity) || 0,
-        })),
-    [stockByWarehouse],
-  );
-
   const timeSeriesData = useMemo(() => buildTimeSeriesData(allMoves), [allMoves]);
 
   const rangeLabel: Record<ReportRange, string> = {
@@ -620,43 +605,9 @@ export default function DashboardPage() {
         <AlertsPanel alerts={alertsQ.data!} />
       )}
 
-      {/* ── Charts + feed row ────────────────────────────────────────────── */}
+      {/* ── Latest movements feed ────────────────────────────────────────── */}
       {!isLoading && kpis && (
-        <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1fr", gap: 12, marginBottom: 12 }}>
-          {/* Stock by warehouse */}
-          <section className="card" aria-label="Stock por depósito" style={{ marginBottom: 0 }}>
-            <h3 style={{ marginBottom: 12, fontSize: 14, fontWeight: 700 }}>Stock por depósito</h3>
-            {chartData.length === 0 ? (
-              <p style={{ color: "var(--muted)", marginBottom: 0 }}>Sin datos</p>
-            ) : (
-              <div style={{ height: 220 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData} barSize={28}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                    <XAxis dataKey="name" tick={{ fontSize: 11, fill: "var(--muted)" }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 11, fill: "var(--muted)" }} axisLine={false} tickLine={false} width={40} />
-                    <Tooltip
-                      contentStyle={{
-                        background: "var(--panel)",
-                        border: "1px solid var(--border)",
-                        borderRadius: 8,
-                        fontSize: 12,
-                        color: "var(--text)",
-                      }}
-                      formatter={(value: number | undefined) => [(value ?? 0).toLocaleString("es-AR"), "Cantidad"]}
-                    />
-                    <Bar dataKey="quantity" radius={[5, 5, 0, 0]}>
-                      {chartData.map((_, i) => (
-                        <Cell key={i} fill={BAR_COLORS[i % BAR_COLORS.length]} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </section>
-
-          {/* Latest movements feed */}
+        <div style={{ marginBottom: 12 }}>
           <section className="card" aria-label="Últimos movimientos" style={{ marginBottom: 0 }}>
             <h3 style={{ marginBottom: 12, fontSize: 14, fontWeight: 700 }}>Últimos movimientos</h3>
             {recentMoves.length === 0 ? (

@@ -170,4 +170,53 @@ export class LotsService {
     await this.lotRepo.remove(lot);
     return { deleted: true };
   }
+
+  /**
+   * FIX 5 — Reconciliación de stockActual.
+   * Recalcula lot.stockActual desde cero sumando las cantidades de pallets no despachados.
+   * Útil para corregir derivas causadas por ediciones directas o bugs históricos.
+   */
+  async reconcileStock(id: string) {
+    const lot = await this.findOne(id);
+    const result = await this.palletRepo
+      .createQueryBuilder('p')
+      .select("COALESCE(SUM(p.quantity), 0)", 'total')
+      .where('p."lotId" = :id', { id })
+      .andWhere("p.status != 'EXITED'")
+      .getRawOne();
+
+    const real = Number(result?.total ?? 0);
+    const previous = lot.stockActual;
+    lot.stockActual = real;
+    await this.lotRepo.save(lot);
+    return { lotId: id, lotCode: lot.lotCode, previous, reconciled: real, delta: real - previous };
+  }
+
+  /**
+   * Reconcilia TODOS los lotes de un producto (o todos si no se especifica).
+   * Devuelve sólo los lotes donde hubo corrección (delta !== 0).
+   */
+  async reconcileAllStocks(productId?: string) {
+    const qb = this.lotRepo.createQueryBuilder('lot');
+    if (productId) qb.andWhere('lot."productId" = :productId', { productId });
+    const lots = await qb.getMany();
+
+    const corrections: { lotId: string; lotCode: string; previous: number; reconciled: number; delta: number }[] = [];
+    for (const lot of lots) {
+      const result = await this.palletRepo
+        .createQueryBuilder('p')
+        .select("COALESCE(SUM(p.quantity), 0)", 'total')
+        .where('p."lotId" = :id', { id: lot.id })
+        .andWhere("p.status != 'EXITED'")
+        .getRawOne();
+
+      const real = Number(result?.total ?? 0);
+      if (real !== lot.stockActual) {
+        corrections.push({ lotId: lot.id, lotCode: lot.lotCode, previous: lot.stockActual, reconciled: real, delta: real - lot.stockActual });
+        lot.stockActual = real;
+        await this.lotRepo.save(lot);
+      }
+    }
+    return { corrected: corrections.length, corrections };
+  }
 }

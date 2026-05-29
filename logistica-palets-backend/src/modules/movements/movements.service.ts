@@ -127,12 +127,16 @@ export class MovementsService {
         for (const item of dto.palletItems) {
           let resolvedLotId: string | undefined;
           let resolvedPalletId: string | undefined = item.palletId;
+          // locationId para MovementDetail — ubicación física del palet en este movimiento
+          let detailLocationId: string | null = null;
 
           if (item.palletId) {
             const pallet = await manager.getRepository(Pallet).findOne({ where: { id: item.palletId } });
             if (!pallet) throw new NotFoundException(`Palet no encontrado: ${item.palletId}`);
             if (pallet.status === 'EXITED') throw new BadRequestException(`El palet ${pallet.code} ya fue despachado`);
             resolvedLotId = pallet.lotId;
+            // Para EXIT/TRANSFER: la ubicación de origen es donde estaba el palet
+            detailLocationId = pallet.currentLocationId ?? null;
 
             if (dto.type === 'EXIT' || dto.type === 'ADJUSTMENT_OUT') {
               // Verificar que el lote no esté pendiente de regularización
@@ -193,6 +197,8 @@ export class MovementsService {
             });
             const savedPallet = await manager.save(pallet);
             resolvedPalletId = savedPallet.id;
+            // Para ENTRADA: la ubicación de destino es donde queda el palet
+            detailLocationId = resolved.locationId ?? null;
           }
 
           if (resolvedLotId) {
@@ -201,6 +207,7 @@ export class MovementsService {
               lotId: resolvedLotId,
               palletId: resolvedPalletId ?? undefined,
               quantity: item.quantity,
+              locationId: detailLocationId ?? undefined,  // ← FIX 1: guardar ubicación física
             });
             await manager.save(detail);
             // TRANSFER only moves pallets between locations; lot.stockActual must NOT change
@@ -209,6 +216,13 @@ export class MovementsService {
             }
           }
         }
+
+        // FIX 2: registrar cantidad real de palets afectados en el movimiento
+        if (!dto.pallets) {
+          movement.pallets = dto.palletItems.length;
+          await manager.save(movement);
+        }
+
       } else if (dto.lotId) {
         await this.updateLotStock(manager, dto.lotId, isIncrease ? totalQty : -totalQty);
       }
@@ -818,6 +832,7 @@ export class MovementsService {
         lotId: pallet.lotId,
         palletId: pallet.id,
         quantity: take,
+        locationId: pallet.currentLocationId ?? undefined,  // FIX 4: ubicación física del palet
       });
       await manager.save(detail);
 

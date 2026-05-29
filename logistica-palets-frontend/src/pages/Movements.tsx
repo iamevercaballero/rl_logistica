@@ -49,6 +49,38 @@ function autoSelectForQty(pallets: LotPallet[], targetQty: number): Set<string> 
   return selected;
 }
 
+/**
+ * Para cada pallet seleccionado calcula exactamente cuánto se despachará.
+ * - Si targetQty > 0: distribuye la cantidad justa (el último pallet puede ser parcial).
+ * - Si targetQty = 0: despacha el pallet completo (selección manual).
+ */
+function calcDispatchAmounts(
+  pallets: LotPallet[],
+  selectedIds: Set<string>,
+  targetQty: number,
+): Map<string, { dispatch: number; remaining: number; isPartial: boolean }> {
+  const result = new Map<string, { dispatch: number; remaining: number; isPartial: boolean }>();
+  const selected = pallets.filter((p) => selectedIds.has(p.id));
+
+  if (targetQty > 0) {
+    let remaining = targetQty;
+    for (const p of selected) {
+      const dispatch = Math.min(p.quantity, remaining);
+      remaining -= dispatch;
+      result.set(p.id, {
+        dispatch,
+        remaining: p.quantity - dispatch,
+        isPartial: dispatch < p.quantity,
+      });
+    }
+  } else {
+    for (const p of selected) {
+      result.set(p.id, { dispatch: p.quantity, remaining: 0, isPartial: false });
+    }
+  }
+  return result;
+}
+
 // ── Payload regularización
 type RegPayload = {
   reason: string; documentNumber: string; supplier: string; carrier: string;
@@ -1010,12 +1042,13 @@ export default function MovementsPage() {
                                   {" · "}
                                   {enteredQty > 0
                                     ? <>{enteredQty.toLocaleString("es-PY")} unid. a despachar</>
-                                    : <>{selQty.toLocaleString("es-PY")} unid.</>
+                                    : <>{selQty.toLocaleString("es-PY")} unid. (palets completos)</>
                                   }
                                 </span>
-                                {qtyMismatch && selQty > enteredQty && (
-                                  <span style={{ color: "var(--muted)", marginLeft: 8 }}>
-                                    (último pallet parcial)
+                                {/* Advertencia: selección manual sin cantidad → despacha pallet completo */}
+                                {!row.exitQtyInput && selPallets.length > 0 && (
+                                  <span style={{ color: "var(--warning)", marginLeft: 8, fontWeight: 600 }}>
+                                    ⚠ Sin cantidad → se despachan palets completos
                                   </span>
                                 )}
                               </div>
@@ -1042,43 +1075,96 @@ export default function MovementsPage() {
                                   {selPallets.length} de {availPallets.length} seleccionados
                                 </span>
                               )}
+                              {qtyMismatch && (
+                                <span style={{ color: "var(--warning)", fontWeight: 600, marginLeft: 4 }}>
+                                  · parcial
+                                </span>
+                              )}
                             </button>
-                            {row.expanded && (
-                              <div style={{ borderTop: "1px solid var(--border-dim)" }}>
-                                {availPallets.map((p, pIdx) => {
-                                  const isSelected = row.selectedIds.has(p.id);
-                                  return (
-                                    <label
-                                      key={p.id}
-                                      style={{
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: 10,
-                                        padding: "6px 16px",
-                                        cursor: blocked ? "not-allowed" : "pointer",
-                                        background: isSelected ? "var(--primary-light)" : undefined,
-                                        borderBottom: pIdx < availPallets.length - 1 ? "1px solid var(--border-dim)" : undefined,
-                                      }}
-                                    >
-                                      <input
-                                        type="checkbox"
-                                        checked={isSelected}
-                                        disabled={blocked}
-                                        onChange={() => !blocked && togglePallet(lotIdx, p.id)}
-                                        style={{ width: 15, height: 15 }}
-                                      />
-                                      <span style={{ fontWeight: 600, fontSize: 13, minWidth: 120, fontFamily: "monospace" }}>{p.code}</span>
-                                      <span style={{ fontSize: 13 }}>{p.quantity.toLocaleString("es-PY")} unid.</span>
-                                      {p.currentLocationId && (
-                                        <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: "auto", fontFamily: "monospace" }}>
-                                          {locationMap[p.currentLocationId] ?? p.currentLocationId.slice(0, 8)}
+                            {row.expanded && (() => {
+                              // Calcula exactamente cuánto se despacha por pallet
+                              const dispatchMap = calcDispatchAmounts(
+                                availPallets,
+                                row.selectedIds,
+                                enteredQty,
+                              );
+                              return (
+                                <div style={{ borderTop: "1px solid var(--border-dim)" }}>
+                                  {availPallets.map((p, pIdx) => {
+                                    const isSelected = row.selectedIds.has(p.id);
+                                    const info = dispatchMap.get(p.id);
+                                    return (
+                                      <label
+                                        key={p.id}
+                                        style={{
+                                          display: "grid",
+                                          gridTemplateColumns: "auto auto 1fr auto",
+                                          alignItems: "center",
+                                          gap: 10,
+                                          padding: "7px 16px",
+                                          cursor: blocked ? "not-allowed" : "pointer",
+                                          background: isSelected
+                                            ? info?.isPartial
+                                              ? "rgba(var(--warning-rgb, 255,170,0), 0.08)"
+                                              : "var(--primary-light)"
+                                            : undefined,
+                                          borderBottom: pIdx < availPallets.length - 1 ? "1px solid var(--border-dim)" : undefined,
+                                        }}
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={isSelected}
+                                          disabled={blocked}
+                                          onChange={() => !blocked && togglePallet(lotIdx, p.id)}
+                                          style={{ width: 15, height: 15 }}
+                                        />
+                                        <span style={{ fontWeight: 600, fontSize: 13, fontFamily: "monospace", minWidth: 120 }}>
+                                          {p.code}
                                         </span>
-                                      )}
-                                    </label>
-                                  );
-                                })}
-                              </div>
-                            )}
+                                        {/* Cantidad stock actual */}
+                                        <span style={{ fontSize: 13, color: "var(--muted)" }}>
+                                          {p.quantity.toLocaleString("es-PY")} unid. stock
+                                        </span>
+                                        {/* Badge de qué pasará con este pallet */}
+                                        {isSelected && info && (
+                                          <span style={{ fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                                            {info.isPartial ? (
+                                              <>
+                                                <span style={{
+                                                  background: "var(--badge-adjout-bg)",
+                                                  color: "var(--badge-adjout-text)",
+                                                  border: "1px solid var(--badge-adjout-border)",
+                                                  borderRadius: 4, padding: "1px 6px",
+                                                }}>
+                                                  −{info.dispatch.toLocaleString("es-PY")}
+                                                </span>
+                                                <span style={{ color: "var(--success)" }}>
+                                                  quedan {info.remaining.toLocaleString("es-PY")}
+                                                </span>
+                                              </>
+                                            ) : (
+                                              <span style={{
+                                                background: "var(--badge-exit-bg, rgba(239,68,68,0.1))",
+                                                color: "var(--danger)",
+                                                border: "1px solid var(--badge-exit-border, rgba(239,68,68,0.3))",
+                                                borderRadius: 4, padding: "1px 6px",
+                                              }}>
+                                                −{info.dispatch.toLocaleString("es-PY")} total
+                                              </span>
+                                            )}
+                                          </span>
+                                        )}
+                                        {!isSelected && p.currentLocationId && (
+                                          <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "monospace", justifySelf: "end" }}>
+                                            {locationMap[p.currentLocationId] ?? p.currentLocationId.slice(0, 8)}
+                                          </span>
+                                        )}
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })()}
                           </>
                         )}
                       </div>

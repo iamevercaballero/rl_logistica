@@ -60,8 +60,21 @@ export class PalletsService {
       if (!loc) throw new NotFoundException('Ubicación no encontrada');
     }
 
+    const previousQuantity = pallet.quantity;
     Object.assign(pallet, dto);
-    return this.palletRepo.save(pallet);
+    const saved = await this.palletRepo.save(pallet);
+
+    // FIX 3: si cambió la cantidad, reconciliar lot.stockActual
+    if (dto.quantity !== undefined && dto.quantity !== previousQuantity) {
+      const delta = dto.quantity - previousQuantity;
+      const lot = await this.lotRepo.findOne({ where: { id: saved.lotId } });
+      if (lot) {
+        lot.stockActual = Math.max(0, lot.stockActual + delta);
+        await this.lotRepo.save(lot);
+      }
+    }
+
+    return saved;
   }
 
   async remove(id: string) {
@@ -165,16 +178,21 @@ export class PalletsService {
       })
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-    return {
-      pallet,
-      product: events[0]
-        ? { code: events[0].productCode, description: events[0].productDescription }
-        : null,
-      history: events.map((e) => ({
+    // Calcular saldo acumulado (remainingAfter) por evento
+    const INCREASE_TYPES = ['ENTRY', 'ADJUSTMENT_IN'];
+    const NEUTRAL_TYPES  = ['TRANSFER'];  // mueve ubicación, no cantidad
+    let running = 0;
+    const history = events.map((e) => {
+      const qty = Number(e.quantity);
+      if (!NEUTRAL_TYPES.includes(e.type)) {
+        running += INCREASE_TYPES.includes(e.type) ? qty : -qty;
+      }
+      return {
         movementId: e.movementId,
         type: e.type,
         date: e.date,
-        quantity: Number(e.quantity),
+        quantity: qty,
+        remainingAfter: Math.max(0, running),   // ← saldo en el pallet después de este evento
         documentNumber: e.documentNumber ?? null,
         supplier: e.supplier ?? null,
         carrier: e.carrier ?? null,
@@ -188,7 +206,15 @@ export class PalletsService {
         to: e.toLocationId
           ? { locationId: e.toLocationId, locationCode: e.toLocationCode, warehouseName: e.toWarehouseName }
           : null,
-      })),
+      };
+    });
+
+    return {
+      pallet,
+      product: events[0]
+        ? { code: events[0].productCode, description: events[0].productDescription }
+        : null,
+      history,
     };
   }
 }

@@ -49,7 +49,18 @@
       "Bash(which node *)",
       "Bash(echo \"not found\")",
       "Read(//Applications/Cursor.app/Contents/Resources/app/node_modules/.bin/**)",
-      "Bash(echo \"no cursor tsc\")"
+      "Bash(echo \"no cursor tsc\")",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Read(//Users/ever/Library/Application Support/Claude/local-agent-mode-sessions/skills-plugin/a1ba1074-aa72-4cd6-b559-876750831503/6b41f866-ff53-431f-96ab-ec82b717a85d/skills/xlsx/**)",
+      "Bash(python scripts/extract-text \"/Users/ever/Downloads/CONTROL DE FRESCURA CERVEPAR \\(1\\).xlsx\")",
+      "Bash(python scripts/extract_text.py \"/Users/ever/Downloads/CONTROL DE FRESCURA CERVEPAR \\(1\\).xlsx\")",
+      "Bash(python3 -c ' *)",
+      "Bash(pip3 install *)",
+      "Bash(docker exec *)",
+      "Bash(curl -s http://localhost:3000/api/auth/login -X POST -H 'Content-Type: application/json' -d '{\"username\":\"admin\",\"password\":\"admin123\"}')",
+      "Bash(python3 -c \"import sys,json;print\\('Backend OK' if json.load\\(sys.stdin\\).get\\('access_token'\\) else 'NO'\\)\")",
+      "Bash(sed -i.bak 's|/reports/movements?search=R-TEST&limit=500|/reports/movements?search=R-TEST\\\\&limit=100|' /tmp/rlwms_test/cross_check.py)",
+      "Bash(python3 /tmp/rlwms_test/cross_check.py)"
     ]
   }
 }

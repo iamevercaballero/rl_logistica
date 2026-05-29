@@ -26,8 +26,9 @@ export class LotsController {
   findAll(
     @Query('productId') productId?: string,
     @Query('sapLot') sapLot?: string,
+    @Query('includePallets') includePallets?: string,
   ) {
-    return this.service.findAll(productId, sapLot);
+    return this.service.findAll(productId, sapLot, includePallets === 'true');
   }
 
   /** FEFO: lotes con stock disponible ordenados por vencimiento próximo.

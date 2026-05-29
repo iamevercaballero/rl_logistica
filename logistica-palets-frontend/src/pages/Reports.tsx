@@ -1,7 +1,9 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
+import { useTableSort, sortArrow } from "../hooks/useTableSort";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getDailyStockReport,
+  getFreshnessReport,
   getMovementsReport,
   getStockReport,
   getTraceReport,
@@ -15,7 +17,7 @@ import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { DataTable, createColumnHelper } from "../design-system/DataTable";
 import { exportStockPDF, exportMovementsPDF, exportDailyStockPDF, exportEntradasPDF, exportSalidasPDF, exportLotesPDF, exportTrazabilidadPDF } from "../lib/exportPdf";
-import { exportStockExcel, exportMovementsExcel, exportDailyStockExcel, exportEntradasExcel, exportSalidasExcel, exportLotesExcel, exportTrazabilidadExcel } from "../lib/exportExcel";
+import { exportStockExcel, exportMovementsExcel, exportDailyStockExcel, exportEntradasExcel, exportSalidasExcel, exportLotesExcel, exportTrazabilidadExcel, exportFreshnessExcel } from "../lib/exportExcel";
 
 /* ── DataTable column defs for stock tab ──────────────────────────────────── */
 const stockColHelper = createColumnHelper<StockItemRow>();
@@ -77,7 +79,7 @@ const MOVE_BADGE: Record<string, string> = {
   ADJUSTMENT_OUT: "badge badge--adj-out",
 };
 
-type Tab = "stock" | "movimientos" | "lotes" | "entradas" | "diario" | "salidas" | "trazabilidad";
+type Tab = "stock" | "movimientos" | "lotes" | "entradas" | "diario" | "salidas" | "trazabilidad" | "frescura";
 
 type MovementFilters = {
   warehouseId: string;
@@ -152,6 +154,10 @@ export default function ReportsPage() {
   // Trace tab
   const [traceMaterialId, setTraceMaterialId] = useState("");
   const [traceApplied, setTraceApplied] = useState("");
+
+  // Frescura tab
+  const [freshnessProductId, setFreshnessProductId] = useState("");
+  const [freshnessApplied, setFreshnessApplied] = useState<string | undefined>(undefined);
 
   // Daily tab
   const [dailyDateFrom, setDailyDateFrom] = useState(today);
@@ -230,6 +236,13 @@ export default function ReportsPage() {
     staleTime: 30_000,
   });
 
+  const freshnessQ = useQuery({
+    queryKey: ["freshness", freshnessApplied],
+    queryFn:  () => getFreshnessReport(freshnessApplied),
+    enabled:  activeTab === "frescura",
+    staleTime: 60_000,
+  });
+
   // ── Mutations ─────────────────────────────────────────────────────────────
 
   const regularizeMut = useMutation({
@@ -260,15 +273,25 @@ export default function ReportsPage() {
   const salMeta      = salQ.data?.meta ?? { page: salPage, limit: salLimit, total: 0, totalPages: 1 };
   const dailyStock   = dailyQ.data ?? [];
   const traceResult  = traceQ.data ?? null;
+  const freshnessData = freshnessQ.data ?? [];
+
+  // ── Column sorting (client-side, per tab) ─────────────────────────────────
+  const freshnessSort = useTableSort(freshnessData, "diasRestantes");
+  const lotsSort    = useTableSort(lotResults,   "lotCode");
+  const entradasSort = useTableSort(entries,     "date");
+  const salidasSort  = useTableSort(salMovements,"date");
+  const dailySort    = useTableSort(dailyStock,  "material.code");
+  const movSort      = useTableSort(movements,   "date");
 
   const tabs: { key: Tab; label: string }[] = [
-    { key: "stock",        label: "Stock actual"  },
-    { key: "movimientos",  label: "Historial"     },
-    { key: "lotes",        label: "Lotes & SAP"   },
-    { key: "entradas",     label: "Entradas"      },
-    { key: "diario",       label: "Control diario"},
-    { key: "salidas",      label: "Salidas"       },
-    { key: "trazabilidad", label: "Trazabilidad"  },
+    { key: "stock",        label: "Stock actual"     },
+    { key: "movimientos",  label: "Historial"        },
+    { key: "lotes",        label: "Lotes & SAP"      },
+    { key: "entradas",     label: "Entradas"         },
+    { key: "diario",       label: "Control diario"   },
+    { key: "salidas",      label: "Salidas"          },
+    { key: "trazabilidad", label: "Trazabilidad"     },
+    { key: "frescura",     label: "Control Frescura" },
   ];
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -512,12 +535,17 @@ export default function ReportsPage() {
               <table className="table">
                 <thead>
                   <tr>
-                    <th scope="col">Fecha</th><th scope="col">Tipo</th><th scope="col">Material</th><th scope="col">Cantidad</th>
-                    <th scope="col">Ubicación</th><th scope="col">Lote</th><th scope="col">Pallets</th>
+                    <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => movSort.handleSort("date")}>Fecha{sortArrow(movSort.sortConfig, "date")}</th>
+                    <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => movSort.handleSort("type")}>Tipo{sortArrow(movSort.sortConfig, "type")}</th>
+                    <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => movSort.handleSort("material.code")}>Material{sortArrow(movSort.sortConfig, "material.code")}</th>
+                    <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => movSort.handleSort("quantity")}>Cantidad{sortArrow(movSort.sortConfig, "quantity")}</th>
+                    <th scope="col">Ubicación</th>
+                    <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => movSort.handleSort("lotCode")}>Lote{sortArrow(movSort.sortConfig, "lotCode")}</th>
+                    <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => movSort.handleSort("pallets")}>Pallets{sortArrow(movSort.sortConfig, "pallets")}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {movements.map((m) => (
+                  {movSort.sortedData.map((m) => (
                     <tr key={`${m.id}-${m.date}`}>
                       <td style={{ color: "var(--muted)", fontSize: 12 }}>{new Date(m.date).toLocaleString("es-AR")}</td>
                       <td><span className={MOVE_BADGE[m.type] ?? "badge"}>{MOVE_LABEL[m.type] ?? m.type}</span></td>
@@ -528,7 +556,13 @@ export default function ReportsPage() {
                           ? `${m.from?.locationCode ?? "-"} → ${m.to?.locationCode ?? "-"}`
                           : `${m.warehouse?.name ?? "-"} / ${m.location?.code ?? "-"}`}
                       </td>
-                      <td style={{ color: "var(--muted)", fontSize: 12 }}>{m.lotCode ?? "-"}</td>
+                      <td style={{ color: "var(--muted)", fontSize: 12 }} title={m.lotCode ?? ""}>
+                        {m.lotCode
+                          ? ((m.lotCount ?? 1) > 1
+                              ? <span><strong>{m.lotCount}</strong> lotes <span style={{ color: "var(--primary)" }}>· ver</span></span>
+                              : m.lotCode)
+                          : "-"}
+                      </td>
                       <td style={{ color: "var(--muted)", fontSize: 12, textAlign: "right" }}>{m.pallets != null ? m.pallets : "-"}</td>
                     </tr>
                   ))}
@@ -616,13 +650,18 @@ export default function ReportsPage() {
             <table className="table">
               <thead>
                 <tr>
-                  <th scope="col">Código lote</th><th scope="col">Lote SAP</th><th scope="col">Material</th>
-                  <th scope="col">Vencimiento</th><th scope="col">Fabricación</th><th scope="col">Proveedor lote</th>
-                  <th scope="col">Stock</th><th scope="col">Estado</th>
+                  <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => lotsSort.handleSort("lotCode")}>Código lote{sortArrow(lotsSort.sortConfig, "lotCode")}</th>
+                  <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => lotsSort.handleSort("sapLot")}>Lote SAP{sortArrow(lotsSort.sortConfig, "sapLot")}</th>
+                  <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => lotsSort.handleSort("product.code")}>Material{sortArrow(lotsSort.sortConfig, "product.code")}</th>
+                  <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => lotsSort.handleSort("fechaVencimiento")}>Vencimiento{sortArrow(lotsSort.sortConfig, "fechaVencimiento")}</th>
+                  <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => lotsSort.handleSort("fechaFabricacion")}>Fabricación{sortArrow(lotsSort.sortConfig, "fechaFabricacion")}</th>
+                  <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => lotsSort.handleSort("proveedor")}>Proveedor lote{sortArrow(lotsSort.sortConfig, "proveedor")}</th>
+                  <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => lotsSort.handleSort("stockActual")}>Stock{sortArrow(lotsSort.sortConfig, "stockActual")}</th>
+                  <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => lotsSort.handleSort("status")}>Estado{sortArrow(lotsSort.sortConfig, "status")}</th>
                 </tr>
               </thead>
               <tbody>
-                {lotResults.map((lot) => (
+                {lotsSort.sortedData.map((lot) => (
                   <tr key={lot.id} style={lot.status === "PENDING_REGULARIZATION" ? { background: "var(--badge-adjout-bg)" } : {}}>
                     <td><strong>{lot.lotCode}</strong></td>
                     <td style={{ fontFamily: "monospace", fontSize: 13 }}>
@@ -640,7 +679,19 @@ export default function ReportsPage() {
                       {lot.fechaFabricacion ? new Date(lot.fechaFabricacion).toLocaleDateString("es-AR") : "—"}
                     </td>
                     <td style={{ fontSize: 12 }}>{lot.proveedor ?? "—"}</td>
-                    <td><strong>{lot.stockActual.toLocaleString("es-AR")}</strong></td>
+                    <td>
+                      <strong>{lot.stockActual.toLocaleString("es-AR")}</strong>
+                      {(lot.availablePalletsCount ?? 0) > 0 && (
+                        <span style={{ color: "var(--muted)", fontSize: 11, marginLeft: 6 }}>
+                          ({lot.availablePalletsCount} palet{lot.availablePalletsCount !== 1 ? "s" : ""})
+                        </span>
+                      )}
+                      {(lot.exitedPalletsCount ?? 0) > 0 && (
+                        <span style={{ color: "var(--muted)", fontSize: 10, marginLeft: 4 }}>
+                          · {lot.exitedPalletsCount} despachado{lot.exitedPalletsCount !== 1 ? "s" : ""}
+                        </span>
+                      )}
+                    </td>
                     <td>
                       {lot.status === "PENDING_REGULARIZATION"
                         ? <span className="badge badge--adj-out">Pendiente</span>
@@ -719,31 +770,43 @@ export default function ReportsPage() {
                 <table className="table" style={{ minWidth: 1100 }}>
                   <thead>
                     <tr>
-                      <th scope="col">Fecha</th>
-                      <th scope="col">Material</th>
-                      <th scope="col">Lote</th>
-                      <th scope="col">Lote SAP</th>
-                      <th scope="col">N° Documento</th>
-                      <th scope="col">Cantidad</th>
-                      <th scope="col">Pallets</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("date")}>Fecha{sortArrow(entradasSort.sortConfig, "date")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("material.code")}>Material{sortArrow(entradasSort.sortConfig, "material.code")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("lotCode")}>Lote{sortArrow(entradasSort.sortConfig, "lotCode")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("sapLot")}>Lote SAP{sortArrow(entradasSort.sortConfig, "sapLot")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("documentNumber")}>N° Documento{sortArrow(entradasSort.sortConfig, "documentNumber")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("quantity")}>Cantidad{sortArrow(entradasSort.sortConfig, "quantity")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("pallets")}>Pallets{sortArrow(entradasSort.sortConfig, "pallets")}</th>
                       <th scope="col">Depósito / Ubic.</th>
-                      <th scope="col">Proveedor</th>
-                      <th scope="col">Transportista</th>
-                      <th scope="col">Chofer</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("supplier")}>Proveedor{sortArrow(entradasSort.sortConfig, "supplier")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("carrier")}>Transportista{sortArrow(entradasSort.sortConfig, "carrier")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("driver")}>Chofer{sortArrow(entradasSort.sortConfig, "driver")}</th>
                       <th scope="col">Notas</th>
-                      <th scope="col">Estado</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("status")}>Estado{sortArrow(entradasSort.sortConfig, "status")}</th>
                       <th scope="col" />
                     </tr>
                   </thead>
                   <tbody>
-                    {entries.map((m) => (
+                    {entradasSort.sortedData.map((m) => (
                       <tr key={m.id} style={m.status === "PENDING_REGULARIZATION" ? { background: "var(--badge-adjout-bg)" } : {}}>
                         <td style={{ color: "var(--muted)", fontSize: 12, whiteSpace: "nowrap" }}>
                           {new Date(m.date).toLocaleString("es-AR")}
                         </td>
                         <td><strong>{m.material.code}</strong><span style={{ color: "var(--muted)", marginLeft: 4 }}>· {m.material.description}</span></td>
-                        <td style={{ fontSize: 12 }}>{m.lotCode ?? "—"}</td>
-                        <td style={{ fontFamily: "monospace", fontSize: 12 }}>{m.sapLot ?? "—"}</td>
+                        <td style={{ fontSize: 12 }} title={m.lotCode ?? ""}>
+                          {m.lotCode
+                            ? ((m.lotCount ?? 1) > 1
+                                ? <span><strong>{m.lotCount}</strong> lotes</span>
+                                : m.lotCode)
+                            : "—"}
+                        </td>
+                        <td style={{ fontFamily: "monospace", fontSize: 12 }} title={m.sapLot ?? ""}>
+                          {m.sapLot
+                            ? ((m.lotCount ?? 1) > 1
+                                ? <span style={{ color: "var(--muted)" }}>multiple</span>
+                                : m.sapLot)
+                            : "—"}
+                        </td>
                         <td style={{ fontSize: 12, color: "var(--muted)" }}>{m.documentNumber ?? "—"}</td>
                         <td style={{ fontWeight: 600 }}>{m.quantity.toLocaleString("es-AR")} {m.material.unitOfMeasure ?? ""}</td>
                         <td style={{ textAlign: "center" }}>{m.pallets != null ? m.pallets : "—"}</td>
@@ -845,16 +908,16 @@ export default function ReportsPage() {
             <table className="table">
               <thead>
                 <tr>
-                  <th scope="col">Material</th>
+                  <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => dailySort.handleSort("material.code")}>Material{sortArrow(dailySort.sortConfig, "material.code")}</th>
                   <th scope="col">UM</th>
-                  <th scope="col">Stock inicial</th>
-                  <th scope="col">Entradas</th>
-                  <th scope="col">Salidas</th>
-                  <th scope="col">Stock final</th>
+                  <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => dailySort.handleSort("stockInicial")}>Stock inicial{sortArrow(dailySort.sortConfig, "stockInicial")}</th>
+                  <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => dailySort.handleSort("entradas")}>Entradas{sortArrow(dailySort.sortConfig, "entradas")}</th>
+                  <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => dailySort.handleSort("salidas")}>Salidas{sortArrow(dailySort.sortConfig, "salidas")}</th>
+                  <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => dailySort.handleSort("stockFinal")}>Stock final{sortArrow(dailySort.sortConfig, "stockFinal")}</th>
                 </tr>
               </thead>
               <tbody>
-                {dailyStock.map((row) => (
+                {dailySort.sortedData.map((row) => (
                   <tr key={`${row.date}-${row.material.id}`}>
                     <td><strong>{row.material.code}</strong> · {row.material.description}</td>
                     <td style={{ color: "var(--muted)", fontSize: 12 }}>{row.material.unitOfMeasure ?? "—"}</td>
@@ -939,28 +1002,40 @@ export default function ReportsPage() {
                 <table className="table" style={{ minWidth: 960 }}>
                   <thead>
                     <tr>
-                      <th scope="col">Fecha</th>
-                      <th scope="col">Material</th>
-                      <th scope="col">Lote</th>
-                      <th scope="col">Lote SAP</th>
-                      <th scope="col">Cantidad</th>
-                      <th scope="col">Pallets</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("date")}>Fecha{sortArrow(salidasSort.sortConfig, "date")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("material.code")}>Material{sortArrow(salidasSort.sortConfig, "material.code")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("lotCode")}>Lote{sortArrow(salidasSort.sortConfig, "lotCode")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("sapLot")}>Lote SAP{sortArrow(salidasSort.sortConfig, "sapLot")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("quantity")}>Cantidad{sortArrow(salidasSort.sortConfig, "quantity")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("pallets")}>Pallets{sortArrow(salidasSort.sortConfig, "pallets")}</th>
                       <th scope="col">Desde</th>
-                      <th scope="col">Destino</th>
-                      <th scope="col">Transportista</th>
-                      <th scope="col">Chofer</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("destination")}>Destino{sortArrow(salidasSort.sortConfig, "destination")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("carrier")}>Transportista{sortArrow(salidasSort.sortConfig, "carrier")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("driver")}>Chofer{sortArrow(salidasSort.sortConfig, "driver")}</th>
                       <th scope="col">Notas</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {salMovements.map((m) => (
+                    {salidasSort.sortedData.map((m) => (
                       <tr key={m.id}>
                         <td style={{ color: "var(--muted)", fontSize: 12, whiteSpace: "nowrap" }}>
                           {new Date(m.date).toLocaleString("es-AR")}
                         </td>
                         <td><strong>{m.material.code}</strong><span style={{ color: "var(--muted)", marginLeft: 4 }}>· {m.material.description}</span></td>
-                        <td style={{ fontSize: 12 }}>{m.lotCode ?? "—"}</td>
-                        <td style={{ fontFamily: "monospace", fontSize: 12 }}>{m.sapLot ?? "—"}</td>
+                        <td style={{ fontSize: 12 }} title={m.lotCode ?? ""}>
+                          {m.lotCode
+                            ? ((m.lotCount ?? 1) > 1
+                                ? <span><strong>{m.lotCount}</strong> lotes</span>
+                                : m.lotCode)
+                            : "—"}
+                        </td>
+                        <td style={{ fontFamily: "monospace", fontSize: 12 }} title={m.sapLot ?? ""}>
+                          {m.sapLot
+                            ? ((m.lotCount ?? 1) > 1
+                                ? <span style={{ color: "var(--muted)" }}>multiple</span>
+                                : m.sapLot)
+                            : "—"}
+                        </td>
                         <td style={{ fontWeight: 600 }}>{m.quantity.toLocaleString("es-AR")} {m.material.unitOfMeasure ?? ""}</td>
                         <td style={{ textAlign: "center" }}>{m.pallets != null ? m.pallets : "—"}</td>
                         <td style={{ fontSize: 12 }}>
@@ -1072,6 +1147,135 @@ export default function ReportsPage() {
                 </div>
               ))}
             </div>
+          )}
+        </section>
+      )}
+
+      {/* ── Tab: Control de Frescura ── */}
+      {activeTab === "frescura" && (
+        <section className="card">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Control de Frescura</h3>
+              <p style={{ color: "var(--muted)", fontSize: 13, marginTop: 4, marginBottom: 0 }}>
+                Lotes con fecha de vencimiento vigente, ordenados por proximidad de vencimiento.
+              </p>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              {freshnessData.length > 0 && (
+                <button
+                  className="btn"
+                  onClick={() => void exportFreshnessExcel(freshnessData, `control-frescura-${new Date().toISOString().slice(0, 10)}`)}
+                  title="Exportar Excel"
+                >
+                  📊 Excel
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Filtros */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+            <select
+              className="input"
+              value={freshnessProductId}
+              onChange={(e) => setFreshnessProductId(e.target.value)}
+              aria-label="Filtrar por material"
+            >
+              <option value="">Todos los materiales</option>
+              {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.description}</option>)}
+            </select>
+            <button
+              className="btn btn--primary"
+              onClick={() => setFreshnessApplied(freshnessProductId || undefined)}
+            >
+              Buscar
+            </button>
+            <button
+              className="btn"
+              onClick={() => { setFreshnessProductId(""); setFreshnessApplied(undefined); }}
+            >
+              Limpiar
+            </button>
+          </div>
+
+          {/* Leyenda semáforo */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+            {([
+              { bg: "#FEE2E2", text: "#991B1B", label: "Vencido" },
+              { bg: "#FEF3C7", text: "#B45309", label: "≤ 30 días" },
+              { bg: "#FEF9C3", text: "#854D0E", label: "≤ 60 días" },
+              { bg: "#DCFCE7", text: "#166534", label: "> 60 días" },
+            ] as const).map((s) => (
+              <span key={s.label} style={{
+                background: s.bg, color: s.text, border: `1px solid ${s.bg}`,
+                borderRadius: 6, padding: "2px 10px", fontSize: 12, fontWeight: 600,
+              }}>
+                {s.label}
+              </span>
+            ))}
+          </div>
+
+          {freshnessQ.isLoading && <p style={{ color: "var(--muted)", fontSize: 14 }} aria-busy="true">Cargando...</p>}
+          {freshnessQ.isError && <div className="form-error" role="alert">No se pudo cargar el reporte de frescura.</div>}
+          {!freshnessQ.isLoading && freshnessData.length === 0 && !freshnessQ.isError && (
+            <p style={{ color: "var(--muted)" }}>No hay lotes con fecha de vencimiento registrada y stock disponible.</p>
+          )}
+
+          {freshnessData.length > 0 && (
+            <>
+              <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                <span className="badge">Total lotes: <strong>{freshnessData.length}</strong></span>
+                <span className="badge" style={{ background: "#FEE2E2", color: "#991B1B" }}>
+                  Vencidos: <strong>{freshnessData.filter(r => r.diasRestantes < 0).length}</strong>
+                </span>
+                <span className="badge" style={{ background: "#FEF3C7", color: "#B45309" }}>
+                  Críticos (≤30d): <strong>{freshnessData.filter(r => r.diasRestantes >= 0 && r.diasRestantes <= 30).length}</strong>
+                </span>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table className="table" style={{ minWidth: 1000 }}>
+                  <thead>
+                    <tr>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => freshnessSort.handleSort("product.code")}>Código{sortArrow(freshnessSort.sortConfig, "product.code")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => freshnessSort.handleSort("product.description")}>Material{sortArrow(freshnessSort.sortConfig, "product.description")}</th>
+                      <th scope="col">UM</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => freshnessSort.handleSort("lotCode")}>Lote{sortArrow(freshnessSort.sortConfig, "lotCode")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => freshnessSort.handleSort("sapLot")}>Lote SAP{sortArrow(freshnessSort.sortConfig, "sapLot")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => freshnessSort.handleSort("stockActual")}>Cantidad{sortArrow(freshnessSort.sortConfig, "stockActual")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => freshnessSort.handleSort("fechaVencimiento")}>F. Vencimiento{sortArrow(freshnessSort.sortConfig, "fechaVencimiento")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => freshnessSort.handleSort("diasRestantes")}>Días restantes{sortArrow(freshnessSort.sortConfig, "diasRestantes")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {freshnessSort.sortedData.map((r) => {
+                      const rowBg =
+                        r.diasRestantes < 0 ? "#FEE2E2" :
+                        r.diasRestantes <= 30 ? "#FEF3C7" :
+                        r.diasRestantes <= 60 ? "#FEF9C3" : undefined;
+                      const diasColor =
+                        r.diasRestantes < 0 ? "var(--danger)" :
+                        r.diasRestantes <= 30 ? "#B45309" :
+                        r.diasRestantes <= 60 ? "#854D0E" : "var(--success)";
+                      return (
+                        <tr key={r.lotId} style={rowBg ? { background: rowBg } : {}}>
+                          <td style={{ fontFamily: "monospace", fontSize: 13 }}><strong>{r.product.code}</strong></td>
+                          <td style={{ fontSize: 13 }}>{r.product.description}</td>
+                          <td style={{ color: "var(--muted)", fontSize: 12, textAlign: "center" }}>{r.product.unitOfMeasure ?? "—"}</td>
+                          <td style={{ fontSize: 12 }}>{r.lotCode}</td>
+                          <td style={{ fontFamily: "monospace", fontSize: 12, color: "var(--muted)" }}>{r.sapLot ?? "—"}</td>
+                          <td style={{ fontWeight: 600, textAlign: "right" }}>{r.stockActual.toLocaleString("es-AR")}</td>
+                          <td style={{ fontSize: 12 }}>{new Date(r.fechaVencimiento).toLocaleDateString("es-AR")}</td>
+                          <td style={{ fontWeight: 700, color: diasColor, textAlign: "right" }}>
+                            {r.diasRestantes < 0 ? `${r.diasRestantes}` : `+${r.diasRestantes}`}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </section>
       )}

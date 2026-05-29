@@ -9,7 +9,7 @@
  * All functions write to browser download (no server round-trip).
  */
 import ExcelJS from "exceljs";
-import type { StockItemRow, ReportMovementRow, DailyStockRow, ReportTraceEvent } from "../api/reports";
+import type { StockItemRow, ReportMovementRow, DailyStockRow, ReportTraceEvent, FreshnessRow } from "../api/reports";
 import type { Movement } from "../api/movements";
 import type { Lot } from "../api/lots";
 
@@ -18,8 +18,10 @@ import type { Lot } from "../api/lots";
 const PRIMARY_HEX = "2563EB";
 const WHITE_HEX = "FFFFFF";
 const GRAY_LIGHT = "F3F4F6";
-const RED_LIGHT = "FEE2E2";   // diferencia positiva → sobrante
-const GREEN_LIGHT = "DCFCE7"; // diferencia cero o negativa → OK
+const RED_LIGHT = "FEE2E2";     // diferencia positiva → sobrante
+const GREEN_LIGHT = "DCFCE7";   // diferencia cero o negativa → OK
+const ORANGE_LIGHT = "FEF3C7";  // vencimiento próximo (≤30 días)
+const YELLOW_LIGHT = "FEF9C3";  // vencimiento medio plazo (≤60 días)
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
 
@@ -258,8 +260,7 @@ export async function exportMovementsExcel(
 
 /* ── Daily stock (control diario) ────────────────────────────────────────── */
 
-const GREEN_ROW = "DCFCE7";
-const RED_ROW   = "FEE2E2";
+const RED_ROW = "FEE2E2";
 
 export async function exportDailyStockExcel(
   data: DailyStockRow[],
@@ -267,7 +268,7 @@ export async function exportDailyStockExcel(
   filename = "control-diario",
 ) {
   const wb = buildBaseWorkbook();
-  const ws = wb.addWorksheet("Control diario");
+  const ws = wb.addWorksheet(`Control ${dateLabel}`.slice(0, 31));
 
   ws.columns = [
     { key: "code",     width: 18 },
@@ -473,6 +474,85 @@ export async function exportLotesExcel(data: Lot[], filename = "lotes") {
   await downloadWorkbook(wb, filename);
 }
 
+/* ── Control de Frescura report ──────────────────────────────────────────── */
+
+export async function exportFreshnessExcel(data: FreshnessRow[], filename = "control-frescura") {
+  const wb = buildBaseWorkbook();
+  const ws = wb.addWorksheet("Control de Frescura");
+
+  ws.columns = [
+    { key: "codigo",   width: 18 },
+    { key: "materia",  width: 42 },
+    { key: "um",       width: 8  },
+    { key: "lote",     width: 22 },
+    { key: "sapLot",   width: 18 },
+    { key: "prov",     width: 25 },
+    { key: "cantidad", width: 14 },
+    { key: "fabr",     width: 16 },
+    { key: "venc",     width: 16 },
+    { key: "dias",     width: 22 },
+  ];
+
+  applyHeaderRow(ws.getRow(1), [
+    "Código", "Material", "UM", "Lote", "Lote SAP", "Proveedor",
+    "Cantidad", "F. Fabricación", "F. Vencimiento", "Días hasta vencimiento",
+  ]);
+
+  data.forEach((r) => {
+    const row = ws.addRow([
+      r.product.code,
+      r.product.description,
+      r.product.unitOfMeasure ?? "",
+      r.lotCode,
+      r.sapLot ?? "-",
+      r.proveedor ?? "-",
+      r.stockActual,
+      r.fechaFabricacion ? new Date(r.fechaFabricacion).toLocaleDateString("es-AR") : "-",
+      new Date(r.fechaVencimiento).toLocaleDateString("es-AR"),
+      r.diasRestantes,
+    ]);
+
+    // Semáforo por días restantes
+    let bgArgb = `FF${GREEN_LIGHT}`;
+    if (r.diasRestantes < 0) {
+      bgArgb = `FFFEE2E2`; // rojo: vencido
+    } else if (r.diasRestantes <= 30) {
+      bgArgb = `FF${ORANGE_LIGHT}`; // naranja: ≤30 días
+    } else if (r.diasRestantes <= 60) {
+      bgArgb = `FF${YELLOW_LIGHT}`; // amarillo: ≤60 días
+    }
+    row.eachCell((cell) => {
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: bgArgb } };
+    });
+
+    row.getCell(7).alignment = { horizontal: "right" };
+    row.getCell(10).alignment = { horizontal: "right" };
+    row.getCell(10).font = {
+      bold: true,
+      color: { argb: r.diasRestantes < 0 ? "FF991B1B" : r.diasRestantes <= 30 ? "FFB45309" : "FF166534" },
+    };
+  });
+
+  // Leyenda de colores
+  const legendRow = data.length + 3;
+  const legendData: [number, string, string][] = [
+    [legendRow,     `FFFEE2E2`, "Vencido (< 0 días)"],
+    [legendRow + 1, `FF${ORANGE_LIGHT}`, "Crítico (≤ 30 días)"],
+    [legendRow + 2, `FF${YELLOW_LIGHT}`, "Próximo (≤ 60 días)"],
+    [legendRow + 3, `FF${GREEN_LIGHT}`,  "OK (> 60 días)"],
+  ];
+  legendData.forEach(([rowNum, argb, label]) => {
+    const cell = ws.getRow(rowNum).getCell(2);
+    cell.value = label;
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb } };
+    cell.font = { size: 9, italic: true };
+  });
+
+  ws.views = [{ state: "frozen", ySplit: 1 }];
+  ws.autoFilter = { from: "A1", to: "J1" };
+  await downloadWorkbook(wb, filename);
+}
+
 /* ── Trazabilidad report ─────────────────────────────────────────────────── */
 
 export async function exportTrazabilidadExcel(
@@ -481,7 +561,7 @@ export async function exportTrazabilidadExcel(
   filename = "trazabilidad",
 ) {
   const wb = buildBaseWorkbook();
-  const ws = wb.addWorksheet("Trazabilidad");
+  const ws = wb.addWorksheet(`Traza ${materialCode}`.slice(0, 31));
 
   ws.columns = [
     { key: "fecha",  width: 20 },

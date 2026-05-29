@@ -400,7 +400,6 @@ export default function DashboardPage() {
   const kpis = kpisQ.data ?? null;
   const allMoves = movementsQ.data?.data ?? [];
   const recentMoves = allMoves.slice(0, 8);
-  const stockByWarehouse = stockQ.data?.byWarehouse ?? [];
 
   // Expiring lots: filter to those with fechaVencimiento <= 60 days, with stock > 0
   const expiringLots = useMemo(() => {

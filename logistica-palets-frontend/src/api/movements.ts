@@ -37,8 +37,9 @@ export type Movement = {
   destination?: string | null;
   notes?: string | null;
   lotId?: string | null;
-  lotCode?: string | null;
+  lotCode?: string | null;     // si lotCount > 1 viene concatenado con ", "
   sapLot?: string | null;
+  lotCount?: number;           // 0 / 1 / N
   adjustmentReason?: string | null;
   adjustmentCategory?: string | null;
   encargado?: { id: string; username: string; fullName?: string | null } | null;

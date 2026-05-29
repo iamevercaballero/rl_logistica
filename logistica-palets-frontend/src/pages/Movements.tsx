@@ -33,7 +33,20 @@ type FefoRow = {
   lot: Lot & { pallets: LotPallet[] };
   selectedIds: Set<string>;
   expanded: boolean;
+  exitQtyInput: string;   // EXIT only — cantidad a despachar del lote (auto-selecciona pallets)
 };
+
+/** Selecciona pallets en orden hasta cubrir targetQty. */
+function autoSelectForQty(pallets: LotPallet[], targetQty: number): Set<string> {
+  const selected = new Set<string>();
+  let covered = 0;
+  for (const p of pallets) {
+    if (covered >= targetQty) break;
+    selected.add(p.id);
+    covered += p.quantity;
+  }
+  return selected;
+}
 
 // ── Payload regularización
 type RegPayload = {
@@ -114,6 +127,9 @@ export default function MovementsPage() {
   // AJUSTES
   const [adjustmentReason, setAdjustmentReason] = useState("");
   const [adjustmentCategory, setAdjustmentCategory] = useState("");
+  const [adjLotId, setAdjLotId] = useState("");        // selected lot ID from picker
+  const [adjLotCode, setAdjLotCode] = useState("");    // manual lot code input
+  const [adjLotCodeError, setAdjLotCodeError] = useState("");
 
   // WIZARD — sólo para ENTRY (2 pasos)
   const [wizardStep, setWizardStep] = useState(1);
@@ -159,7 +175,7 @@ export default function MovementsPage() {
   );
 
   const { cameraActive, cameraSupported, startCamera, stopCamera } = useBarcodeScanner({
-    enabled: (isTransfer || movType === "EXIT") && fefoRows.length > 0,
+    enabled: isTransfer && fefoRows.length > 0,
     onScan: scanPalletByCode,
   });
 
@@ -177,6 +193,13 @@ export default function MovementsPage() {
     return m;
   }, [locations]);
 
+  // Clear adjustment lot state when product changes
+  useEffect(() => {
+    setAdjLotId("");
+    setAdjLotCode("");
+    setAdjLotCodeError("");
+  }, [product?.id]);
+
   // FEFO via useQuery — TRANSFERENCIA (con filtro de ubicación) y SALIDA (sin filtro)
   const fefoLocId = isTransfer ? fromLocationId || undefined : undefined;
   const fefoEnabled = (isTransfer && !!product && !!fromLocationId) || (movType === "EXIT" && !!product);
@@ -189,6 +212,24 @@ export default function MovementsPage() {
   });
   const fefoLoading = fefoQ.isFetching;
 
+  // Lots for adjustment lot picker (fetched when adjustment type and product are selected)
+  const adjLotsQ = useQuery({
+    queryKey: ["lots", "fefo", { productId: product?.id, locationId: undefined }],
+    queryFn: () => fefoLots(product?.id),
+    enabled: isAdjustment && !!product,
+    staleTime: 15_000,
+  });
+  const adjLots = adjLotsQ.data ?? [];
+
+  // Last 10 movements for current adjustment type
+  const adjLastQ = useQuery({
+    queryKey: ["movements", "adj-last", movType],
+    queryFn: () => getMovements({ type: movType as MovementType, page: 1, limit: 10 }),
+    enabled: isAdjustment,
+    staleTime: 30_000,
+    select: (resp: { data: Movement[] }) => resp.data,
+  });
+
   useEffect(() => {
     if (!fefoEnabled) { setFefoRows([]); return; }
     if (!fefoQ.data) return;
@@ -196,6 +237,7 @@ export default function MovementsPage() {
       lot: l as Lot & { pallets: LotPallet[] },
       selectedIds: new Set<string>(),
       expanded: true,
+      exitQtyInput: "",
     })));
   }, [fefoQ.data, fefoEnabled]);
 
@@ -205,7 +247,9 @@ export default function MovementsPage() {
     setEncargadoId(""); setDate("");
     setEntrySapLot(generateSapLot()); setLotGroups([newLotGroup()]);
     setExitQty(""); setExitPalletCount(""); setFefoRows([]);
-    setAdjustmentReason(""); setAdjustmentCategory(""); setFormError("");
+    setAdjustmentReason(""); setAdjustmentCategory("");
+    setAdjLotId(""); setAdjLotCode(""); setAdjLotCodeError("");
+    setFormError("");
     setWizardStep(1);
   }
 
@@ -254,10 +298,30 @@ export default function MovementsPage() {
     setFefoRows((rows) => rows.map((r, i) => i === lotIdx ? { ...r, expanded: !r.expanded } : r));
   }
 
-  // Solo para TRANSFER (FEFO manual)
+  /** EXIT: al ingresar una cantidad por lote, auto-selecciona pallets en orden FEFO. */
+  function handleExitQtyChange(lotIdx: number, qtyStr: string) {
+    setFefoRows((rows) => rows.map((row, i) => {
+      if (i !== lotIdx) return row;
+      const qty = Number(qtyStr);
+      const selectedIds = (!qtyStr || qty <= 0)
+        ? new Set<string>()
+        : autoSelectForQty(row.lot.pallets, qty);
+      return { ...row, exitQtyInput: qtyStr, selectedIds };
+    }));
+  }
+
+  // TRANSFER: suma de pallets completos seleccionados
   const totalTransferQty = fefoRows.reduce((sum, row) =>
     sum + row.lot.pallets.filter((p) => row.selectedIds.has(p.id)).reduce((s, p) => s + p.quantity, 0), 0);
   const totalTransferPallets = fefoRows.reduce((sum, row) => sum + row.selectedIds.size, 0);
+
+  // EXIT: suma de cantidades exactas ingresadas (respeta parciales)
+  const totalExitQty = fefoRows.reduce((sum, row) => {
+    const entered = Number(row.exitQtyInput);
+    if (entered > 0) return sum + entered;
+    return sum + row.lot.pallets.filter((p) => row.selectedIds.has(p.id)).reduce((s, p) => s + p.quantity, 0);
+  }, 0);
+  const totalExitPallets = fefoRows.reduce((sum, row) => sum + row.selectedIds.size, 0);
 
   const daysUntil = (fecha?: string | null) =>
     fecha ? Math.ceil((new Date(fecha).getTime() - Date.now()) / 86400000) : null;
@@ -321,16 +385,35 @@ export default function MovementsPage() {
         documentNumber: documentNumber || undefined, supplier: supplier || undefined,
         carrier: carrier || undefined, driver: driver || undefined,
         notes: notes || undefined, encargadoRecepcionId: encargadoId || undefined,
+        lotId: isAdjustment && adjLotId ? adjLotId : undefined,
         adjustmentReason: isAdjustment ? adjustmentReason : undefined,
         adjustmentCategory: isAdjustment ? adjustmentCategory || undefined : undefined,
         pallets: totalPallets > 0 ? totalPallets : undefined,
         palletItems: allItems,
       });
     } else if (movType === "EXIT") {
-      const palletItems = fefoRows.flatMap((row) =>
-        row.lot.pallets.filter((p) => row.selectedIds.has(p.id)).map((p) => ({ palletId: p.id, quantity: p.quantity }))
-      );
-      if (palletItems.length === 0) { setFormError("Seleccioná al menos un palet para despachar."); return; }
+      const palletItems: { palletId: string; quantity: number }[] = [];
+      for (const row of fefoRows) {
+        const targetQty = Number(row.exitQtyInput);
+        const selectedPallets = row.lot.pallets.filter((p) => row.selectedIds.has(p.id));
+        if (selectedPallets.length === 0) continue;
+        if (targetQty > 0) {
+          // Distribuye la cantidad exacta: el último pallet recibe solo el resto
+          let remaining = targetQty;
+          for (const p of selectedPallets) {
+            if (remaining <= 0) break;
+            const take = Math.min(p.quantity, remaining);
+            palletItems.push({ palletId: p.id, quantity: take });
+            remaining -= take;
+          }
+        } else {
+          // Selección manual: usa cantidad completa de cada pallet
+          for (const p of selectedPallets) {
+            palletItems.push({ palletId: p.id, quantity: p.quantity });
+          }
+        }
+      }
+      if (palletItems.length === 0) { setFormError("Ingresá una cantidad en al menos un lote para despachar."); return; }
       createMovementMut.mutate({
         type: "EXIT", date: date || undefined, productId: product.id,
         documentNumber: documentNumber || undefined, carrier: carrier || undefined,
@@ -341,10 +424,12 @@ export default function MovementsPage() {
     } else if (movType === "ADJUSTMENT_OUT") {
       const qty = Number(exitQty);
       if (!qty || qty <= 0) { setFormError("Ingresá la cantidad a ajustar."); return; }
+      const resolvedLotId = adjLotId || undefined;
       createMovementMut.mutate({
         type: "ADJUSTMENT_OUT", date: date || undefined, productId: product.id,
         warehouseId: warehouseId || undefined, locationId: locationId || undefined,
         quantity: qty,
+        lotId: resolvedLotId,
         pallets: Number(exitPalletCount) > 0 ? Number(exitPalletCount) : undefined,
         documentNumber: documentNumber || undefined, carrier: carrier || undefined,
         driver: driver || undefined,
@@ -409,10 +494,10 @@ export default function MovementsPage() {
     regularizeMut.mutate({ id: regMovement.id, payload: payload as Parameters<typeof regularizeMovement>[1] });
   }
 
-  // renderFefoRows — para TRANSFER y EXIT
+  // renderFefoRows — solo para TRANSFER (EXIT tiene su propia UI basada en cantidades)
   function renderFefoRows() {
     if (fefoLoading) return <p style={{ color: "var(--muted)", fontSize: 13, margin: 0 }}>Cargando lotes...</p>;
-    const noStock = fefoRows.length === 0 && !!product && (!!fromLocationId || movType === "EXIT");
+    const noStock = fefoRows.length === 0 && !!product && !!fromLocationId;
     if (noStock) {
       return <div style={{ background: "var(--badge-adjout-bg)", border: "1px solid var(--badge-adjout-border)", color: "var(--badge-adjout-text)", borderRadius: 8, padding: "10px 14px", fontSize: 13 }}>Sin stock disponible{isTransfer ? " en esta ubicación" : ""}.</div>;
     }
@@ -652,6 +737,7 @@ export default function MovementsPage() {
                 setProduct(null); setFefoRows([]); setLotGroups([newLotGroup()]);
                 setExitQty(""); setExitPalletCount("");
                 setAdjustmentReason(""); setAdjustmentCategory("");
+                setAdjLotId(""); setAdjLotCode(""); setAdjLotCodeError("");
                 setWizardStep(1);
               }}>
               <option value="ENTRY">Entrada</option>
@@ -756,7 +842,7 @@ export default function MovementsPage() {
             </>
           )}
 
-          {/* Ajustes: motivo obligatorio */}
+          {/* Ajustes: motivo obligatorio + lote */}
           {(movType !== "ENTRY" || wizardStep === 1) && isAdjustment && (
             <>
               <div className="form-section-title">Motivo del ajuste</div>
@@ -773,6 +859,61 @@ export default function MovementsPage() {
                   <input className="input" placeholder="Ej: Zona fría, Zona seca..." value={adjustmentCategory} onChange={(e) => setAdjustmentCategory(e.target.value)} />
                 </div>
               </div>
+
+              {/* Lote (opcional) */}
+              {product && (
+                <>
+                  <div className="form-section-title">Lote afectado <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400, textTransform: "none" }}>(opcional)</span></div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>
+                        Lote existente
+                      </label>
+                      <select
+                        className="input"
+                        value={adjLotId}
+                        onChange={(e) => { setAdjLotId(e.target.value); if (e.target.value) setAdjLotCode(""); }}
+                        aria-label="Seleccionar lote"
+                      >
+                        <option value="">Sin lote específico…</option>
+                        {adjLotsQ.isLoading && <option disabled>Cargando…</option>}
+                        {adjLots.map((lot) => (
+                          <option key={lot.id} value={lot.id}>
+                            {lot.lotCode}{lot.sapLot ? ` (SAP: ${lot.sapLot})` : ""} — {lot.stockActual.toLocaleString("es-PY")} unid.
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>
+                        O ingresar código de lote
+                      </label>
+                      <input
+                        className="input"
+                        placeholder="Ej: L2026-001"
+                        value={adjLotCode}
+                        onChange={(e) => { setAdjLotCode(e.target.value); if (e.target.value) setAdjLotId(""); setAdjLotCodeError(""); }}
+                        onBlur={() => {
+                          const v = adjLotCode.trim();
+                          if (!v) { setAdjLotCodeError(""); return; }
+                          if (v.length < 2 || v.length > 80) {
+                            setAdjLotCodeError("El código debe tener entre 2 y 80 caracteres.");
+                          } else {
+                            setAdjLotCodeError("");
+                          }
+                        }}
+                        disabled={!!adjLotId}
+                        aria-label="Código de lote manual"
+                        style={{ fontFamily: "monospace" }}
+                      />
+                      {adjLotCodeError && (
+                        <p className="form-error" style={{ margin: "4px 0 0", fontSize: 11 }}>{adjLotCodeError}</p>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+
               <div style={{ background: "var(--badge-adjout-bg)", border: "1px solid var(--badge-adjout-border)", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "var(--badge-adjout-text)" }}>
                 Solo para diferencias de inventario, mermas, roturas o sobrantes físicos. El ajuste queda registrado en auditoría.
               </div>
@@ -887,54 +1028,181 @@ export default function MovementsPage() {
             </>
           )}
 
-          {/* Salida: selección de palets por lote FEFO */}
+          {/* ── Salida: por lote FEFO con cantidad ── */}
           {movType === "EXIT" && (
             <>
               <div className="form-section-title">
-                Palets a despachar
-                {totalTransferPallets > 0 && (
+                Lotes a despachar
+                {totalExitQty > 0 && (
                   <span style={{ color: "var(--primary)", marginLeft: 10, fontWeight: 700 }}>
-                    {totalTransferPallets} sel. · {totalTransferQty.toLocaleString("es-PY")} unid.
+                    {totalExitPallets} palet{totalExitPallets !== 1 ? "s" : ""} · {totalExitQty.toLocaleString("es-PY")} unid.
                   </span>
                 )}
               </div>
-              {product ? (
-                <>
-                  {fefoRows.length > 0 && (
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 12, color: "var(--muted)" }}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" style={{ verticalAlign: "middle", marginRight: 4 }}>
-                          <rect x="3" y="3" width="2" height="18"/><rect x="7" y="3" width="1" height="18"/><rect x="10" y="3" width="3" height="18"/><rect x="15" y="3" width="1" height="18"/><rect x="18" y="3" width="2" height="18"/>
-                        </svg>
-                        Escáner USB activo · o
-                      </span>
-                      {cameraSupported && (
-                        <button
-                          type="button"
-                          className={`btn${cameraActive ? " btn--primary" : ""}`}
-                          onClick={() => { if (cameraActive) stopCamera(); else if (scanVideoRef.current) void startCamera(scanVideoRef.current); }}
-                          style={{ fontSize: 12, padding: "4px 12px", display: "flex", alignItems: "center", gap: 5 }}
-                          aria-label={cameraActive ? "Detener cámara" : "Escanear palet con cámara"}
-                        >
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                            <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
-                            <circle cx="12" cy="13" r="4"/>
-                          </svg>
-                          {cameraActive ? "Detener cámara" : "Escanear con cámara"}
-                        </button>
-                      )}
-                      {cameraActive && (
-                        <video ref={scanVideoRef} muted playsInline aria-hidden="true"
-                          style={{ width: 220, height: 165, borderRadius: 8, border: "2px solid var(--primary)", objectFit: "cover" }} />
-                      )}
-                    </div>
-                  )}
-                  {renderFefoRows()}
-                </>
-              ) : (
+
+              {!product ? (
                 <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>
-                  Seleccioná un material para ver los lotes y palets disponibles (orden FEFO).
+                  Seleccioná un material para ver los lotes disponibles (orden FEFO).
                 </p>
+              ) : fefoLoading ? (
+                <p style={{ color: "var(--muted)", fontSize: 13, margin: 0 }}>Cargando lotes...</p>
+              ) : fefoRows.length === 0 ? (
+                <div style={{ background: "var(--badge-adjout-bg)", border: "1px solid var(--badge-adjout-border)", color: "var(--badge-adjout-text)", borderRadius: 8, padding: "10px 14px", fontSize: 13 }}>
+                  Sin stock disponible para este material.
+                </div>
+              ) : (
+                <div style={{ display: "grid", gap: 8 }}>
+                  {fefoRows.map((row, lotIdx) => {
+                    const blocked = row.lot.status === "PENDING_REGULARIZATION";
+                    const availPallets = row.lot.pallets;
+                    const availQty = availPallets.reduce((s, p) => s + p.quantity, 0);
+                    const selPallets = availPallets.filter((p) => row.selectedIds.has(p.id));
+                    const selQty = selPallets.reduce((s, p) => s + p.quantity, 0);
+                    const enteredQty = Number(row.exitQtyInput);
+                    const qtyMismatch = !!row.exitQtyInput && enteredQty > 0 && selQty !== enteredQty;
+                    const days = daysUntil(row.lot.fechaVencimiento);
+
+                    const borderColor = blocked
+                      ? "var(--warning)"
+                      : row.selectedIds.size > 0
+                      ? "var(--primary)"
+                      : "var(--border)";
+
+                    return (
+                      <div key={row.lot.id} style={{ border: `1.5px solid ${borderColor}`, borderRadius: 10, overflow: "hidden", opacity: blocked ? 0.75 : 1 }}>
+
+                        {/* ── Encabezado del lote ── */}
+                        <div style={{ padding: "9px 12px", background: blocked ? "var(--badge-adjout-bg)" : row.selectedIds.size > 0 ? "var(--primary-light)" : "var(--bg)", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <span style={{ fontWeight: 800, fontSize: 14 }}>{row.lot.lotCode}</span>
+                            {row.lot.sapLot && (
+                              <span style={{ fontSize: 11, color: "var(--primary)", fontWeight: 600, fontFamily: "monospace" }}>{row.lot.sapLot}</span>
+                            )}
+                            {blocked && (
+                              <span className="badge badge--adj-out" style={{ fontSize: 10 }}>PROVISORIO — bloqueado</span>
+                            )}
+                          </div>
+                          <div style={{ display: "flex", gap: 14, alignItems: "center", fontSize: 12 }}>
+                            {row.lot.fechaVencimiento && (
+                              <span style={{ color: "var(--muted)" }}>
+                                Vence: {new Date(row.lot.fechaVencimiento).toLocaleDateString("es-PY")}
+                                {expiryBadge(days)}
+                              </span>
+                            )}
+                            <span style={{ fontWeight: 700 }}>{availQty.toLocaleString("es-PY")} unid.</span>
+                            <span style={{ color: "var(--muted)" }}>{availPallets.length} palet{availPallets.length !== 1 ? "s" : ""}</span>
+                          </div>
+                        </div>
+
+                        {/* ── Cantidad a despachar ── */}
+                        <div style={{ padding: "10px 12px", background: "var(--panel)", display: "grid", gridTemplateColumns: "180px 1fr", gap: 12, alignItems: "center" }}>
+                          <div>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: blocked ? "var(--muted)" : "var(--danger)", textTransform: "uppercase", marginBottom: 3 }}>
+                              Cantidad a despachar
+                            </div>
+                            <input
+                              className="input"
+                              type="number"
+                              min={0}
+                              max={availQty}
+                              placeholder="0"
+                              value={row.exitQtyInput}
+                              onChange={(e) => handleExitQtyChange(lotIdx, e.target.value)}
+                              disabled={blocked}
+                              style={{ fontSize: 15, fontWeight: 700, width: "100%", borderColor: !blocked && row.exitQtyInput && enteredQty > availQty ? "var(--danger)" : undefined }}
+                              aria-label={`Cantidad a despachar del lote ${row.lot.lotCode}`}
+                            />
+                            {row.exitQtyInput && enteredQty > availQty && (
+                              <p style={{ color: "var(--danger)", fontSize: 11, margin: "3px 0 0" }}>
+                                Supera el stock disponible ({availQty.toLocaleString("es-PY")} unid.)
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Resumen de selección */}
+                          <div>
+                            {selPallets.length > 0 ? (
+                              <div style={{ fontSize: 12 }}>
+                                <span style={{ color: "var(--success)", fontWeight: 700 }}>
+                                  ✓ {selPallets.length} palet{selPallets.length !== 1 ? "s" : ""}
+                                  {" · "}
+                                  {enteredQty > 0
+                                    ? <>{enteredQty.toLocaleString("es-PY")} unid. a despachar</>
+                                    : <>{selQty.toLocaleString("es-PY")} unid.</>
+                                  }
+                                </span>
+                                {qtyMismatch && selQty > enteredQty && (
+                                  <span style={{ color: "var(--muted)", marginLeft: 8 }}>
+                                    (último pallet parcial)
+                                  </span>
+                                )}
+                              </div>
+                            ) : blocked ? (
+                              <span style={{ fontSize: 12, color: "var(--muted)" }}>Pendiente de regularización — no se puede despachar</span>
+                            ) : (
+                              <span style={{ fontSize: 12, color: "var(--muted)" }}>Ingresá una cantidad para auto-seleccionar palets</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* ── Desglose de palets (expandible) ── */}
+                        {availPallets.length > 0 && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => toggleExpanded(lotIdx)}
+                              style={{ width: "100%", background: "none", border: "none", borderTop: "1px solid var(--border-dim)", padding: "5px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--muted)", textAlign: "left" }}
+                            >
+                              <span style={{ fontSize: 10 }}>{row.expanded ? "▲" : "▼"}</span>
+                              Desglose de palets
+                              {selPallets.length > 0 && (
+                                <span style={{ color: "var(--primary)", fontWeight: 700, marginLeft: 4 }}>
+                                  {selPallets.length} de {availPallets.length} seleccionados
+                                </span>
+                              )}
+                            </button>
+                            {row.expanded && (
+                              <div style={{ borderTop: "1px solid var(--border-dim)" }}>
+                                {availPallets.map((p, pIdx) => {
+                                  const isSelected = row.selectedIds.has(p.id);
+                                  return (
+                                    <label
+                                      key={p.id}
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 10,
+                                        padding: "6px 16px",
+                                        cursor: blocked ? "not-allowed" : "pointer",
+                                        background: isSelected ? "var(--primary-light)" : undefined,
+                                        borderBottom: pIdx < availPallets.length - 1 ? "1px solid var(--border-dim)" : undefined,
+                                      }}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={isSelected}
+                                        disabled={blocked}
+                                        onChange={() => !blocked && togglePallet(lotIdx, p.id)}
+                                        style={{ width: 15, height: 15 }}
+                                      />
+                                      <span style={{ fontWeight: 600, fontSize: 13, minWidth: 120, fontFamily: "monospace" }}>{p.code}</span>
+                                      <span style={{ fontSize: 13 }}>{p.quantity.toLocaleString("es-PY")} unid.</span>
+                                      {p.currentLocationId && (
+                                        <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: "auto", fontFamily: "monospace" }}>
+                                          {locationMap[p.currentLocationId] ?? p.currentLocationId.slice(0, 8)}
+                                        </span>
+                                      )}
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </>
           )}
@@ -1050,6 +1318,62 @@ export default function MovementsPage() {
           )}
         </form>
       </section>
+
+      {/* ── Últimos ajustes (solo cuando el tipo es ajuste) ── */}
+      {isAdjustment && (
+        <section className="card" style={{ marginTop: 12 }}>
+          <h3 style={{ marginTop: 0, marginBottom: 12, fontSize: 14, fontWeight: 800 }}>
+            Últimos {movType === "ADJUSTMENT_IN" ? "ajustes de entrada" : "ajustes de salida"}
+          </h3>
+          {adjLastQ.isLoading && (
+            <p style={{ color: "var(--muted)", fontSize: 13 }} aria-busy="true">Cargando…</p>
+          )}
+          {adjLastQ.isError && (
+            <p className="form-error" style={{ fontSize: 13 }}>No se pudo cargar el historial.</p>
+          )}
+          {!adjLastQ.isLoading && (adjLastQ.data ?? []).length === 0 && (
+            <p style={{ color: "var(--muted)", fontSize: 13 }}>Sin registros anteriores.</p>
+          )}
+          {(adjLastQ.data ?? []).length > 0 && (
+            <div style={{ overflowX: "auto" }}>
+              <table className="table" style={{ fontSize: 13 }}>
+                <thead>
+                  <tr>
+                    <th scope="col">Fecha</th>
+                    <th scope="col">Material</th>
+                    <th scope="col">Lote</th>
+                    <th scope="col">Motivo</th>
+                    <th scope="col">Cantidad</th>
+                    <th scope="col">Depósito / Ubic.</th>
+                    <th scope="col">Notas</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(adjLastQ.data ?? []).map((m) => (
+                    <tr key={m.id}>
+                      <td style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>
+                        {new Date(m.date).toLocaleString("es-PY", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                      </td>
+                      <td><strong>{m.material.code}</strong><span style={{ color: "var(--muted)", marginLeft: 4 }}>· {m.material.description}</span></td>
+                      <td style={{ fontFamily: "monospace", color: "var(--muted)" }}>{m.lotCode ?? "—"}</td>
+                      <td style={{ color: "var(--muted)" }}>{m.adjustmentReason ?? "—"}</td>
+                      <td style={{ fontWeight: 700, color: movType === "ADJUSTMENT_IN" ? "var(--success)" : "var(--danger)" }}>
+                        {movType === "ADJUSTMENT_IN" ? "+" : "-"}{m.quantity.toLocaleString("es-PY")}
+                      </td>
+                      <td style={{ color: "var(--muted)" }}>
+                        {m.warehouse?.name ?? "—"}{m.location?.code ? ` / ${m.location.code}` : ""}
+                      </td>
+                      <td style={{ color: "var(--muted)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {m.notes ?? "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }

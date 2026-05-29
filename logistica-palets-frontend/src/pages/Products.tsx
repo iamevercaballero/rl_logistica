@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createProduct, deleteProduct, listProducts, type Product } from "../api/products";
 import { useAuth } from "../auth/AuthContext";
@@ -44,6 +44,16 @@ export default function ProductsPage() {
   const [description, setDescription] = useState("");
   const [unitOfMeasure, setUnitOfMeasure] = useState("UN");
   const [submitted, setSubmitted] = useState(false);
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounce 300ms
+  useEffect(() => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => setSearch(searchInput.trim()), 300);
+    return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
+  }, [searchInput]);
 
   const codeError = useMemo(() => {
     const value = code.trim();
@@ -60,8 +70,8 @@ export default function ProductsPage() {
   }, [description]);
 
   const { data: items = [], isLoading, isError, refetch } = useQuery({
-    queryKey: ["products"],
-    queryFn: () => listProducts(),
+    queryKey: ["products", search],
+    queryFn: () => listProducts(search || undefined),
   });
 
   const createMut = useMutation({
@@ -113,6 +123,53 @@ export default function ProductsPage() {
         <p style={{ color: "var(--muted)", fontSize: 14, marginBottom: 0 }}>
           Catálogo de materiales operativos. {!allowCreate ? "Modo lectura." : ""}
         </p>
+      </div>
+
+      {/* ── Search bar ──────────────────────────────────────────────────────── */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 16, maxWidth: 400 }}>
+        <div style={{ position: "relative", flex: 1 }}>
+          {/* Magnifying glass icon */}
+          <svg
+            width="14" height="14"
+            viewBox="0 0 24 24"
+            fill="none" stroke="var(--muted)" strokeWidth="2"
+            style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}
+            aria-hidden="true"
+          >
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input
+            className="input"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Buscar código o descripción…"
+            aria-label="Buscar materiales"
+            style={{ paddingLeft: 32, paddingRight: searchInput ? 30 : 10, width: "100%", boxSizing: "border-box" }}
+          />
+          {/* Clear button */}
+          {searchInput && (
+            <button
+              type="button"
+              onClick={() => setSearchInput("")}
+              aria-label="Limpiar búsqueda"
+              style={{
+                position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)",
+                background: "none", border: "none", cursor: "pointer",
+                color: "var(--muted)", padding: 2, lineHeight: 1, borderRadius: "50%",
+                display: "flex", alignItems: "center",
+              }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          )}
+        </div>
+        {search && (
+          <span style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>
+            {items.length} resultado{items.length !== 1 ? "s" : ""}
+          </span>
+        )}
       </div>
 
       <form onSubmit={handleSubmit} style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }} aria-label="Nuevo material">

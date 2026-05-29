@@ -176,6 +176,20 @@ export class ReportsService {
       .leftJoin('locations', 'fl', 'fl.id = m."fromLocationId"')
       .leftJoin('warehouses', 'tw', 'tw.id = m."toWarehouseId"')
       .leftJoin('locations', 'tl', 'tl.id = m."toLocationId"')
+      .leftJoin('lots', 'lot', 'lot.id = m."lotId"')
+      .leftJoin(
+        (sq) =>
+          sq
+            .from('movement_details', 'md')
+            .innerJoin('lots', 'dl', 'dl.id = md."lotId"')
+            .select('md."movementId"', 'movementId')
+            .addSelect('STRING_AGG(DISTINCT dl."lotCode", \', \' ORDER BY dl."lotCode")', 'lotCodes')
+            .addSelect('STRING_AGG(DISTINCT dl."sapLot", \', \' ORDER BY dl."sapLot")', 'sapLots')
+            .addSelect('COUNT(DISTINCT dl.id)', 'lotCount')
+            .groupBy('md."movementId"'),
+        'dl_agg',
+        'dl_agg."movementId" = m.id',
+      )
       .select('m.id', 'id')
       .addSelect('m.type', 'type')
       .addSelect('m.date', 'date')
@@ -187,6 +201,8 @@ export class ReportsService {
       .addSelect('m.driver', 'driver')
       .addSelect('m.destination', 'destination')
       .addSelect('m.notes', 'notes')
+      .addSelect('m.status', 'status')
+      .addSelect('m."adjustmentReason"', 'adjustmentReason')
       .addSelect('p.id', 'productId')
       .addSelect('p.code', 'productCode')
       .addSelect('p.description', 'productDescription')
@@ -198,7 +214,10 @@ export class ReportsService {
       .addSelect('fw.name', 'fromWarehouseName')
       .addSelect('fl.code', 'fromLocationCode')
       .addSelect('tw.name', 'toWarehouseName')
-      .addSelect('tl.code', 'toLocationCode');
+      .addSelect('tl.code', 'toLocationCode')
+      .addSelect('COALESCE(lot."lotCode", dl_agg."lotCodes")', 'lotCode')
+      .addSelect('COALESCE(lot."sapLot", dl_agg."sapLots")', 'sapLot')
+      .addSelect('COALESCE(dl_agg."lotCount", CASE WHEN lot.id IS NOT NULL THEN 1 ELSE 0 END)', 'lotCount');
 
     if (query.warehouseId) {
       qb.andWhere('(m."warehouseId" = :warehouseId OR m."fromWarehouseId" = :warehouseId OR m."toWarehouseId" = :warehouseId)', { warehouseId: query.warehouseId });
@@ -208,6 +227,7 @@ export class ReportsService {
     }
     if (query.productId) qb.andWhere('m."productId" = :productId', { productId: query.productId });
     if (query.type) qb.andWhere('m.type = :type', { type: query.type });
+    if (query.status) qb.andWhere('m.status = :status', { status: query.status });
     if (query.dateFrom) qb.andWhere('m.date >= :dateFrom', { dateFrom: this.toStartDate(query.dateFrom) });
     if (query.dateTo) qb.andWhere('m.date <= :dateTo', { dateTo: this.toEndDate(query.dateTo) });
     if (query.search?.trim()) {
@@ -248,6 +268,11 @@ export class ReportsService {
         },
         warehouse: row.warehouseId ? { id: row.warehouseId, name: row.warehouseName } : null,
         location: row.locationId ? { id: row.locationId, code: row.locationCode } : null,
+        lotCode: row.lotCode ?? null,
+        sapLot: row.sapLot ?? null,
+        lotCount: this.parseNumber(row.lotCount),
+        status: row.status ?? 'NORMAL',
+        adjustmentReason: row.adjustmentReason ?? null,
         from: row.fromWarehouseName || row.fromLocationCode ? { warehouseName: row.fromWarehouseName, locationCode: row.fromLocationCode } : null,
         to: row.toWarehouseName || row.toLocationCode ? { warehouseName: row.toWarehouseName, locationCode: row.toLocationCode } : null,
       })),
@@ -559,6 +584,54 @@ export class ReportsService {
     // Cache for 60 s — movements create/regularize invalidate automatically
     void this.cache.set(cacheKey, kpisResult, 60);
     return kpisResult;
+  }
+
+  async freshness(productId?: string) {
+    const qb = this.dataSource
+      .createQueryBuilder()
+      .from('lots', 'l')
+      .innerJoin('products', 'p', 'p.id = l."productId"')
+      .select('l.id', 'lotId')
+      .addSelect('l."lotCode"', 'lotCode')
+      .addSelect('l."sapLot"', 'sapLot')
+      .addSelect('l."fechaVencimiento"', 'fechaVencimiento')
+      .addSelect('l."fechaFabricacion"', 'fechaFabricacion')
+      .addSelect('l."stockActual"', 'stockActual')
+      .addSelect('l."proveedor"', 'proveedor')
+      .addSelect('p.id', 'productId')
+      .addSelect('p.code', 'productCode')
+      .addSelect('p.description', 'productDescription')
+      .addSelect('p."unitOfMeasure"', 'unitOfMeasure')
+      .where('l."fechaVencimiento" IS NOT NULL')
+      .andWhere('l."stockActual" > 0');
+
+    if (productId) {
+      qb.andWhere('l."productId" = :productId', { productId });
+    }
+
+    const rows = await qb.orderBy('l."fechaVencimiento"', 'ASC').getRawMany();
+
+    const now = new Date();
+    return rows.map((r) => {
+      const venc = new Date(r.fechaVencimiento);
+      const diasRestantes = Math.round((venc.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      return {
+        lotId: r.lotId,
+        lotCode: r.lotCode,
+        sapLot: r.sapLot ?? null,
+        fechaVencimiento: r.fechaVencimiento,
+        fechaFabricacion: r.fechaFabricacion ?? null,
+        stockActual: this.parseNumber(r.stockActual),
+        proveedor: r.proveedor ?? null,
+        diasRestantes,
+        product: {
+          id: r.productId,
+          code: r.productCode,
+          description: r.productDescription,
+          unitOfMeasure: r.unitOfMeasure ?? null,
+        },
+      };
+    });
   }
 
   private buildMovementScopeFilter(

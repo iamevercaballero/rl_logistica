@@ -5,14 +5,12 @@ import { listLocations } from "../api/locations";
 import { listLots } from "../api/lots";
 import {
   createPallet,
-  deletePallet,
   listPallets,
   getPalletHistory,
-  type Pallet,
   type PalletHistoryEvent,
 } from "../api/pallets";
 import { useAuth } from "../auth/AuthContext";
-import { canCreate, canDelete } from "../auth/rbac";
+import { canCreate } from "../auth/rbac";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
@@ -258,7 +256,6 @@ export default function PalletsPage() {
   const { user } = useAuth();
   const role = user?.role;
   const allowCreate = role ? canCreate("pallets", role) : false;
-  const allowDelete = role ? canDelete("pallets", role) : false;
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const codeId = useId();
@@ -320,16 +317,7 @@ export default function PalletsPage() {
     onError: (err) => toast.error(getFriendlyApiError(err)),
   });
 
-  const deleteMut = useMutation({
-    mutationFn: (id: string) => deletePallet(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["pallets"] });
-      toast.success("Pallet eliminado");
-    },
-    onError: (err) => toast.error(getFriendlyApiError(err)),
-  });
-
-  const saving = createMut.isPending || deleteMut.isPending;
+  const saving = createMut.isPending;
 
   // Barcode scanner: USB mode always active; camera scan populates code field
   const scanVideoRef = useRef<HTMLVideoElement>(null);
@@ -352,12 +340,6 @@ export default function PalletsPage() {
       currentLocationId: locationId,
       status,
     });
-  }
-
-  function handleDelete(item: Pallet) {
-    if (!allowDelete) return;
-    if (!window.confirm(`Eliminar pallet ${item.code}?`)) return;
-    deleteMut.mutate(item.id);
   }
 
   function refetchAll() {
@@ -526,32 +508,19 @@ export default function PalletsPage() {
                     </span>
                   </td>
                   <td style={{ textAlign: "right" }}>
-                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                      <button
-                        className="btn"
-                        style={{ fontSize: 12, height: 28, padding: "0 10px" }}
-                        onClick={() => setHistoryPalletId(item.id)}
-                        aria-label={`Ver historial del pallet ${item.code}`}
-                        title="Ver trazabilidad"
-                      >
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                          <polyline points="12 8 12 12 14 14"/>
-                          <path d="M3.05 11a9 9 0 1 0 .5-3"/><polyline points="3 4 3 11 10 11"/>
-                        </svg>
-                        Historial
-                      </button>
-                      {allowDelete ? (
-                        <button
-                          className="btn btn--danger"
-                          style={{ fontSize: 12, height: 28, padding: "0 10px" }}
-                          onClick={() => handleDelete(item)}
-                          disabled={saving}
-                          aria-label={`Eliminar pallet ${item.code}`}
-                        >
-                          Eliminar
-                        </button>
-                      ) : null}
-                    </div>
+                    <button
+                      className="btn"
+                      style={{ fontSize: 12, height: 28, padding: "0 10px" }}
+                      onClick={() => setHistoryPalletId(item.id)}
+                      aria-label={`Ver historial del pallet ${item.code}`}
+                      title="Ver trazabilidad"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                        <polyline points="12 8 12 12 14 14"/>
+                        <path d="M3.05 11a9 9 0 1 0 .5-3"/><polyline points="3 4 3 11 10 11"/>
+                      </svg>
+                      Historial
+                    </button>
                   </td>
                 </tr>
               ))}

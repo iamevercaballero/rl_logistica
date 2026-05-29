@@ -8,6 +8,9 @@ import {
   Delete,
   Query,
   UseGuards,
+  HttpCode,
+  HttpStatus,
+  MethodNotAllowedException,
 } from '@nestjs/common';
 import { PalletsService } from './pallets.service';
 import { CreatePalletDto } from './dto/create-pallet.dto';
@@ -57,10 +60,11 @@ export class PalletsController {
     return this.service.update(id, dto);
   }
 
-  // ❌ DELETE solo admin/manager
+  // ❌ DELETE deshabilitado — los pallets no se eliminan para mantener trazabilidad
   @Delete(':id')
   @Roles('ADMIN', 'MANAGER')
-  remove(@Param('id') id: string) {
-    return this.service.remove(id);
+  @HttpCode(HttpStatus.METHOD_NOT_ALLOWED)
+  remove(@Param('id') _id: string) {
+    throw new MethodNotAllowedException('La eliminación de pallets está deshabilitada para preservar la trazabilidad');
   }
 }

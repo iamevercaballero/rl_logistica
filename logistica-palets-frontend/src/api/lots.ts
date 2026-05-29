@@ -12,8 +12,12 @@ export type Lot = {
   stockActual: number;
   status?: string;
   product?: { id: string; code: string; description: string };
-  /** Pallets disponibles — sólo presente en respuesta FEFO */
+  /** Pallets — embebidos en FEFO siempre; en `/lots` solo si se pide includePallets=true */
   pallets?: LotPallet[];
+  /** Conteos siempre incluidos en `/lots` (no en FEFO) */
+  availablePalletsCount?: number;
+  exitedPalletsCount?: number;
+  totalPalletsCount?: number;
 };
 
 /** Genera el lote SAP del día: letra-año + mes + día + 08201 (A=2001, ..., Z=2026) */
@@ -24,9 +28,13 @@ export function generateSapLot(date = new Date()): string {
   return `${letter}${mm}${dd}08201`;
 }
 
-export async function listLots(productId?: string, sapLot?: string): Promise<Lot[]> {
+export async function listLots(productId?: string, sapLot?: string, includePallets = false): Promise<Lot[]> {
   const { data } = await api.get<Lot[]>("/lots", {
-    params: { ...(productId ? { productId } : {}), ...(sapLot ? { sapLot } : {}) },
+    params: {
+      ...(productId ? { productId } : {}),
+      ...(sapLot ? { sapLot } : {}),
+      ...(includePallets ? { includePallets: "true" } : {}),
+    },
   });
   return data;
 }

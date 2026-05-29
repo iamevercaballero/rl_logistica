@@ -46,6 +46,11 @@ export type ReportMovementRow = {
   date: string;
   quantity: number;
   pallets?: number | null;
+  lotCode?: string | null;       // single code, OR comma-separated when multi-lot palletItems
+  sapLot?: string | null;        // same
+  lotCount?: number;             // 0, 1, or N (N>1 = multi-lot)
+  status?: 'NORMAL' | 'PENDING_REGULARIZATION';
+  adjustmentReason?: string | null;
   documentNumber?: string | null;
   supplier?: string | null;
   carrier?: string | null;
@@ -126,6 +131,7 @@ export async function getMovementsReport(params?: {
   locationId?: string;
   productId?: string;
   type?: MovementType;
+  status?: 'NORMAL' | 'PENDING_REGULARIZATION';
   dateFrom?: string;
   dateTo?: string;
   search?: string;
@@ -158,5 +164,27 @@ export async function upsertSapStock(payload: { date: string; productId: string;
 
 export async function getKpis(range: ReportRange = "today") {
   const { data } = await api.get<KpisResponse>("/reports/kpis", { params: { range } });
+  return data;
+}
+
+export type FreshnessRow = {
+  lotId: string;
+  lotCode: string;
+  sapLot: string | null;
+  fechaVencimiento: string;
+  fechaFabricacion: string | null;
+  stockActual: number;
+  proveedor: string | null;
+  diasRestantes: number;
+  product: {
+    id: string;
+    code: string;
+    description: string;
+    unitOfMeasure: string | null;
+  };
+};
+
+export async function getFreshnessReport(productId?: string) {
+  const { data } = await api.get<FreshnessRow[]>("/reports/freshness", { params: { productId } });
   return data;
 }

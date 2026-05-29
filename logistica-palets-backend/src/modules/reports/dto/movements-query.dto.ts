@@ -20,6 +20,10 @@ export class ReportsMovementsQueryDto {
   type?: MovementType;
 
   @IsOptional()
+  @IsIn(['NORMAL', 'PENDING_REGULARIZATION'])
+  status?: 'NORMAL' | 'PENDING_REGULARIZATION';
+
+  @IsOptional()
   @IsDateString()
   dateFrom?: string;
 

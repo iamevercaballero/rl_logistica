@@ -151,8 +151,13 @@ export class MovementsService {
                 stockWarehouseId = loc?.warehouse?.id ?? null;
               }
               await this.applyDecrease(manager, dto.productId, stockWarehouseId, stockLocationId, item.quantity);
-              pallet.status = 'EXITED';
-              pallet.exitedAt = new Date();
+
+              // Salida parcial: reducir cantidad del pallet; solo EXITED cuando llega a 0
+              pallet.quantity = Math.max(0, pallet.quantity - item.quantity);
+              if (pallet.quantity === 0) {
+                pallet.status = 'EXITED';
+                pallet.exitedAt = new Date();
+              }
 
             } else if (dto.type === 'TRANSFER') {
               // Transferencia: reducir desde ubicación actual del palet, aumentar en destino
@@ -198,7 +203,10 @@ export class MovementsService {
               quantity: item.quantity,
             });
             await manager.save(detail);
-            await this.updateLotStock(manager, resolvedLotId, isIncrease ? item.quantity : -item.quantity);
+            // TRANSFER only moves pallets between locations; lot.stockActual must NOT change
+            if (dto.type !== 'TRANSFER') {
+              await this.updateLotStock(manager, resolvedLotId, isIncrease ? item.quantity : -item.quantity);
+            }
           }
         }
       } else if (dto.lotId) {
@@ -325,6 +333,21 @@ export class MovementsService {
       .leftJoin('locations', 'toLocation', 'toLocation.id = movement."toLocationId"')
       .leftJoin('users', 'encargado', 'encargado.id = movement."encargadoRecepcionId"')
       .leftJoin('lots', 'lot', 'lot.id = movement."lotId"')
+      // Agregación de lotes desde movement_details: para movimientos con palletItems
+      // que no tienen lotId único, devolvemos los lotes/SAP concatenados.
+      .leftJoin(
+        (sq) =>
+          sq
+            .from('movement_details', 'md')
+            .innerJoin('lots', 'dl', 'dl.id = md."lotId"')
+            .select('md."movementId"', 'movementId')
+            .addSelect('STRING_AGG(DISTINCT dl."lotCode", \', \' ORDER BY dl."lotCode")', 'lotCodes')
+            .addSelect('STRING_AGG(DISTINCT dl."sapLot", \', \' ORDER BY dl."sapLot")', 'sapLots')
+            .addSelect('COUNT(DISTINCT dl.id)', 'lotCount')
+            .groupBy('md."movementId"'),
+        'dl_agg',
+        'dl_agg."movementId" = movement.id',
+      )
       .select([
         'movement.id AS id',
         'movement.type AS type',
@@ -342,8 +365,9 @@ export class MovementsService {
         'movement."adjustmentCategory" AS "adjustmentCategory"',
         'movement.createdById AS "createdById"',
         'movement.lotId AS "lotId"',
-        'lot."lotCode" AS "lotCode"',
-        'lot."sapLot" AS "sapLot"',
+        'COALESCE(lot."lotCode", dl_agg."lotCodes") AS "lotCode"',
+        'COALESCE(lot."sapLot", dl_agg."sapLots") AS "sapLot"',
+        'COALESCE(dl_agg."lotCount", CASE WHEN lot.id IS NOT NULL THEN 1 ELSE 0 END) AS "lotCount"',
         'product.id AS "productId"',
         'product.code AS "productCode"',
         'product.description AS "productDescription"',
@@ -427,6 +451,19 @@ export class MovementsService {
       .leftJoin('locations', 'toLocation', 'toLocation.id = movement."toLocationId"')
       .leftJoin('users', 'encargado', 'encargado.id = movement."encargadoRecepcionId"')
       .leftJoin('lots', 'lot', 'lot.id = movement."lotId"')
+      .leftJoin(
+        (sq) =>
+          sq
+            .from('movement_details', 'md')
+            .innerJoin('lots', 'dl', 'dl.id = md."lotId"')
+            .select('md."movementId"', 'movementId')
+            .addSelect('STRING_AGG(DISTINCT dl."lotCode", \', \' ORDER BY dl."lotCode")', 'lotCodes')
+            .addSelect('STRING_AGG(DISTINCT dl."sapLot", \', \' ORDER BY dl."sapLot")', 'sapLots')
+            .addSelect('COUNT(DISTINCT dl.id)', 'lotCount')
+            .groupBy('md."movementId"'),
+        'dl_agg',
+        'dl_agg."movementId" = movement.id',
+      )
       .select([
         'movement.id AS id',
         'movement.type AS type',
@@ -446,8 +483,9 @@ export class MovementsService {
         'movement.createdAt AS "createdAt"',
         'movement.palletId AS "palletId"',
         'movement.lotId AS "lotId"',
-        'lot."lotCode" AS "lotCode"',
-        'lot."sapLot" AS "sapLot"',
+        'COALESCE(lot."lotCode", dl_agg."lotCodes") AS "lotCode"',
+        'COALESCE(lot."sapLot", dl_agg."sapLots") AS "sapLot"',
+        'COALESCE(dl_agg."lotCount", CASE WHEN lot.id IS NOT NULL THEN 1 ELSE 0 END) AS "lotCount"',
         'product.id AS "productId"',
         'product.code AS "productCode"',
         'product.description AS "productDescription"',
@@ -626,6 +664,7 @@ export class MovementsService {
       driver: row.driver, destination: row.destination, notes: row.notes,
       createdById: row.createdById, createdAt: row.createdAt ?? row.date,
       palletId: row.palletId, lotId: row.lotId, lotCode: row.lotCode ?? null, sapLot: row.sapLot ?? null,
+      lotCount: this.parseNumber(row.lotCount),
       encargado: row.encargadoId ? { id: row.encargadoId, username: row.encargadoUsername, fullName: row.encargadoFullName } : null,
       material: {
         id: row.productId, code: row.productCode,

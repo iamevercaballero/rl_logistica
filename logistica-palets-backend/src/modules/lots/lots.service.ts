@@ -36,14 +36,54 @@ export class LotsService {
     return this.lotRepo.save(lot);
   }
 
-  findAll(productId?: string, sapLot?: string) {
+  async findAll(productId?: string, sapLot?: string, includePallets = false) {
     const qb = this.lotRepo
       .createQueryBuilder('lot')
       .leftJoinAndSelect('lot.product', 'product')
       .orderBy('lot.fechaVencimiento', 'ASC');
     if (productId) qb.andWhere('lot.productId = :productId', { productId });
     if (sapLot) qb.andWhere('lot.sapLot = :sapLot', { sapLot });
-    return qb.getMany();
+    const lots = await qb.getMany();
+    if (lots.length === 0) return [];
+
+    // Conteos agregados de pallets por lote (siempre incluidos — son baratos)
+    const lotIds = lots.map((l) => l.id);
+    const counts = await this.palletRepo
+      .createQueryBuilder('p')
+      .select('p."lotId"', 'lotId')
+      .addSelect("COUNT(*) FILTER (WHERE p.status = 'AVAILABLE')", 'availableCount')
+      .addSelect("COUNT(*) FILTER (WHERE p.status = 'EXITED')", 'exitedCount')
+      .addSelect('COUNT(*)', 'totalCount')
+      .where('p."lotId" IN (:...lotIds)', { lotIds })
+      .groupBy('p."lotId"')
+      .getRawMany();
+
+    const countsByLot = new Map(counts.map((c) => [c.lotId, c]));
+
+    let palletsByLot: Map<string, Pallet[]> | null = null;
+    if (includePallets) {
+      const pallets = await this.palletRepo
+        .createQueryBuilder('p')
+        .where('p."lotId" IN (:...lotIds)', { lotIds })
+        .orderBy('p.code', 'ASC')
+        .getMany();
+      palletsByLot = new Map();
+      for (const p of pallets) {
+        if (!palletsByLot.has(p.lotId)) palletsByLot.set(p.lotId, []);
+        palletsByLot.get(p.lotId)!.push(p);
+      }
+    }
+
+    return lots.map((lot) => {
+      const c = countsByLot.get(lot.id);
+      return {
+        ...lot,
+        availablePalletsCount: c ? Number(c.availableCount) : 0,
+        exitedPalletsCount: c ? Number(c.exitedCount) : 0,
+        totalPalletsCount: c ? Number(c.totalCount) : 0,
+        ...(includePallets ? { pallets: palletsByLot?.get(lot.id) ?? [] } : {}),
+      };
+    });
   }
 
   /** FEFO con pallets disponibles embebidos por lote.

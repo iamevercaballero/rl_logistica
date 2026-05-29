@@ -88,6 +88,27 @@ export async function createMovement(payload: {
   return data;
 }
 
+/** Edita metadatos de cualquier movimiento (cualquier tipo/estado). Propaga a lotes. */
+export async function editMovementMetadata(
+  id: string,
+  payload: {
+    reason: string;
+    documentNumber?: string;
+    supplier?: string;
+    carrier?: string;
+    driver?: string;
+    destination?: string;
+    notes?: string;
+    sapLot?: string;
+    fechaVencimiento?: string;
+    fechaFabricacion?: string;
+    proveedor?: string;
+  },
+): Promise<{ edited: boolean; changes: number }> {
+  const { data } = await api.patch(`/movements/${id}/edit`, payload);
+  return data;
+}
+
 export async function regularizeMovement(id: string, payload: {
   reason: string;
   documentNumber?: string;

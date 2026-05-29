@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import ProductSearch from "../components/ProductSearch";
+import AdjustmentInForm from "./AdjustmentInForm";
+import AdjustmentOutForm from "./AdjustmentOutForm";
 import {
-  ADJUSTMENT_REASONS,
   createMovement,
   getMovements,
   regularizeMovement,
@@ -117,19 +118,8 @@ export default function MovementsPage() {
   const [entrySapLot, setEntrySapLot] = useState(() => generateSapLot());
   const [lotGroups, setLotGroups] = useState<LotGroup[]>([newLotGroup()]);
 
-  // SALIDA: cantidad directa (FEFO automático en backend)
-  const [exitQty, setExitQty] = useState("");
-  const [exitPalletCount, setExitPalletCount] = useState("");
-
   // TRANSFERENCIA (sigue usando selección de palets por FEFO)
   const [fefoRows, setFefoRows] = useState<FefoRow[]>([]);
-
-  // AJUSTES
-  const [adjustmentReason, setAdjustmentReason] = useState("");
-  const [adjustmentCategory, setAdjustmentCategory] = useState("");
-  const [adjLotId, setAdjLotId] = useState("");        // selected lot ID from picker
-  const [adjLotCode, setAdjLotCode] = useState("");    // manual lot code input
-  const [adjLotCodeError, setAdjLotCodeError] = useState("");
 
   // WIZARD — sólo para ENTRY (2 pasos)
   const [wizardStep, setWizardStep] = useState(1);
@@ -143,10 +133,8 @@ export default function MovementsPage() {
   const [regForm, setRegForm] = useState<RegPayload>(emptyReg());
   const [regError, setRegError] = useState("");
 
-  const isEntry = movType === "ENTRY" || movType === "ADJUSTMENT_IN";
-  const isExit = movType === "EXIT" || movType === "ADJUSTMENT_OUT";
+  const isEntry = movType === "ENTRY";
   const isTransfer = movType === "TRANSFER";
-  const isAdjustment = movType === "ADJUSTMENT_IN" || movType === "ADJUSTMENT_OUT";
 
   // ── Barcode scanner (TRANSFERENCIA only — EXIT ahora usa cantidad directa) ──
   const scanVideoRef = useRef<HTMLVideoElement>(null);
@@ -193,12 +181,6 @@ export default function MovementsPage() {
     return m;
   }, [locations]);
 
-  // Clear adjustment lot state when product changes
-  useEffect(() => {
-    setAdjLotId("");
-    setAdjLotCode("");
-    setAdjLotCodeError("");
-  }, [product?.id]);
 
   // FEFO via useQuery — TRANSFERENCIA (con filtro de ubicación) y SALIDA (sin filtro)
   const fefoLocId = isTransfer ? fromLocationId || undefined : undefined;
@@ -211,24 +193,6 @@ export default function MovementsPage() {
     staleTime: 15_000,
   });
   const fefoLoading = fefoQ.isFetching;
-
-  // Lots for adjustment lot picker (fetched when adjustment type and product are selected)
-  const adjLotsQ = useQuery({
-    queryKey: ["lots", "fefo", { productId: product?.id, locationId: undefined }],
-    queryFn: () => fefoLots(product?.id),
-    enabled: isAdjustment && !!product,
-    staleTime: 15_000,
-  });
-  const adjLots = adjLotsQ.data ?? [];
-
-  // Last 10 movements for current adjustment type
-  const adjLastQ = useQuery({
-    queryKey: ["movements", "adj-last", movType],
-    queryFn: () => getMovements({ type: movType as MovementType, page: 1, limit: 10 }),
-    enabled: isAdjustment,
-    staleTime: 30_000,
-    select: (resp: { data: Movement[] }) => resp.data,
-  });
 
   useEffect(() => {
     if (!fefoEnabled) { setFefoRows([]); return; }
@@ -246,9 +210,7 @@ export default function MovementsPage() {
     setDocumentNumber(""); setSupplier(""); setCarrier(""); setDriver(""); setDestination(""); setNotes("");
     setEncargadoId(""); setDate("");
     setEntrySapLot(generateSapLot()); setLotGroups([newLotGroup()]);
-    setExitQty(""); setExitPalletCount(""); setFefoRows([]);
-    setAdjustmentReason(""); setAdjustmentCategory("");
-    setAdjLotId(""); setAdjLotCode(""); setAdjLotCodeError("");
+    setFefoRows([]);
     setFormError("");
     setWizardStep(1);
   }
@@ -358,7 +320,6 @@ export default function MovementsPage() {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!product) { setFormError("Seleccioná un material."); return; }
-    if (isAdjustment && !adjustmentReason) { setFormError("Seleccioná el motivo del ajuste."); return; }
     setFormError("");
 
     if (isEntry) {
@@ -385,9 +346,6 @@ export default function MovementsPage() {
         documentNumber: documentNumber || undefined, supplier: supplier || undefined,
         carrier: carrier || undefined, driver: driver || undefined,
         notes: notes || undefined, encargadoRecepcionId: encargadoId || undefined,
-        lotId: isAdjustment && adjLotId ? adjLotId : undefined,
-        adjustmentReason: isAdjustment ? adjustmentReason : undefined,
-        adjustmentCategory: isAdjustment ? adjustmentCategory || undefined : undefined,
         pallets: totalPallets > 0 ? totalPallets : undefined,
         palletItems: allItems,
       });
@@ -420,22 +378,6 @@ export default function MovementsPage() {
         driver: driver || undefined, destination: destination || undefined,
         notes: notes || undefined, encargadoRecepcionId: encargadoId || undefined,
         palletItems,
-      });
-    } else if (movType === "ADJUSTMENT_OUT") {
-      const qty = Number(exitQty);
-      if (!qty || qty <= 0) { setFormError("Ingresá la cantidad a ajustar."); return; }
-      const resolvedLotId = adjLotId || undefined;
-      createMovementMut.mutate({
-        type: "ADJUSTMENT_OUT", date: date || undefined, productId: product.id,
-        warehouseId: warehouseId || undefined, locationId: locationId || undefined,
-        quantity: qty,
-        lotId: resolvedLotId,
-        pallets: Number(exitPalletCount) > 0 ? Number(exitPalletCount) : undefined,
-        documentNumber: documentNumber || undefined, carrier: carrier || undefined,
-        driver: driver || undefined,
-        notes: notes || undefined, encargadoRecepcionId: encargadoId || undefined,
-        adjustmentReason: adjustmentReason,
-        adjustmentCategory: adjustmentCategory || undefined,
       });
     } else if (isTransfer) {
       const palletItems = fefoRows.flatMap((row) =>
@@ -664,8 +606,28 @@ export default function MovementsPage() {
         </div>
       )}
 
-      {/* ── Formulario ── */}
-      <section className="card">
+      {/* ── Ajuste de Entrada — componente dedicado ── */}
+      {movType === "ADJUSTMENT_IN" && (
+        <AdjustmentInForm
+          onTypeChange={(t) => {
+            setMovType(t);
+            resetForm();
+          }}
+        />
+      )}
+
+      {/* ── Ajuste de Salida — componente dedicado ── */}
+      {movType === "ADJUSTMENT_OUT" && (
+        <AdjustmentOutForm
+          onTypeChange={(t) => {
+            setMovType(t);
+            resetForm();
+          }}
+        />
+      )}
+
+      {/* ── Formulario (ENTRY, EXIT, TRANSFER) ── */}
+      {movType !== "ADJUSTMENT_IN" && movType !== "ADJUSTMENT_OUT" && <section className="card">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
           <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Registrar movimiento</h3>
           {/* Wizard step indicator — only for ENTRY */}
@@ -735,9 +697,6 @@ export default function MovementsPage() {
               onChange={(e) => {
                 setMovType(e.target.value as MovementType);
                 setProduct(null); setFefoRows([]); setLotGroups([newLotGroup()]);
-                setExitQty(""); setExitPalletCount("");
-                setAdjustmentReason(""); setAdjustmentCategory("");
-                setAdjLotId(""); setAdjLotCode(""); setAdjLotCodeError("");
                 setWizardStep(1);
               }}>
               <option value="ENTRY">Entrada</option>
@@ -842,83 +801,6 @@ export default function MovementsPage() {
             </>
           )}
 
-          {/* Ajustes: motivo obligatorio + lote */}
-          {(movType !== "ENTRY" || wizardStep === 1) && isAdjustment && (
-            <>
-              <div className="form-section-title">Motivo del ajuste</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <div>
-                  <label htmlFor="adj-reason" style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--danger)", textTransform: "uppercase", marginBottom: 3 }}>Motivo *</label>
-                  <select id="adj-reason" className="input" value={adjustmentReason} onChange={(e) => setAdjustmentReason(e.target.value)} required style={{ borderColor: !adjustmentReason ? "var(--danger)" : undefined }} aria-required="true">
-                    <option value="">Seleccionar...</option>
-                    {ADJUSTMENT_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Categoría</label>
-                  <input className="input" placeholder="Ej: Zona fría, Zona seca..." value={adjustmentCategory} onChange={(e) => setAdjustmentCategory(e.target.value)} />
-                </div>
-              </div>
-
-              {/* Lote (opcional) */}
-              {product && (
-                <>
-                  <div className="form-section-title">Lote afectado <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400, textTransform: "none" }}>(opcional)</span></div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                    <div>
-                      <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>
-                        Lote existente
-                      </label>
-                      <select
-                        className="input"
-                        value={adjLotId}
-                        onChange={(e) => { setAdjLotId(e.target.value); if (e.target.value) setAdjLotCode(""); }}
-                        aria-label="Seleccionar lote"
-                      >
-                        <option value="">Sin lote específico…</option>
-                        {adjLotsQ.isLoading && <option disabled>Cargando…</option>}
-                        {adjLots.map((lot) => (
-                          <option key={lot.id} value={lot.id}>
-                            {lot.lotCode}{lot.sapLot ? ` (SAP: ${lot.sapLot})` : ""} — {lot.stockActual.toLocaleString("es-PY")} unid.
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>
-                        O ingresar código de lote
-                      </label>
-                      <input
-                        className="input"
-                        placeholder="Ej: L2026-001"
-                        value={adjLotCode}
-                        onChange={(e) => { setAdjLotCode(e.target.value); if (e.target.value) setAdjLotId(""); setAdjLotCodeError(""); }}
-                        onBlur={() => {
-                          const v = adjLotCode.trim();
-                          if (!v) { setAdjLotCodeError(""); return; }
-                          if (v.length < 2 || v.length > 80) {
-                            setAdjLotCodeError("El código debe tener entre 2 y 80 caracteres.");
-                          } else {
-                            setAdjLotCodeError("");
-                          }
-                        }}
-                        disabled={!!adjLotId}
-                        aria-label="Código de lote manual"
-                        style={{ fontFamily: "monospace" }}
-                      />
-                      {adjLotCodeError && (
-                        <p className="form-error" style={{ margin: "4px 0 0", fontSize: 11 }}>{adjLotCodeError}</p>
-                      )}
-                    </div>
-                  </div>
-                </>
-              )}
-
-              <div style={{ background: "var(--badge-adjout-bg)", border: "1px solid var(--badge-adjout-border)", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "var(--badge-adjout-text)" }}>
-                Solo para diferencias de inventario, mermas, roturas o sobrantes físicos. El ajuste queda registrado en auditoría.
-              </div>
-            </>
-          )}
 
           {/* Entrada: lotes y cantidades (Step 2 only for ENTRY wizard) */}
           {isEntry && (movType !== "ENTRY" || wizardStep === 2) && (
@@ -1207,44 +1089,6 @@ export default function MovementsPage() {
             </>
           )}
 
-          {/* Ajuste salida: cantidad directa */}
-          {movType === "ADJUSTMENT_OUT" && (
-            <>
-              <div className="form-section-title">Cantidad del ajuste</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--danger)", textTransform: "uppercase", marginBottom: 3 }}>
-                    Cantidad *
-                  </label>
-                  <input
-                    className="input"
-                    type="number"
-                    min={1}
-                    placeholder="Unidades a ajustar"
-                    value={exitQty}
-                    onChange={(e) => setExitQty(e.target.value)}
-                    style={{ fontSize: 15, fontWeight: 700 }}
-                    aria-required="true"
-                  />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>
-                    Cant. pallets
-                  </label>
-                  <input
-                    className="input"
-                    type="number"
-                    min={0}
-                    placeholder="Opcional"
-                    value={exitPalletCount}
-                    onChange={(e) => setExitPalletCount(e.target.value)}
-                    style={{ fontSize: 13 }}
-                  />
-                </div>
-              </div>
-            </>
-          )}
-
           {/* Datos logísticos — step 1 for ENTRY, always for others */}
           {(movType !== "ENTRY" || wizardStep === 1) && (
             <>
@@ -1254,7 +1098,7 @@ export default function MovementsPage() {
                 {isEntry && <input className="input" placeholder="Proveedor" value={supplier} onChange={(e) => setSupplier(e.target.value)} />}
                 {!isTransfer && <input className="input" placeholder="Transportadora" value={carrier} onChange={(e) => setCarrier(e.target.value)} />}
                 {!isTransfer && <input className="input" placeholder="Conductor" value={driver} onChange={(e) => setDriver(e.target.value)} />}
-                {isExit && <input className="input" placeholder="Destino" value={destination} onChange={(e) => setDestination(e.target.value)} />}
+                {movType === "EXIT" && <input className="input" placeholder="Destino" value={destination} onChange={(e) => setDestination(e.target.value)} />}
                 {!isTransfer && (
                   <select className="input" value={encargadoId} onChange={(e) => setEncargadoId(e.target.value)}>
                     <option value="">Encargado recepción</option>
@@ -1262,7 +1106,6 @@ export default function MovementsPage() {
                   </select>
                 )}
               </div>
-
               <textarea className="input"
                 placeholder="Observaciones (opcional)"
                 value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
@@ -1310,70 +1153,15 @@ export default function MovementsPage() {
             </div>
           ) : (
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <button className="btn btn--primary" type="submit" disabled={saving || !product || (isAdjustment && !adjustmentReason)}>
+              <button className="btn btn--primary" type="submit" disabled={saving || !product}>
                 {saving ? "Guardando..." : "Registrar movimiento"}
               </button>
               <button type="button" className="btn" onClick={resetForm}>Limpiar</button>
             </div>
           )}
         </form>
-      </section>
+      </section>}
 
-      {/* ── Últimos ajustes (solo cuando el tipo es ajuste) ── */}
-      {isAdjustment && (
-        <section className="card" style={{ marginTop: 12 }}>
-          <h3 style={{ marginTop: 0, marginBottom: 12, fontSize: 14, fontWeight: 800 }}>
-            Últimos {movType === "ADJUSTMENT_IN" ? "ajustes de entrada" : "ajustes de salida"}
-          </h3>
-          {adjLastQ.isLoading && (
-            <p style={{ color: "var(--muted)", fontSize: 13 }} aria-busy="true">Cargando…</p>
-          )}
-          {adjLastQ.isError && (
-            <p className="form-error" style={{ fontSize: 13 }}>No se pudo cargar el historial.</p>
-          )}
-          {!adjLastQ.isLoading && (adjLastQ.data ?? []).length === 0 && (
-            <p style={{ color: "var(--muted)", fontSize: 13 }}>Sin registros anteriores.</p>
-          )}
-          {(adjLastQ.data ?? []).length > 0 && (
-            <div style={{ overflowX: "auto" }}>
-              <table className="table" style={{ fontSize: 13 }}>
-                <thead>
-                  <tr>
-                    <th scope="col">Fecha</th>
-                    <th scope="col">Material</th>
-                    <th scope="col">Lote</th>
-                    <th scope="col">Motivo</th>
-                    <th scope="col">Cantidad</th>
-                    <th scope="col">Depósito / Ubic.</th>
-                    <th scope="col">Notas</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(adjLastQ.data ?? []).map((m) => (
-                    <tr key={m.id}>
-                      <td style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>
-                        {new Date(m.date).toLocaleString("es-PY", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" })}
-                      </td>
-                      <td><strong>{m.material.code}</strong><span style={{ color: "var(--muted)", marginLeft: 4 }}>· {m.material.description}</span></td>
-                      <td style={{ fontFamily: "monospace", color: "var(--muted)" }}>{m.lotCode ?? "—"}</td>
-                      <td style={{ color: "var(--muted)" }}>{m.adjustmentReason ?? "—"}</td>
-                      <td style={{ fontWeight: 700, color: movType === "ADJUSTMENT_IN" ? "var(--success)" : "var(--danger)" }}>
-                        {movType === "ADJUSTMENT_IN" ? "+" : "-"}{m.quantity.toLocaleString("es-PY")}
-                      </td>
-                      <td style={{ color: "var(--muted)" }}>
-                        {m.warehouse?.name ?? "—"}{m.location?.code ? ` / ${m.location.code}` : ""}
-                      </td>
-                      <td style={{ color: "var(--muted)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {m.notes ?? "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      )}
     </div>
   );
 }

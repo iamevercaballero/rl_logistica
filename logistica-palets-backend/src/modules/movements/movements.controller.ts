@@ -29,6 +29,17 @@ export class MovementsController {
     return this.service.create(dto, req.user.userId);
   }
 
+  /** Edita metadatos de cualquier movimiento con trazabilidad completa. */
+  @Patch(':id/edit')
+  @Roles('ADMIN', 'MANAGER')
+  editMetadata(
+    @Param('id') id: string,
+    @Body() dto: RegularizeMovementDto,
+    @Req() req: Request & { user: { userId: string } },
+  ) {
+    return this.service.editMetadata(id, dto, req.user.userId);
+  }
+
   @Patch(':id/regularize')
   @Roles('ADMIN', 'MANAGER')
   regularize(

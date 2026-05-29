@@ -236,6 +236,86 @@ export class MovementsService {
     return { movementId: result.movementId, stockImpact: result.stockImpact };
   }
 
+  /**
+   * Edita metadatos de cualquier movimiento (sin importar su estado).
+   * Propaga cambios de lote (fechas, SAP, proveedor) a los lotes vinculados.
+   * Cada campo modificado queda registrado en regularization_logs con el motivo.
+   */
+  async editMetadata(id: string, dto: RegularizeMovementDto, userId: string) {
+    const result = await this.dataSource.transaction(async (manager) => {
+      const movement = await manager.findOne(Movement, { where: { id } });
+      if (!movement) throw new NotFoundException('Movimiento no encontrado');
+
+      const logs: DeepPartial<RegularizationLog>[] = [];
+
+      const movementStringFields = [
+        'documentNumber', 'supplier', 'carrier', 'driver', 'destination', 'notes',
+      ] as const;
+
+      for (const field of movementStringFields) {
+        const newVal = dto[field]?.trim() ?? null;
+        if (newVal === null) continue;
+        const oldVal = (movement[field] as string | undefined) ?? null;
+        if (newVal !== oldVal) {
+          logs.push({ movementId: id, field, oldValue: oldVal, newValue: newVal, changedById: userId, reason: dto.reason });
+          (movement as unknown as Record<string, unknown>)[field] = newVal || null;
+        }
+      }
+
+      // Propagar cambios a los lotes asociados
+      const details = await manager.getRepository(MovementDetail).find({ where: { movementId: id } });
+      const lotIds = [...new Set(details.map((d) => d.lotId).filter(Boolean))] as string[];
+
+      if (lotIds.length > 0) {
+        const lots = await manager.getRepository(Lot).find({ where: lotIds.map((lotId) => ({ id: lotId })) });
+        const lotDateFields = ['fechaVencimiento', 'fechaFabricacion'] as const;
+        const lotStringFields = ['sapLot', 'proveedor'] as const;
+
+        for (const lot of lots) {
+          let lotChanged = false;
+
+          for (const field of lotStringFields) {
+            const newVal = dto[field]?.trim() ?? null;
+            if (newVal === null) continue;
+            const oldVal = lot[field] ?? null;
+            if (newVal !== oldVal) {
+              logs.push({ movementId: id, field: `lot.${lot.lotCode}.${field}`, oldValue: oldVal, newValue: newVal, changedById: userId, reason: dto.reason });
+              lot[field] = newVal;
+              lotChanged = true;
+            }
+          }
+
+          for (const field of lotDateFields) {
+            const newVal = dto[field] ?? null;
+            if (newVal === null) continue;
+            const oldVal = lot[field] ?? null;
+            if (newVal !== oldVal) {
+              logs.push({ movementId: id, field: `lot.${lot.lotCode}.${field}`, oldValue: oldVal, newValue: newVal, changedById: userId, reason: dto.reason });
+              lot[field] = newVal;
+              lotChanged = true;
+            }
+          }
+
+          if (lotChanged) await manager.save(Lot, lot);
+        }
+      }
+
+      await manager.save(movement);
+      for (const log of logs) {
+        await manager.save(manager.create(RegularizationLog, log));
+      }
+
+      return { edited: true, changes: logs.length };
+    });
+
+    void Promise.all([
+      this.cache.delPattern('kpis:*'),
+      this.cache.delPattern('stock:*'),
+    ]);
+
+    return result;
+  }
+
   async regularize(id: string, dto: RegularizeMovementDto, userId: string) {
     const result = await this.dataSource.transaction(async (manager) => {
       const movement = await manager.findOne(Movement, { where: { id } });
@@ -417,6 +497,8 @@ export class MovementsService {
           OR LOWER(COALESCE(movement.notes, '')) LIKE :search
           OR LOWER(COALESCE(product.code, '')) LIKE :search
           OR LOWER(COALESCE(product.description, '')) LIKE :search
+          OR LOWER(COALESCE(lot."lotCode", '')) LIKE :search
+          OR LOWER(COALESCE(dl_agg."lotCodes", '')) LIKE :search
         )`,
         { search },
       );

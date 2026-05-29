@@ -60,7 +60,10 @@
       "Bash(curl -s http://localhost:3000/api/auth/login -X POST -H 'Content-Type: application/json' -d '{\"username\":\"admin\",\"password\":\"admin123\"}')",
       "Bash(python3 -c \"import sys,json;print\\('Backend OK' if json.load\\(sys.stdin\\).get\\('access_token'\\) else 'NO'\\)\")",
       "Bash(sed -i.bak 's|/reports/movements?search=R-TEST&limit=500|/reports/movements?search=R-TEST\\\\&limit=100|' /tmp/rlwms_test/cross_check.py)",
-      "Bash(python3 /tmp/rlwms_test/cross_check.py)"
+      "Bash(python3 /tmp/rlwms_test/cross_check.py)",
+      "Bash(find /Users/ever -name \"node\" -type f 2>/dev/null | head -5; find /usr -name \"node\" -type f 2>/dev/null | head -3)",
+      "Bash(/usr/local/bin/node ./node_modules/.bin/tsc --noEmit)",
+      "Bash('/Users/ever/Documents/RL WMS/rl_logistica/node_modules/node/bin/node' '/Users/ever/Documents/RL WMS/rl_logistica/logistica-palets-frontend/node_modules/.bin/tsc' --noEmit --project '/Users/ever/Documents/RL WMS/rl_logistica/logistica-palets-frontend/tsconfig.json')"
     ]
   }
 }

@@ -1,4 +1,4 @@
-import { IsBoolean, IsInt, IsOptional, IsString, Length, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, Length, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreateProductDto {
@@ -24,4 +24,24 @@ export class CreateProductDto {
   @IsInt()
   @Min(0)
   stockMinimo?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  stackable?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  maxStackLevel?: number | null;
+
+  @IsOptional()
+  @IsBoolean()
+  canReceiveWeightOnTop?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 200)
+  stackingNotes?: string | null;
 }

@@ -63,7 +63,12 @@
       "Bash(python3 /tmp/rlwms_test/cross_check.py)",
       "Bash(find /Users/ever -name \"node\" -type f 2>/dev/null | head -5; find /usr -name \"node\" -type f 2>/dev/null | head -3)",
       "Bash(/usr/local/bin/node ./node_modules/.bin/tsc --noEmit)",
-      "Bash('/Users/ever/Documents/RL WMS/rl_logistica/node_modules/node/bin/node' '/Users/ever/Documents/RL WMS/rl_logistica/logistica-palets-frontend/node_modules/.bin/tsc' --noEmit --project '/Users/ever/Documents/RL WMS/rl_logistica/logistica-palets-frontend/tsconfig.json')"
+      "Bash('/Users/ever/Documents/RL WMS/rl_logistica/node_modules/node/bin/node' '/Users/ever/Documents/RL WMS/rl_logistica/logistica-palets-frontend/node_modules/.bin/tsc' --noEmit --project '/Users/ever/Documents/RL WMS/rl_logistica/logistica-palets-frontend/tsconfig.json')",
+      "Bash(ls /usr/local/bin/ | grep -E \"node|npm\" 2>/dev/null; ls /opt/homebrew/bin/ | grep -E \"node|npm\" 2>/dev/null; ls ~/.local/bin/ 2>/dev/null | head)",
+      "Bash(cat /Users/ever/.zshrc | grep -E \"node|nvm|volta|fnm\" | head -20)",
+      "Bash(\"/Users/ever/Documents/RL WMS/rl_logistica/logistica-palets-backend/node_modules/.bin/tsc\" --noEmit --project \"/Users/ever/Documents/RL WMS/rl_logistica/logistica-palets-backend/tsconfig.json\")",
+      "Bash(ls /Applications/ 2>/dev/null | grep -iE \"node|bun|deno\"; ls /usr/bin/ | grep -iE \"node|npm\")",
+      "Bash(git -C \"/Users/ever/Documents/RL WMS/rl_logistica\" diff --stat HEAD)"
     ]
   }
 }

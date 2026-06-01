@@ -1,3 +1,5 @@
+import { fmtDate, fmtGeneratedAt } from "../utils/dateFormat";
+
 /**
  * Excel export utilities using ExcelJS.
  *
@@ -46,7 +48,7 @@ function applyHeaderRow(row: ExcelJS.Row, columns: string[]) {
 
 function addBrandFooter(sheet: ExcelJS.Worksheet, rowNum: number) {
   const footerRow = sheet.getRow(rowNum + 2);
-  footerRow.getCell(2).value = `Generado por RL Logística — ${new Date().toLocaleString("es-AR")}`;
+  footerRow.getCell(2).value = `Generado por RL Logística — ${fmtGeneratedAt()}`;
   footerRow.getCell(2).font = { color: { argb: "FF9CA3AF" }, italic: true, size: 8 };
 }
 
@@ -97,7 +99,7 @@ export async function exportStockExcel(
       r.location?.code ?? "-",
       r.currentQuantity,
       r.material.unitOfMeasure ?? "",
-      new Date(r.updatedAt).toLocaleDateString("es-AR"),
+      fmtDate(r.updatedAt),
     ]);
 
     // Alternate row shading
@@ -230,7 +232,7 @@ export async function exportMovementsExcel(
 
   data.forEach((r, i) => {
     const row = ws.addRow([
-      new Date(r.date).toLocaleDateString("es-AR"),
+      fmtDate(r.date),
       MOVE_LABEL[r.type] ?? r.type,
       r.material?.code ? `${r.material.code} - ${r.material.description}` : "-",
       r.quantity,
@@ -341,7 +343,7 @@ export async function exportEntradasExcel(data: Movement[], filename = "entradas
 
   data.forEach((r, i) => {
     const row = ws.addRow([
-      new Date(r.date).toLocaleDateString("es-AR"),
+      fmtDate(r.date),
       `${r.material.code} - ${r.material.description}`,
       r.lotCode ?? "-",
       r.sapLot ?? "-",
@@ -400,7 +402,7 @@ export async function exportSalidasExcel(data: Movement[], filename = "salidas")
 
   data.forEach((r, i) => {
     const row = ws.addRow([
-      new Date(r.date).toLocaleDateString("es-AR"),
+      fmtDate(r.date),
       `${r.material.code} - ${r.material.description}`,
       r.lotCode ?? "-",
       r.sapLot ?? "-",
@@ -451,8 +453,8 @@ export async function exportLotesExcel(data: Lot[], filename = "lotes") {
       r.lotCode,
       r.sapLot ?? "-",
       r.product ? `${r.product.code} - ${r.product.description}` : r.productId,
-      r.fechaVencimiento ? new Date(r.fechaVencimiento).toLocaleDateString("es-AR") : "-",
-      r.fechaFabricacion ? new Date(r.fechaFabricacion).toLocaleDateString("es-AR") : "-",
+      fmtDate(r.fechaVencimiento),
+      fmtDate(r.fechaFabricacion),
       r.proveedor ?? "-",
       r.stockActual,
       r.status === "PENDING_REGULARIZATION" ? "Pendiente" : "Normal",
@@ -507,8 +509,8 @@ export async function exportFreshnessExcel(data: FreshnessRow[], filename = "con
       r.sapLot ?? "-",
       r.proveedor ?? "-",
       r.stockActual,
-      r.fechaFabricacion ? new Date(r.fechaFabricacion).toLocaleDateString("es-AR") : "-",
-      new Date(r.fechaVencimiento).toLocaleDateString("es-AR"),
+      fmtDate(r.fechaFabricacion),
+      fmtDate(r.fechaVencimiento),
       r.diasRestantes,
     ]);
 
@@ -582,7 +584,7 @@ export async function exportTrazabilidadExcel(
 
   history.forEach((e, i) => {
     const row = ws.addRow([
-      new Date(e.at).toLocaleDateString("es-AR"),
+      fmtDate(e.at),
       MOVE_LABEL[e.type] ?? e.type,
       e.quantity,
       `${e.fromWarehouseName ?? e.warehouseName ?? "-"}${e.fromLocationCode ? ` / ${e.fromLocationCode}` : ""}`,

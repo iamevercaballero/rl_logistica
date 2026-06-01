@@ -156,11 +156,15 @@ export class MovementsService {
               }
               await this.applyDecrease(manager, dto.productId, stockWarehouseId, stockLocationId, item.quantity);
 
-              // Salida parcial: reducir cantidad del pallet; solo EXITED cuando llega a 0
+              // Salida parcial: reducir cantidad del pallet.
+              // - llega a 0  → EXITED (despachado completo)
+              // - queda saldo → PARTIAL (salida parcial), salvo que esté BLOCKED/DAMAGED
               pallet.quantity = Math.max(0, pallet.quantity - item.quantity);
               if (pallet.quantity === 0) {
                 pallet.status = 'EXITED';
                 pallet.exitedAt = new Date();
+              } else if (pallet.status === 'AVAILABLE' || pallet.status === 'PARTIAL') {
+                pallet.status = 'PARTIAL';
               }
 
             } else if (dto.type === 'TRANSFER') {
@@ -278,7 +282,9 @@ export class MovementsService {
 
       // Propagar cambios a los lotes asociados
       const details = await manager.getRepository(MovementDetail).find({ where: { movementId: id } });
-      const lotIds = [...new Set(details.map((d) => d.lotId).filter(Boolean))] as string[];
+      const detailLotIds = details.map((d) => d.lotId).filter(Boolean) as string[];
+      // Incluir movement.lotId para movimientos bulk (sin palletItems) que no generan MovementDetail
+      const lotIds = [...new Set([...detailLotIds, ...(movement.lotId ? [movement.lotId] : [])])];
 
       if (lotIds.length > 0) {
         const lots = await manager.getRepository(Lot).find({ where: lotIds.map((lotId) => ({ id: lotId })) });
@@ -356,7 +362,9 @@ export class MovementsService {
 
       // Actualizar lotes asociados vía MovementDetail
       const details = await manager.getRepository(MovementDetail).find({ where: { movementId: id } });
-      const lotIds = [...new Set(details.map((d) => d.lotId).filter(Boolean))] as string[];
+      const detailLotIds = details.map((d) => d.lotId).filter(Boolean) as string[];
+      // Incluir movement.lotId para movimientos bulk (sin palletItems) que no generan MovementDetail
+      const lotIds = [...new Set([...detailLotIds, ...(movement.lotId ? [movement.lotId] : [])])];
 
       if (lotIds.length > 0) {
         const lots = await manager.getRepository(Lot).find({ where: lotIds.map((lotId) => ({ id: lotId })) });
@@ -824,6 +832,8 @@ export class MovementsService {
       if (pallet.quantity === 0) {
         pallet.status = 'EXITED';
         pallet.exitedAt = new Date();
+      } else if (pallet.status === 'AVAILABLE' || pallet.status === 'PARTIAL') {
+        pallet.status = 'PARTIAL';
       }
       await manager.save(pallet);
 

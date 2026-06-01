@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { fmtDateTime } from "../utils/dateFormat";
 import { useTableSort, sortArrow } from "../hooks/useTableSort";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -49,7 +50,7 @@ const STOCK_COLUMNS = [
     meta: { align: "right" as const },
     cell: (info) => {
       const r = info.row.original;
-      return `${info.getValue().toLocaleString("es-AR")} ${r.material.unitOfMeasure ?? ""}`.trim();
+      return `${info.getValue().toLocaleString("es-PY")} ${r.material.unitOfMeasure ?? ""}`.trim();
     },
   }),
   stockColHelper.accessor("updatedAt", {
@@ -57,7 +58,7 @@ const STOCK_COLUMNS = [
     meta: { align: "right" as const, noFilter: true },
     cell: (info) => (
       <span style={{ color: "var(--muted)", fontSize: 12 }}>
-        {new Date(info.getValue()).toLocaleString("es-AR")}
+        {fmtDateTime(info.getValue())}
       </span>
     ),
   }),
@@ -105,6 +106,26 @@ const emptyReg: RegPayload = {
   driver: "", destination: "", notes: "", sapLot: "",
   fechaVencimiento: "", fechaFabricacion: "", proveedor: "",
 };
+
+/** Resalta las coincidencias de `query` dentro de `text` */
+function HighlightMatch({ text, query }: { text: string; query: string }) {
+  if (!query.trim()) return <>{text}</>;
+  const regex = new RegExp(`(${query.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi");
+  const parts = text.split(regex);
+  return (
+    <>
+      {parts.map((part, i) =>
+        regex.test(part) ? (
+          <mark key={i} style={{ background: "rgba(59,130,246,0.25)", color: "inherit", borderRadius: 2, padding: "0 1px" }}>
+            {part}
+          </mark>
+        ) : (
+          <span key={i}>{part}</span>
+        ),
+      )}
+    </>
+  );
+}
 
 export default function ReportsPage() {
   const today = new Date().toISOString().slice(0, 10);
@@ -163,6 +184,7 @@ export default function ReportsPage() {
   const [dailyDateFrom, setDailyDateFrom] = useState(today);
   const [dailyDateTo, setDailyDateTo] = useState(today);
   const [dailyDatePreset, setDailyDatePreset] = useState("hoy");
+  const [dailySearch, setDailySearch] = useState("");
 
   // ── Catalog queries ───────────────────────────────────────────────────────
 
@@ -275,12 +297,23 @@ export default function ReportsPage() {
   const traceResult  = traceQ.data ?? null;
   const freshnessData = freshnessQ.data ?? [];
 
+  // Filtrado de Control diario por búsqueda de producto (client-side)
+  const dailyStockFiltered = useMemo(() => {
+    const q = dailySearch.trim().toLowerCase();
+    if (!q) return dailyStock;
+    return dailyStock.filter(
+      (r) =>
+        r.material.code.toLowerCase().includes(q) ||
+        r.material.description.toLowerCase().includes(q),
+    );
+  }, [dailyStock, dailySearch]);
+
   // ── Column sorting (client-side, per tab) ─────────────────────────────────
   const freshnessSort = useTableSort(freshnessData, "diasRestantes");
   const lotsSort    = useTableSort(lotResults,   "lotCode");
   const entradasSort = useTableSort(entries,     "date");
   const salidasSort  = useTableSort(salMovements,"date");
-  const dailySort    = useTableSort(dailyStock,  "material.code");
+  const dailySort    = useTableSort(dailyStockFiltered, "material.code");
   const movSort      = useTableSort(movements,   "date");
 
   const tabs: { key: Tab; label: string }[] = [
@@ -433,7 +466,7 @@ export default function ReportsPage() {
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
                 <span className="badge">Materiales: <strong>{stock.totalMaterials}</strong></span>
                 <span className="badge">Posiciones: <strong>{stock.stockRows}</strong></span>
-                <span className="badge">Cantidad total: <strong>{stock.totalQuantity.toLocaleString("es-AR")}</strong></span>
+                <span className="badge">Cantidad total: <strong>{stock.totalQuantity.toLocaleString("es-PY")}</strong></span>
               </div>
               <DataTable
                 data={stock.items}
@@ -547,10 +580,10 @@ export default function ReportsPage() {
                 <tbody>
                   {movSort.sortedData.map((m) => (
                     <tr key={`${m.id}-${m.date}`}>
-                      <td style={{ color: "var(--muted)", fontSize: 12 }}>{new Date(m.date).toLocaleString("es-AR")}</td>
+                      <td style={{ color: "var(--muted)", fontSize: 12 }}>{fmtDateTime(m.date)}</td>
                       <td><span className={MOVE_BADGE[m.type] ?? "badge"}>{MOVE_LABEL[m.type] ?? m.type}</span></td>
                       <td><strong>{m.material.code}</strong> · {m.material.description}</td>
-                      <td>{m.quantity.toLocaleString("es-AR")}</td>
+                      <td>{m.quantity.toLocaleString("es-PY")}</td>
                       <td style={{ fontSize: 12 }}>
                         {m.type === "TRANSFER"
                           ? `${m.from?.locationCode ?? "-"} → ${m.to?.locationCode ?? "-"}`
@@ -673,14 +706,14 @@ export default function ReportsPage() {
                         : <span style={{ color: "var(--muted)", fontSize: 12 }}>{lot.productId}</span>}
                     </td>
                     <td style={{ color: "var(--muted)", fontSize: 12 }}>
-                      {lot.fechaVencimiento ? new Date(lot.fechaVencimiento).toLocaleDateString("es-AR") : "—"}
+                      {lot.fechaVencimiento ? new Date(lot.fechaVencimiento).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" }) : "—"}
                     </td>
                     <td style={{ color: "var(--muted)", fontSize: 12 }}>
-                      {lot.fechaFabricacion ? new Date(lot.fechaFabricacion).toLocaleDateString("es-AR") : "—"}
+                      {lot.fechaFabricacion ? new Date(lot.fechaFabricacion).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" }) : "—"}
                     </td>
                     <td style={{ fontSize: 12 }}>{lot.proveedor ?? "—"}</td>
                     <td>
-                      <strong>{lot.stockActual.toLocaleString("es-AR")}</strong>
+                      <strong>{lot.stockActual.toLocaleString("es-PY")}</strong>
                       {(lot.availablePalletsCount ?? 0) > 0 && (
                         <span style={{ color: "var(--muted)", fontSize: 11, marginLeft: 6 }}>
                           ({lot.availablePalletsCount} palet{lot.availablePalletsCount !== 1 ? "s" : ""})
@@ -790,7 +823,7 @@ export default function ReportsPage() {
                     {entradasSort.sortedData.map((m) => (
                       <tr key={m.id} style={m.status === "PENDING_REGULARIZATION" ? { background: "var(--badge-adjout-bg)" } : {}}>
                         <td style={{ color: "var(--muted)", fontSize: 12, whiteSpace: "nowrap" }}>
-                          {new Date(m.date).toLocaleString("es-AR")}
+                          {fmtDateTime(m.date)}
                         </td>
                         <td><strong>{m.material.code}</strong><span style={{ color: "var(--muted)", marginLeft: 4 }}>· {m.material.description}</span></td>
                         <td style={{ fontSize: 12 }} title={m.lotCode ?? ""}>
@@ -808,7 +841,7 @@ export default function ReportsPage() {
                             : "—"}
                         </td>
                         <td style={{ fontSize: 12, color: "var(--muted)" }}>{m.documentNumber ?? "—"}</td>
-                        <td style={{ fontWeight: 600 }}>{m.quantity.toLocaleString("es-AR")} {m.material.unitOfMeasure ?? ""}</td>
+                        <td style={{ fontWeight: 600 }}>{m.quantity.toLocaleString("es-PY")} {m.material.unitOfMeasure ?? ""}</td>
                         <td style={{ textAlign: "center" }}>{m.pallets != null ? m.pallets : "—"}</td>
                         <td style={{ fontSize: 12 }}>
                           {m.warehouse?.name ?? "—"}{m.location?.code ? ` / ${m.location.code}` : ""}
@@ -830,7 +863,7 @@ export default function ReportsPage() {
                               className="btn btn--primary"
                               style={{ fontSize: 12, padding: "4px 10px", whiteSpace: "nowrap" }}
                               onClick={() => {
-                                setRegModal({ id: m.id, label: `${m.material.code} · ${new Date(m.date).toLocaleDateString("es-AR")}` });
+                                setRegModal({ id: m.id, label: `${m.material.code} · ${new Date(m.date).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" })}` });
                                 setRegForm(emptyReg);
                                 setRegError("");
                               }}
@@ -863,7 +896,8 @@ export default function ReportsPage() {
       {/* ── Tab: Control diario ── */}
       {activeTab === "diario" && (
         <section className="card">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
+          {/* Header + controles de período */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
             <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Control de stock</h3>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               <select className="input" value={dailyDatePreset} aria-label="Período"
@@ -887,24 +921,76 @@ export default function ReportsPage() {
                     onChange={(e) => setDailyDateTo(e.target.value)} />
                 </>
               )}
-              {dailyStock.length > 0 && (
+              {dailyStockFiltered.length > 0 && (
                 <>
                   <button className="btn" onClick={() => {
                     const label = dailyDateFrom === dailyDateTo ? dailyDateFrom : `${dailyDateFrom} a ${dailyDateTo}`;
-                    exportDailyStockPDF(dailyStock, label, `control-diario-${dailyDateFrom}`);
+                    exportDailyStockPDF(dailyStockFiltered, label, `control-diario-${dailyDateFrom}`);
                   }} title="Exportar PDF">📄 PDF</button>
                   <button className="btn" onClick={() => {
                     const label = dailyDateFrom === dailyDateTo ? dailyDateFrom : `${dailyDateFrom} a ${dailyDateTo}`;
-                    void exportDailyStockExcel(dailyStock, label, `control-diario-${dailyDateFrom}`);
+                    void exportDailyStockExcel(dailyStockFiltered, label, `control-diario-${dailyDateFrom}`);
                   }} title="Exportar Excel">📊 Excel</button>
                 </>
               )}
             </div>
           </div>
+
+          {/* Buscador de producto */}
+          {dailyStock.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <div style={{ position: "relative", flex: "1 1 300px", maxWidth: 400 }}>
+                <svg
+                  width="13" height="13" viewBox="0 0 24 24" fill="none"
+                  stroke="var(--muted)" strokeWidth="2"
+                  style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}
+                  aria-hidden="true"
+                >
+                  <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                <input
+                  className="input"
+                  value={dailySearch}
+                  onChange={(e) => setDailySearch(e.target.value)}
+                  placeholder="Buscar por código o descripción de material…"
+                  aria-label="Buscar material en control diario"
+                  style={{ paddingLeft: 30, paddingRight: dailySearch ? 28 : 10, width: "100%", boxSizing: "border-box" }}
+                />
+                {dailySearch && (
+                  <button
+                    type="button"
+                    onClick={() => setDailySearch("")}
+                    aria-label="Limpiar búsqueda"
+                    style={{
+                      position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)",
+                      background: "none", border: "none", cursor: "pointer", color: "var(--muted)", padding: 2,
+                    }}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+                      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                  </button>
+                )}
+              </div>
+              <span style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>
+                {dailySearch
+                  ? `${dailyStockFiltered.length} de ${dailyStock.length} material${dailyStock.length !== 1 ? "es" : ""}`
+                  : `${dailyStock.length} material${dailyStock.length !== 1 ? "es" : ""}`}
+              </span>
+            </div>
+          )}
+
           {dailyQ.isLoading && <p style={{ color: "var(--muted)", fontSize: 14 }} aria-busy="true">Cargando...</p>}
           {!dailyQ.isLoading && dailyStock.length === 0 ? (
             <p style={{ color: "var(--muted)" }}>Sin registros para el período seleccionado.</p>
-          ) : dailyStock.length > 0 && (
+          ) : dailyStockFiltered.length === 0 && dailySearch ? (
+            <p style={{ color: "var(--muted)" }}>
+              Ningún material coincide con "<strong>{dailySearch}</strong>".
+              <button className="btn" style={{ marginLeft: 10, fontSize: 12 }} onClick={() => setDailySearch("")}>
+                Limpiar filtro
+              </button>
+            </p>
+          ) : dailyStockFiltered.length > 0 && (
             <table className="table">
               <thead>
                 <tr>
@@ -919,16 +1005,22 @@ export default function ReportsPage() {
               <tbody>
                 {dailySort.sortedData.map((row) => (
                   <tr key={`${row.date}-${row.material.id}`}>
-                    <td><strong>{row.material.code}</strong> · {row.material.description}</td>
+                    <td>
+                      <strong>{row.material.code}</strong>
+                      {" · "}
+                      {dailySearch ? (
+                        <HighlightMatch text={row.material.description} query={dailySearch} />
+                      ) : row.material.description}
+                    </td>
                     <td style={{ color: "var(--muted)", fontSize: 12 }}>{row.material.unitOfMeasure ?? "—"}</td>
-                    <td>{row.stockInicial.toLocaleString("es-AR")}</td>
+                    <td>{row.stockInicial.toLocaleString("es-PY")}</td>
                     <td style={{ color: "var(--success)", fontWeight: row.entradas > 0 ? 700 : 400 }}>
-                      {row.entradas > 0 ? `+${row.entradas.toLocaleString("es-AR")}` : "0"}
+                      {row.entradas > 0 ? `+${row.entradas.toLocaleString("es-PY")}` : "0"}
                     </td>
                     <td style={{ color: "var(--danger)", fontWeight: row.salidas > 0 ? 700 : 400 }}>
-                      {row.salidas > 0 ? `-${row.salidas.toLocaleString("es-AR")}` : "0"}
+                      {row.salidas > 0 ? `-${row.salidas.toLocaleString("es-PY")}` : "0"}
                     </td>
-                    <td style={{ fontWeight: 700 }}>{row.stockFinal.toLocaleString("es-AR")}</td>
+                    <td style={{ fontWeight: 700 }}>{row.stockFinal.toLocaleString("es-PY")}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1019,7 +1111,7 @@ export default function ReportsPage() {
                     {salidasSort.sortedData.map((m) => (
                       <tr key={m.id}>
                         <td style={{ color: "var(--muted)", fontSize: 12, whiteSpace: "nowrap" }}>
-                          {new Date(m.date).toLocaleString("es-AR")}
+                          {fmtDateTime(m.date)}
                         </td>
                         <td><strong>{m.material.code}</strong><span style={{ color: "var(--muted)", marginLeft: 4 }}>· {m.material.description}</span></td>
                         <td style={{ fontSize: 12 }} title={m.lotCode ?? ""}>
@@ -1036,7 +1128,7 @@ export default function ReportsPage() {
                                 : m.sapLot)
                             : "—"}
                         </td>
-                        <td style={{ fontWeight: 600 }}>{m.quantity.toLocaleString("es-AR")} {m.material.unitOfMeasure ?? ""}</td>
+                        <td style={{ fontWeight: 600 }}>{m.quantity.toLocaleString("es-PY")} {m.material.unitOfMeasure ?? ""}</td>
                         <td style={{ textAlign: "center" }}>{m.pallets != null ? m.pallets : "—"}</td>
                         <td style={{ fontSize: 12 }}>
                           {m.warehouse?.name ?? m.from?.warehouseName ?? "—"}{(m.location?.code ?? m.from?.locationCode) ? ` / ${m.location?.code ?? m.from?.locationCode}` : ""}
@@ -1131,9 +1223,9 @@ export default function ReportsPage() {
                     <span className={MOVE_BADGE[event.type] ?? "badge"}>
                       {MOVE_LABEL[event.type] ?? event.type}
                     </span>
-                    <strong>{event.quantity.toLocaleString("es-AR")}</strong>
+                    <strong>{event.quantity.toLocaleString("es-PY")}</strong>
                     <span style={{ color: "var(--muted)", fontSize: 12 }}>
-                      {new Date(event.at).toLocaleString("es-AR")}
+                      {fmtDateTime(event.at)}
                     </span>
                   </div>
                   <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12, color: "var(--muted)" }}>
@@ -1264,8 +1356,8 @@ export default function ReportsPage() {
                           <td style={{ color: "var(--muted)", fontSize: 12, textAlign: "center" }}>{r.product.unitOfMeasure ?? "—"}</td>
                           <td style={{ fontSize: 12 }}>{r.lotCode}</td>
                           <td style={{ fontFamily: "monospace", fontSize: 12, color: "var(--muted)" }}>{r.sapLot ?? "—"}</td>
-                          <td style={{ fontWeight: 600, textAlign: "right" }}>{r.stockActual.toLocaleString("es-AR")}</td>
-                          <td style={{ fontSize: 12 }}>{new Date(r.fechaVencimiento).toLocaleDateString("es-AR")}</td>
+                          <td style={{ fontWeight: 600, textAlign: "right" }}>{r.stockActual.toLocaleString("es-PY")}</td>
+                          <td style={{ fontSize: 12 }}>{new Date(r.fechaVencimiento).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" })}</td>
                           <td style={{ fontWeight: 700, color: diasColor, textAlign: "right" }}>
                             {r.diasRestantes < 0 ? `${r.diasRestantes}` : `+${r.diasRestantes}`}
                           </td>

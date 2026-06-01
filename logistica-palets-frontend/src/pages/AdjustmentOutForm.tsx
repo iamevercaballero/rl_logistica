@@ -242,7 +242,7 @@ function MovementRow({ movement: m, onEdit }: RowProps) {
             color: "var(--muted)",
           }}
         >
-          <span>{new Date(m.date).toLocaleDateString("es-PY")}</span>
+          <span>{new Date(m.date).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" })}</span>
           {m.destination && <span>→ {m.destination}</span>}
           {m.documentNumber && <span>Rem. {m.documentNumber}</span>}
           {m.carrier && <span>{m.carrier}</span>}

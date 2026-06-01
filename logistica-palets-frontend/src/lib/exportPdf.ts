@@ -1,3 +1,5 @@
+import { fmtDate, fmtGeneratedAt } from "../utils/dateFormat";
+
 /**
  * PDF export utilities using jsPDF + jspdf-autotable.
  *
@@ -38,7 +40,7 @@ function addDocHeader(doc: jsPDF, title: string) {
   doc.setFontSize(9);
   doc.setTextColor(150, 150, 150);
   doc.text(
-    `Generado: ${new Date().toLocaleString("es-AR")}`,
+    fmtGeneratedAt(),
     doc.internal.pageSize.width - 14,
     14,
     { align: "right" },
@@ -89,8 +91,8 @@ export function exportStockPDF(
       r.material.description,
       r.warehouse?.name ?? "-",
       r.location?.code ?? "-",
-      `${r.currentQuantity.toLocaleString("es-AR")} ${r.material.unitOfMeasure ?? ""}`.trim(),
-      new Date(r.updatedAt).toLocaleDateString("es-AR"),
+      `${r.currentQuantity.toLocaleString("es-PY")} ${r.material.unitOfMeasure ?? ""}`.trim(),
+      fmtDate(r.updatedAt),
     ]),
     columnStyles: {
       0: { cellWidth: 28 },
@@ -125,10 +127,10 @@ export function exportMovementsPDF(
     startY,
     head: [["Fecha", "Tipo", "Material", "Cantidad", "Depósito", "Documento", "Proveedor/Transportista"]],
     body: data.map((r) => [
-      new Date(r.date).toLocaleDateString("es-AR"),
+      fmtDate(r.date),
       MOVE_LABEL[r.type] ?? r.type,
       r.material?.code ?? "-",
-      r.quantity.toLocaleString("es-AR"),
+      r.quantity.toLocaleString("es-PY"),
       r.warehouse?.name ?? "-",
       r.documentNumber ?? "-",
       r.supplier ?? r.carrier ?? "-",
@@ -159,10 +161,10 @@ export function exportDailyStockPDF(
     body: data.map((r) => [
       `${r.material.code} · ${r.material.description}`,
       r.material.unitOfMeasure ?? "",
-      r.stockInicial.toLocaleString("es-AR"),
-      r.entradas > 0 ? `+${r.entradas.toLocaleString("es-AR")}` : "0",
-      r.salidas > 0 ? `-${r.salidas.toLocaleString("es-AR")}` : "0",
-      r.stockFinal.toLocaleString("es-AR"),
+      r.stockInicial.toLocaleString("es-PY"),
+      r.entradas > 0 ? `+${r.entradas.toLocaleString("es-PY")}` : "0",
+      r.salidas > 0 ? `-${r.salidas.toLocaleString("es-PY")}` : "0",
+      r.stockFinal.toLocaleString("es-PY"),
     ]),
     columnStyles: {
       1: { halign: "center", cellWidth: 14 },
@@ -193,12 +195,12 @@ export function exportEntradasPDF(data: Movement[], filename = "entradas") {
     startY,
     head: [["Fecha", "Material", "Lote", "Lote SAP", "N° Doc.", "Cantidad", "Pallets", "Depósito/Ubic.", "Proveedor", "Transportista", "Chofer", "Notas", "Estado"]],
     body: data.map((r) => [
-      new Date(r.date).toLocaleDateString("es-AR"),
+      fmtDate(r.date),
       `${r.material.code} · ${r.material.description}`,
       r.lotCode ?? "-",
       r.sapLot ?? "-",
       r.documentNumber ?? "-",
-      `${r.quantity.toLocaleString("es-AR")} ${r.material.unitOfMeasure ?? ""}`.trim(),
+      `${r.quantity.toLocaleString("es-PY")} ${r.material.unitOfMeasure ?? ""}`.trim(),
       r.pallets != null ? String(r.pallets) : "-",
       `${r.warehouse?.name ?? "-"}${r.location?.code ? ` / ${r.location.code}` : ""}`,
       r.supplier ?? "-",
@@ -225,11 +227,11 @@ export function exportSalidasPDF(data: Movement[], filename = "salidas") {
     startY,
     head: [["Fecha", "Material", "Lote", "Lote SAP", "Cantidad", "Pallets", "Desde", "Destino", "Transportista", "Chofer", "Notas"]],
     body: data.map((r) => [
-      new Date(r.date).toLocaleDateString("es-AR"),
+      fmtDate(r.date),
       `${r.material.code} · ${r.material.description}`,
       r.lotCode ?? "-",
       r.sapLot ?? "-",
-      `${r.quantity.toLocaleString("es-AR")} ${r.material.unitOfMeasure ?? ""}`.trim(),
+      `${r.quantity.toLocaleString("es-PY")} ${r.material.unitOfMeasure ?? ""}`.trim(),
       r.pallets != null ? String(r.pallets) : "-",
       `${r.warehouse?.name ?? r.from?.warehouseName ?? "-"}${(r.location?.code ?? r.from?.locationCode) ? ` / ${r.location?.code ?? r.from?.locationCode}` : ""}`,
       r.destination ?? "-",
@@ -258,10 +260,10 @@ export function exportLotesPDF(data: Lot[], filename = "lotes") {
       r.lotCode,
       r.sapLot ?? "-",
       r.product ? `${r.product.code} · ${r.product.description}` : r.productId,
-      r.fechaVencimiento ? new Date(r.fechaVencimiento).toLocaleDateString("es-AR") : "-",
-      r.fechaFabricacion ? new Date(r.fechaFabricacion).toLocaleDateString("es-AR") : "-",
+      r.fechaVencimiento ? fmtDate(r.fechaVencimiento) : "-",
+      fmtDate(r.fechaFabricacion),
       r.proveedor ?? "-",
-      r.stockActual.toLocaleString("es-AR"),
+      r.stockActual.toLocaleString("es-PY"),
       r.status === "PENDING_REGULARIZATION" ? "Pendiente" : "Normal",
     ]),
     columnStyles: { 6: { halign: "right" } },
@@ -286,9 +288,9 @@ export function exportTrazabilidadPDF(
     startY,
     head: [["Fecha", "Tipo", "Cantidad", "Desde", "Destino", "Documento", "Notas"]],
     body: history.map((e) => [
-      new Date(e.at).toLocaleDateString("es-AR"),
+      fmtDate(e.at),
       MOVE_LABEL_MAP[e.type] ?? e.type,
-      e.quantity.toLocaleString("es-AR"),
+      e.quantity.toLocaleString("es-PY"),
       `${e.fromWarehouseName ?? e.warehouseName ?? "-"}${e.fromLocationCode ? ` / ${e.fromLocationCode}` : ""}`,
       `${e.toWarehouseName ?? "-"}${e.toLocationCode ? ` / ${e.toLocationCode}` : ""}`,
       e.documentNumber ?? "-",
@@ -328,9 +330,9 @@ export function exportPalletHistoryPDF(
     startY,
     head: [["Fecha", "Tipo", "Cantidad", "Desde", "Hacia", "Documento", "Notas"]],
     body: events.map((e) => [
-      new Date(e.date).toLocaleDateString("es-AR"),
+      fmtDate(e.date),
       MOVE_LABEL[e.type] ?? e.type,
-      e.quantity.toLocaleString("es-AR"),
+      e.quantity.toLocaleString("es-PY"),
       e.from ? `${e.from.locationCode} (${e.from.warehouseName ?? ""})` : "-",
       e.to ? `${e.to.locationCode} (${e.to.warehouseName ?? ""})` : "-",
       e.documentNumber ?? "-",

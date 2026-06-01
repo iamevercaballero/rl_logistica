@@ -8,14 +8,49 @@ export type LotPallet = {
   currentLocationId?: string | null;
   status: string;
   createdAt?: string | null;
-  exitedAt?:  string | null;
+  exitedAt?: string | null;
+  // Enriched fields (present when returned from GET /pallets)
+  lotCode?: string;
+  fechaVencimiento?: string | null;
+  productId?: string;
+  productCode?: string;
+  productDescription?: string;
+  stackable?: boolean;
+  maxStackLevel?: number | null;
+  canReceiveWeightOnTop?: boolean;
+  locationCode?: string | null;
+  warehouseId?: string | null;
+  warehouseName?: string | null;
 };
 
-/** Alias de compatibilidad para la página Palets */
 export type Pallet = LotPallet;
 
-export async function listPallets(): Promise<LotPallet[]> {
-  const { data } = await api.get<LotPallet[]>("/pallets");
+export type PalletKpis = {
+  total: number;
+  available: number;
+  partial: number;
+  blocked: number;
+  damaged: number;
+  inTransit: number;
+  exited: number;
+  empty: number;
+  noLocation: number;
+};
+
+export async function listPallets(filters?: {
+  lotId?: string;
+  status?: string;
+  productId?: string;
+  locationId?: string;
+  search?: string;
+}): Promise<LotPallet[]> {
+  const params: Record<string, string> = {};
+  if (filters?.lotId)      params.lotId      = filters.lotId;
+  if (filters?.status)     params.status     = filters.status;
+  if (filters?.productId)  params.productId  = filters.productId;
+  if (filters?.locationId) params.locationId = filters.locationId;
+  if (filters?.search)     params.search     = filters.search;
+  const { data } = await api.get<LotPallet[]>("/pallets", { params });
   return data;
 }
 
@@ -24,9 +59,18 @@ export async function getPalletsByLot(lotId: string, status = "AVAILABLE"): Prom
   return data;
 }
 
-/** Todos los pallets de un lote, sin filtrar por estado (activos + despachados). */
 export async function getAllPalletsByLot(lotId: string): Promise<LotPallet[]> {
   const { data } = await api.get<LotPallet[]>("/pallets", { params: { lotId } });
+  return data;
+}
+
+export async function getPalletKpis(): Promise<PalletKpis> {
+  const { data } = await api.get<PalletKpis>("/pallets/kpis");
+  return data;
+}
+
+export async function reconcilePalletStatuses(): Promise<{ exited: number; partial: number }> {
+  const { data } = await api.post<{ exited: number; partial: number }>("/pallets/reconcile-status");
   return data;
 }
 
@@ -41,6 +85,20 @@ export async function createPallet(payload: {
   return data;
 }
 
+export async function updatePallet(id: string, payload: Partial<{
+  quantity: number;
+  currentLocationId: string | null;
+  status: string;
+}>): Promise<LotPallet> {
+  const { data } = await api.patch<LotPallet>(`/pallets/${id}`, payload);
+  return data;
+}
+
+export async function quickTransferPallet(palletId: string, toLocationId: string): Promise<LotPallet> {
+  const { data } = await api.post<LotPallet>(`/pallets/${palletId}/transfer`, { toLocationId });
+  return data;
+}
+
 export async function deletePallet(id: string): Promise<void> {
   await api.delete(`/pallets/${id}`);
 }
@@ -52,6 +110,7 @@ export type PalletHistoryEvent = {
   type: string;
   date: string;
   quantity: number;
+  remainingAfter?: number;
   documentNumber?: string | null;
   supplier?: string | null;
   carrier?: string | null;

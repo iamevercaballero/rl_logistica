@@ -569,7 +569,7 @@ export default function MovementsPage() {
               <tbody>
                 {pending.map((m) => (
                   <tr key={m.id}>
-                    <td style={{ fontSize: 12, whiteSpace: "nowrap", color: "var(--muted)" }}>{new Date(m.date).toLocaleString("es-PY")}</td>
+                    <td style={{ fontSize: 12, whiteSpace: "nowrap", color: "var(--muted)" }}>{new Date(m.date).toLocaleString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
                     <td><strong>{m.material.code}</strong><span style={{ color: "var(--muted)", fontSize: 12 }}> · {m.material.description}</span></td>
                     <td style={{ fontWeight: 700 }}>{m.quantity.toLocaleString("es-PY")}</td>
                     <td style={{ fontSize: 12, color: "var(--muted)", maxWidth: 220 }}>{m.notes || "—"}</td>
@@ -597,7 +597,7 @@ export default function MovementsPage() {
             <div style={{ background: "var(--bg)", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13 }}>
               <strong>{regMovement.material.code}</strong> · {regMovement.material.description}
               <span style={{ marginLeft: 12, color: "var(--muted)" }}>{regMovement.quantity.toLocaleString("es-PY")} unid.</span>
-              <span style={{ marginLeft: 12, color: "var(--muted)" }}>{new Date(regMovement.date).toLocaleDateString("es-PY")}</span>
+              <span style={{ marginLeft: 12, color: "var(--muted)" }}>{new Date(regMovement.date).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" })}</span>
             </div>
             <form onSubmit={handleRegularize} style={{ display: "grid", gap: 10 }}>
               <div>
@@ -999,7 +999,7 @@ export default function MovementsPage() {
                           <div style={{ display: "flex", gap: 14, alignItems: "center", fontSize: 12 }}>
                             {row.lot.fechaVencimiento && (
                               <span style={{ color: "var(--muted)" }}>
-                                Vence: {new Date(row.lot.fechaVencimiento).toLocaleDateString("es-PY")}
+                                Vence: {new Date(row.lot.fechaVencimiento).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" })}
                                 {expiryBadge(days)}
                               </span>
                             )}

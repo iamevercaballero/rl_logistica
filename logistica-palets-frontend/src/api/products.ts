@@ -7,6 +7,10 @@ export type Product = {
   unitOfMeasure?: string;
   active: boolean;
   stockMinimo?: number | null;
+  stackable: boolean;
+  maxStackLevel?: number | null;
+  canReceiveWeightOnTop: boolean;
+  stackingNotes?: string | null;
 };
 
 export type StockAlert = {
@@ -34,6 +38,10 @@ export async function createProduct(payload: {
   unitOfMeasure?: string;
   active?: boolean;
   stockMinimo?: number;
+  stackable?: boolean;
+  maxStackLevel?: number | null;
+  canReceiveWeightOnTop?: boolean;
+  stackingNotes?: string | null;
 }): Promise<Product> {
   const { data } = await api.post<Product>("/products", payload);
   return data;
@@ -44,7 +52,11 @@ export async function updateProduct(id: string, payload: Partial<{
   description: string;
   unitOfMeasure: string;
   active: boolean;
-  stockMinimo: number;
+  stockMinimo: number | null;
+  stackable: boolean;
+  maxStackLevel: number | null;
+  canReceiveWeightOnTop: boolean;
+  stackingNotes: string | null;
 }>): Promise<Product> {
   const { data } = await api.patch<Product>(`/products/${id}`, payload);
   return data;

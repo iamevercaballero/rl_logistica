@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { fmtDateMonthShort, fmtDateShort, fmtDateLong } from "../utils/dateFormat";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CartesianGrid,
@@ -49,7 +50,7 @@ function formatRelativeDate(value: string) {
   if (diffMin < 60) return `Hace ${diffMin} min`;
   const diffH = Math.floor(diffMin / 60);
   if (diffH < 24) return `Hace ${diffH} h`;
-  return date.toLocaleDateString("es-AR", { day: "2-digit", month: "short" });
+  return fmtDateMonthShort(date);
 }
 
 function daysUntil(dateStr: string): number {
@@ -166,7 +167,7 @@ function KpiCard({ label, value, icon, delta, accentColor = "var(--primary)", su
           {label}
         </div>
         <div style={{ fontSize: 28, fontWeight: 900, letterSpacing: -1, color: "var(--text)", lineHeight: 1 }}>
-          {typeof value === "number" ? value.toLocaleString("es-AR") : value}
+          {typeof value === "number" ? value.toLocaleString("es-PY") : value}
         </div>
         {subtitle && (
           <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>{subtitle}</div>
@@ -191,7 +192,7 @@ function buildTimeSeriesData(movements: ReturnType<typeof Array.prototype.slice>
   const map = new Map<string, { date: string; entradas: number; salidas: number }>();
 
   for (const m of movements) {
-    const dateKey = new Date(m.date).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" });
+    const dateKey = fmtDateShort(m.date);
     const existing = map.get(dateKey) ?? { date: dateKey, entradas: 0, salidas: 0 };
     if (m.type === "ENTRY" || m.type === "ADJUSTMENT_IN") existing.entradas += m.quantity;
     if (m.type === "EXIT" || m.type === "ADJUSTMENT_OUT") existing.salidas += m.quantity;
@@ -569,19 +570,6 @@ export default function DashboardPage() {
             />
 
             <KpiCard
-              label="Pend. regularización"
-              value={kpis.pendingRegularizations}
-              icon={
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                  <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" />
-                  <line x1="12" y1="16" x2="12.01" y2="16" />
-                </svg>
-              }
-              accentColor={kpis.pendingRegularizations > 0 ? "var(--warning)" : "var(--success)"}
-              alert={kpis.pendingRegularizations > 5}
-            />
-
-            <KpiCard
               label="Lotes a vencer (60d)"
               value={kpis.expiringLots}
               icon={
@@ -633,7 +621,7 @@ export default function DashboardPage() {
                       </span>
                       <span style={{ fontSize: 12, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         <strong style={{ color: "var(--text)" }}>{m.material.code}</strong>
-                        {" · "}{m.quantity.toLocaleString("es-AR")} u.
+                        {" · "}{m.quantity.toLocaleString("es-PY")} u.
                       </span>
                     </div>
                     <span style={{ fontSize: 11, color: "var(--muted)", flexShrink: 0 }}>
@@ -759,10 +747,10 @@ export default function DashboardPage() {
                 </div>
                 <div style={{ display: "flex", gap: 8, fontSize: 11, color: "var(--muted)" }}>
                   <span>Lote: <strong style={{ color: "var(--text-variant)" }}>{lot.lotCode}</strong></span>
-                  <span>Stock: <strong style={{ color: "var(--text-variant)" }}>{lot.stockActual.toLocaleString("es-AR")}</strong></span>
+                  <span>Stock: <strong style={{ color: "var(--text-variant)" }}>{lot.stockActual.toLocaleString("es-PY")}</strong></span>
                 </div>
                 <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                  Vence: {new Date(lot.fechaVencimiento!).toLocaleDateString("es-AR", { day: "2-digit", month: "short", year: "numeric" })}
+                  Vence: {fmtDateLong(lot.fechaVencimiento)}
                 </div>
               </div>
             ))}

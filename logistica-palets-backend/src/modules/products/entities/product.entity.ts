@@ -19,4 +19,16 @@ export class Product {
 
   @Column({ type: 'int', nullable: true })
   stockMinimo?: number | null;
+
+  @Column({ default: true })
+  stackable: boolean;
+
+  @Column({ type: 'int', nullable: true })
+  maxStackLevel?: number | null;
+
+  @Column({ default: true })
+  canReceiveWeightOnTop: boolean;
+
+  @Column({ type: 'varchar', nullable: true })
+  stackingNotes?: string | null;
 }

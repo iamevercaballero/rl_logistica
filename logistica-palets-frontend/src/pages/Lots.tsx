@@ -100,7 +100,7 @@ function expiryRowStyle(fecha?: string | null): React.CSSProperties {
 
 function fmtDate(iso?: string | null) {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("es-PY", { day: "2-digit", month: "2-digit" });
+  return new Date(iso).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit" });
 }
 
 function ExpandedPalletsRow({ lotId, locationMap, colCount }: { lotId: string; locationMap: Record<string, string>; colCount: number }) {
@@ -491,7 +491,7 @@ export default function LotsPage() {
                             ? (
                               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                 <span style={{ fontVariantNumeric: "tabular-nums", color: "var(--text-variant)" }}>
-                                  {new Date(item.fechaVencimiento).toLocaleDateString("es-PY", { day: "2-digit", month: "2-digit", year: "2-digit" })}
+                                  {new Date(item.fechaVencimiento).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "2-digit" })}
                                 </span>
                                 <ExpiryBadge fecha={item.fechaVencimiento} />
                               </div>

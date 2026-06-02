@@ -277,7 +277,10 @@ export default function MovementsPage() {
       if (i !== lotIdx) return r;
       const ids = new Set(r.selectedIds);
       if (ids.has(palletId)) ids.delete(palletId); else ids.add(palletId);
-      return { ...r, selectedIds: ids };
+      const selQty = r.lot.pallets
+        .filter((p) => ids.has(p.id))
+        .reduce((s, p) => s + p.quantity, 0);
+      return { ...r, selectedIds: ids, exitQtyInput: selQty > 0 ? String(selQty) : "" };
     }));
   }
   function toggleAllPallets(lotIdx: number, checked: boolean) {
@@ -285,7 +288,8 @@ export default function MovementsPage() {
       if (i !== lotIdx) return r;
       const avail = r.lot.status !== "PENDING_REGULARIZATION" ? r.lot.pallets : [];
       const ids = checked ? new Set(avail.map((p) => p.id)) : new Set<string>();
-      return { ...r, selectedIds: ids };
+      const selQty = checked ? avail.reduce((s, p) => s + p.quantity, 0) : 0;
+      return { ...r, selectedIds: ids, exitQtyInput: selQty > 0 ? String(selQty) : "" };
     }));
   }
   function toggleExpanded(lotIdx: number) {

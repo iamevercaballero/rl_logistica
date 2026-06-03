@@ -1,10 +1,33 @@
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createProduct, deleteProduct, listProducts, type Product } from "../api/products";
 import { useAuth } from "../auth/AuthContext";
 import { canCreate, canDelete } from "../auth/rbac";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
+
+const UNITS_OF_MEASURE = [
+  { value: "UN", label: "UN — Unidad" },
+  { value: "KG", label: "KG — Kilogramo" },
+  { value: "LT", label: "LT — Litro" },
+  { value: "ML", label: "ML — Mililitro" },
+  { value: "GR", label: "GR — Gramo" },
+  { value: "TN", label: "TN — Tonelada" },
+  { value: "TS", label: "TS — Tonelada seca" },
+  { value: "MT", label: "MT — Metro" },
+  { value: "M2", label: "M2 — Metro cuadrado" },
+  { value: "M3", label: "M3 — Metro cúbico" },
+  { value: "PQ", label: "PQ — Paquete" },
+  { value: "CJ", label: "CJ — Caja" },
+  { value: "PL", label: "PL — Pallet" },
+  { value: "PC", label: "PC — Pieza" },
+  { value: "PR", label: "PR — Par" },
+  { value: "DO", label: "DO — Docena" },
+  { value: "GL", label: "GL — Galón" },
+  { value: "RL", label: "RL — Rollo" },
+  { value: "BL", label: "BL — Bolsa" },
+  { value: "FD", label: "FD — Fardo" },
+] as const;
 
 export default function ProductsPage() {
   const { user } = useAuth();
@@ -20,7 +43,20 @@ export default function ProductsPage() {
   const [code, setCode] = useState("");
   const [description, setDescription] = useState("");
   const [unitOfMeasure, setUnitOfMeasure] = useState("UN");
+  const [stackable, setStackable] = useState(true);
+  const [maxStackLevel, setMaxStackLevel] = useState("");
+  const [canReceiveWeightOnTop, setCanReceiveWeightOnTop] = useState(true);
   const [submitted, setSubmitted] = useState(false);
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounce 300ms
+  useEffect(() => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => setSearch(searchInput.trim()), 300);
+    return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
+  }, [searchInput]);
 
   const codeError = useMemo(() => {
     const value = code.trim();
@@ -37,8 +73,8 @@ export default function ProductsPage() {
   }, [description]);
 
   const { data: items = [], isLoading, isError, refetch } = useQuery({
-    queryKey: ["products"],
-    queryFn: () => listProducts(),
+    queryKey: ["products", search],
+    queryFn: () => listProducts(search || undefined),
   });
 
   const createMut = useMutation({
@@ -49,6 +85,9 @@ export default function ProductsPage() {
       setCode("");
       setDescription("");
       setUnitOfMeasure("UN");
+      setStackable(true);
+      setMaxStackLevel("");
+      setCanReceiveWeightOnTop(true);
       setSubmitted(false);
     },
     onError: (err) => toast.error(getFriendlyApiError(err)),
@@ -72,8 +111,11 @@ export default function ProductsPage() {
     createMut.mutate({
       code: code.trim(),
       description: description.trim(),
-      unitOfMeasure: unitOfMeasure.trim(),
+      unitOfMeasure: unitOfMeasure,
       active: true,
+      stackable,
+      maxStackLevel: maxStackLevel ? Number(maxStackLevel) : undefined,
+      canReceiveWeightOnTop,
     });
   }
 
@@ -90,6 +132,53 @@ export default function ProductsPage() {
         <p style={{ color: "var(--muted)", fontSize: 14, marginBottom: 0 }}>
           Catálogo de materiales operativos. {!allowCreate ? "Modo lectura." : ""}
         </p>
+      </div>
+
+      {/* ── Search bar ──────────────────────────────────────────────────────── */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 16, maxWidth: 400 }}>
+        <div style={{ position: "relative", flex: 1 }}>
+          {/* Magnifying glass icon */}
+          <svg
+            width="14" height="14"
+            viewBox="0 0 24 24"
+            fill="none" stroke="var(--muted)" strokeWidth="2"
+            style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}
+            aria-hidden="true"
+          >
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input
+            className="input"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Buscar código o descripción…"
+            aria-label="Buscar materiales"
+            style={{ paddingLeft: 32, paddingRight: searchInput ? 30 : 10, width: "100%", boxSizing: "border-box" }}
+          />
+          {/* Clear button */}
+          {searchInput && (
+            <button
+              type="button"
+              onClick={() => setSearchInput("")}
+              aria-label="Limpiar búsqueda"
+              style={{
+                position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)",
+                background: "none", border: "none", cursor: "pointer",
+                color: "var(--muted)", padding: 2, lineHeight: 1, borderRadius: "50%",
+                display: "flex", alignItems: "center",
+              }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          )}
+        </div>
+        {search && (
+          <span style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>
+            {items.length} resultado{items.length !== 1 ? "s" : ""}
+          </span>
+        )}
       </div>
 
       <form onSubmit={handleSubmit} style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }} aria-label="Nuevo material">
@@ -116,20 +205,64 @@ export default function ProductsPage() {
           aria-describedby={submitted && descriptionError ? `${descId}-err` : undefined}
           style={{ minWidth: 320 }}
         />
-        <input
+        <select
           id={umId}
           className="input"
           disabled={!allowCreate || saving}
           value={unitOfMeasure}
           onChange={(event) => setUnitOfMeasure(event.target.value)}
-          placeholder="UM"
           aria-label="Unidad de medida"
-          style={{ width: 120 }}
-        />
+          style={{ width: 200 }}
+        >
+          {UNITS_OF_MEASURE.map((u) => (
+            <option key={u.value} value={u.value}>{u.label}</option>
+          ))}
+        </select>
         <button className="btn btn--primary" type="submit" disabled={!allowCreate || saving}>
           {createMut.isPending ? "Guardando..." : "Guardar material"}
         </button>
       </form>
+
+      {/* Stacking rules row */}
+      {allowCreate && (
+        <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={stackable}
+              onChange={(e) => setStackable(e.target.checked)}
+              disabled={saving}
+            />
+            Apilable
+          </label>
+          {stackable && (
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+              <span style={{ color: "var(--muted)" }}>Niveles máx.:</span>
+              <input
+                className="input"
+                type="number"
+                min={1}
+                max={20}
+                value={maxStackLevel}
+                onChange={(e) => setMaxStackLevel(e.target.value)}
+                disabled={saving}
+                placeholder="Sin límite"
+                style={{ width: 90 }}
+                aria-label="Niveles máximos de apilamiento"
+              />
+            </label>
+          )}
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={canReceiveWeightOnTop}
+              onChange={(e) => setCanReceiveWeightOnTop(e.target.checked)}
+              disabled={saving}
+            />
+            Recibe peso encima
+          </label>
+        </div>
+      )}
 
       {submitted && codeError ? <p id={`${codeId}-err`} className="form-error" role="alert">{codeError}</p> : null}
       {submitted && descriptionError ? <p id={`${descId}-err`} className="form-error" role="alert">{descriptionError}</p> : null}
@@ -152,6 +285,7 @@ export default function ProductsPage() {
                 <th scope="col">Código</th>
                 <th scope="col">Descripción</th>
                 <th scope="col">UM</th>
+                <th scope="col" style={{ textAlign: "center" }}>Apilable</th>
                 <th scope="col">Estado</th>
                 <th scope="col" />
               </tr>
@@ -162,6 +296,18 @@ export default function ProductsPage() {
                   <td><strong>{item.code}</strong></td>
                   <td>{item.description}</td>
                   <td><span className="badge">{item.unitOfMeasure ?? "-"}</span></td>
+                  <td style={{ textAlign: "center" }}>
+                    {item.stackable === false ? (
+                      <span title="No apilable" style={{ color: "var(--danger)" }} aria-label="No apilable">✗</span>
+                    ) : (
+                      <span title="Apilable" style={{ color: "var(--success)" }} aria-label="Apilable">✓</span>
+                    )}
+                    {item.maxStackLevel != null && (
+                      <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: 4 }}>
+                        ≤{item.maxStackLevel}
+                      </span>
+                    )}
+                  </td>
                   <td>
                     <span className={item.active ? "badge badge--entry" : "badge"}>
                       {item.active ? "Activo" : "Inactivo"}

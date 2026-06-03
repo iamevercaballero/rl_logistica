@@ -57,4 +57,10 @@ export class ReportsController {
   kpis(@Query() query: KpisQueryDto) {
     return this.service.kpis(query);
   }
+
+  @Get('freshness')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  freshness(@Query('productId') productId?: string) {
+    return this.service.freshness(productId);
+  }
 }

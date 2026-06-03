@@ -15,6 +15,6 @@ export class CreatePalletDto {
   currentLocationId: string;
 
   @IsOptional()
-  @IsIn(['AVAILABLE', 'BLOCKED', 'DAMAGED', 'IN_TRANSIT'])
+  @IsIn(['AVAILABLE', 'PARTIAL', 'BLOCKED', 'DAMAGED', 'IN_TRANSIT', 'EMPTY'])
   status?: string;
 }

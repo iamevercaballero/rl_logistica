@@ -57,6 +57,8 @@ export class MovementsService {
       await this.ensureExplicitWarehouseConsistency(manager, dto, resolved);
 
       const isIncrease = ['ENTRY', 'ADJUSTMENT_IN'].includes(dto.type);
+      // EXIT sin palletItems usa auto-FEFO: stock se reduce palet a palet después de guardar el movimiento
+      let useAutoFefo = false;
 
       if (dto.palletItems?.length) {
         // ENTRY/ADJUSTMENT_IN: aumentar stock total ahora con ubicación del formulario.
@@ -72,6 +74,9 @@ export class MovementsService {
             await this.applyIncrease(manager, dto.productId, resolved.warehouseId, resolved.locationId, totalQty);
             break;
           case 'EXIT':
+            // Sin palletItems: asignación FEFO automática post-guardado
+            useAutoFefo = true;
+            break;
           case 'ADJUSTMENT_OUT':
             await this.applyDecrease(manager, dto.productId, resolved.warehouseId, resolved.locationId, totalQty);
             break;
@@ -112,17 +117,26 @@ export class MovementsService {
       const movement = manager.create(Movement, movementData);
       await manager.save(movement);
 
+      // EXIT sin palletItems: asignación FEFO automática (busca y descuenta palets en orden de vencimiento)
+      if (useAutoFefo) {
+        await this.autoFefoExit(manager, dto.productId, resolved.locationId, resolved.warehouseId, totalQty, movement.id);
+      }
+
       // Loop palet a palet
       if (dto.palletItems?.length) {
         for (const item of dto.palletItems) {
           let resolvedLotId: string | undefined;
           let resolvedPalletId: string | undefined = item.palletId;
+          // locationId para MovementDetail — ubicación física del palet en este movimiento
+          let detailLocationId: string | null = null;
 
           if (item.palletId) {
             const pallet = await manager.getRepository(Pallet).findOne({ where: { id: item.palletId } });
             if (!pallet) throw new NotFoundException(`Palet no encontrado: ${item.palletId}`);
             if (pallet.status === 'EXITED') throw new BadRequestException(`El palet ${pallet.code} ya fue despachado`);
             resolvedLotId = pallet.lotId;
+            // Para EXIT/TRANSFER: la ubicación de origen es donde estaba el palet
+            detailLocationId = pallet.currentLocationId ?? null;
 
             if (dto.type === 'EXIT' || dto.type === 'ADJUSTMENT_OUT') {
               // Verificar que el lote no esté pendiente de regularización
@@ -141,8 +155,17 @@ export class MovementsService {
                 stockWarehouseId = loc?.warehouse?.id ?? null;
               }
               await this.applyDecrease(manager, dto.productId, stockWarehouseId, stockLocationId, item.quantity);
-              pallet.status = 'EXITED';
-              pallet.exitedAt = new Date();
+
+              // Salida parcial: reducir cantidad del pallet.
+              // - llega a 0  → EXITED (despachado completo)
+              // - queda saldo → PARTIAL (salida parcial), salvo que esté BLOCKED/DAMAGED
+              pallet.quantity = Math.max(0, pallet.quantity - item.quantity);
+              if (pallet.quantity === 0) {
+                pallet.status = 'EXITED';
+                pallet.exitedAt = new Date();
+              } else if (pallet.status === 'AVAILABLE' || pallet.status === 'PARTIAL') {
+                pallet.status = 'PARTIAL';
+              }
 
             } else if (dto.type === 'TRANSFER') {
               // Transferencia: reducir desde ubicación actual del palet, aumentar en destino
@@ -163,7 +186,7 @@ export class MovementsService {
             // ENTRADA: crear/encontrar lote y registrar nuevo palet
             const lot = await this.findOrCreateLot(
               manager, dto.productId, item.lotCode,
-              item.fechaVencimiento, undefined,
+              item.fechaVencimiento, item.proveedor,
               item.fechaFabricacion, item.sapLot,
               dto.isProvisional ? 'PENDING_REGULARIZATION' : 'NORMAL',
             );
@@ -178,6 +201,8 @@ export class MovementsService {
             });
             const savedPallet = await manager.save(pallet);
             resolvedPalletId = savedPallet.id;
+            // Para ENTRADA: la ubicación de destino es donde queda el palet
+            detailLocationId = resolved.locationId ?? null;
           }
 
           if (resolvedLotId) {
@@ -186,11 +211,22 @@ export class MovementsService {
               lotId: resolvedLotId,
               palletId: resolvedPalletId ?? undefined,
               quantity: item.quantity,
+              locationId: detailLocationId ?? undefined,  // ← FIX 1: guardar ubicación física
             });
             await manager.save(detail);
-            await this.updateLotStock(manager, resolvedLotId, isIncrease ? item.quantity : -item.quantity);
+            // TRANSFER only moves pallets between locations; lot.stockActual must NOT change
+            if (dto.type !== 'TRANSFER') {
+              await this.updateLotStock(manager, resolvedLotId, isIncrease ? item.quantity : -item.quantity);
+            }
           }
         }
+
+        // FIX 2: registrar cantidad real de palets afectados en el movimiento
+        if (!dto.pallets) {
+          movement.pallets = dto.palletItems.length;
+          await manager.save(movement);
+        }
+
       } else if (dto.lotId) {
         await this.updateLotStock(manager, dto.lotId, isIncrease ? totalQty : -totalQty);
       }
@@ -216,6 +252,88 @@ export class MovementsService {
     this.events.emitStockUpdated({ warehouseId: result.warehouseId });
 
     return { movementId: result.movementId, stockImpact: result.stockImpact };
+  }
+
+  /**
+   * Edita metadatos de cualquier movimiento (sin importar su estado).
+   * Propaga cambios de lote (fechas, SAP, proveedor) a los lotes vinculados.
+   * Cada campo modificado queda registrado en regularization_logs con el motivo.
+   */
+  async editMetadata(id: string, dto: RegularizeMovementDto, userId: string) {
+    const result = await this.dataSource.transaction(async (manager) => {
+      const movement = await manager.findOne(Movement, { where: { id } });
+      if (!movement) throw new NotFoundException('Movimiento no encontrado');
+
+      const logs: DeepPartial<RegularizationLog>[] = [];
+
+      const movementStringFields = [
+        'documentNumber', 'supplier', 'carrier', 'driver', 'destination', 'notes',
+      ] as const;
+
+      for (const field of movementStringFields) {
+        const newVal = dto[field]?.trim() ?? null;
+        if (newVal === null) continue;
+        const oldVal = (movement[field] as string | undefined) ?? null;
+        if (newVal !== oldVal) {
+          logs.push({ movementId: id, field, oldValue: oldVal, newValue: newVal, changedById: userId, reason: dto.reason });
+          (movement as unknown as Record<string, unknown>)[field] = newVal || null;
+        }
+      }
+
+      // Propagar cambios a los lotes asociados
+      const details = await manager.getRepository(MovementDetail).find({ where: { movementId: id } });
+      const detailLotIds = details.map((d) => d.lotId).filter(Boolean) as string[];
+      // Incluir movement.lotId para movimientos bulk (sin palletItems) que no generan MovementDetail
+      const lotIds = [...new Set([...detailLotIds, ...(movement.lotId ? [movement.lotId] : [])])];
+
+      if (lotIds.length > 0) {
+        const lots = await manager.getRepository(Lot).find({ where: lotIds.map((lotId) => ({ id: lotId })) });
+        const lotDateFields = ['fechaVencimiento', 'fechaFabricacion'] as const;
+        const lotStringFields = ['sapLot', 'proveedor'] as const;
+
+        for (const lot of lots) {
+          let lotChanged = false;
+
+          for (const field of lotStringFields) {
+            const newVal = dto[field]?.trim() ?? null;
+            if (newVal === null) continue;
+            const oldVal = lot[field] ?? null;
+            if (newVal !== oldVal) {
+              logs.push({ movementId: id, field: `lot.${lot.lotCode}.${field}`, oldValue: oldVal, newValue: newVal, changedById: userId, reason: dto.reason });
+              lot[field] = newVal;
+              lotChanged = true;
+            }
+          }
+
+          for (const field of lotDateFields) {
+            const newVal = dto[field] ?? null;
+            if (newVal === null) continue;
+            const oldVal = lot[field] ?? null;
+            if (newVal !== oldVal) {
+              logs.push({ movementId: id, field: `lot.${lot.lotCode}.${field}`, oldValue: oldVal, newValue: newVal, changedById: userId, reason: dto.reason });
+              lot[field] = newVal;
+              lotChanged = true;
+            }
+          }
+
+          if (lotChanged) await manager.save(Lot, lot);
+        }
+      }
+
+      await manager.save(movement);
+      for (const log of logs) {
+        await manager.save(manager.create(RegularizationLog, log));
+      }
+
+      return { edited: true, changes: logs.length };
+    });
+
+    void Promise.all([
+      this.cache.delPattern('kpis:*'),
+      this.cache.delPattern('stock:*'),
+    ]);
+
+    return result;
   }
 
   async regularize(id: string, dto: RegularizeMovementDto, userId: string) {
@@ -244,7 +362,9 @@ export class MovementsService {
 
       // Actualizar lotes asociados vía MovementDetail
       const details = await manager.getRepository(MovementDetail).find({ where: { movementId: id } });
-      const lotIds = [...new Set(details.map((d) => d.lotId).filter(Boolean))] as string[];
+      const detailLotIds = details.map((d) => d.lotId).filter(Boolean) as string[];
+      // Incluir movement.lotId para movimientos bulk (sin palletItems) que no generan MovementDetail
+      const lotIds = [...new Set([...detailLotIds, ...(movement.lotId ? [movement.lotId] : [])])];
 
       if (lotIds.length > 0) {
         const lots = await manager.getRepository(Lot).find({ where: lotIds.map((lotId) => ({ id: lotId })) });
@@ -314,6 +434,22 @@ export class MovementsService {
       .leftJoin('warehouses', 'toWarehouse', 'toWarehouse.id = movement."toWarehouseId"')
       .leftJoin('locations', 'toLocation', 'toLocation.id = movement."toLocationId"')
       .leftJoin('users', 'encargado', 'encargado.id = movement."encargadoRecepcionId"')
+      .leftJoin('lots', 'lot', 'lot.id = movement."lotId"')
+      // Agregación de lotes desde movement_details: para movimientos con palletItems
+      // que no tienen lotId único, devolvemos los lotes/SAP concatenados.
+      .leftJoin(
+        (sq) =>
+          sq
+            .from('movement_details', 'md')
+            .innerJoin('lots', 'dl', 'dl.id = md."lotId"')
+            .select('md."movementId"', 'movementId')
+            .addSelect('STRING_AGG(DISTINCT dl."lotCode", \', \' ORDER BY dl."lotCode")', 'lotCodes')
+            .addSelect('STRING_AGG(DISTINCT dl."sapLot", \', \' ORDER BY dl."sapLot")', 'sapLots')
+            .addSelect('COUNT(DISTINCT dl.id)', 'lotCount')
+            .groupBy('md."movementId"'),
+        'dl_agg',
+        'dl_agg."movementId" = movement.id',
+      )
       .select([
         'movement.id AS id',
         'movement.type AS type',
@@ -331,6 +467,9 @@ export class MovementsService {
         'movement."adjustmentCategory" AS "adjustmentCategory"',
         'movement.createdById AS "createdById"',
         'movement.lotId AS "lotId"',
+        'COALESCE(lot."lotCode", dl_agg."lotCodes") AS "lotCode"',
+        'COALESCE(lot."sapLot", dl_agg."sapLots") AS "sapLot"',
+        'COALESCE(dl_agg."lotCount", CASE WHEN lot.id IS NOT NULL THEN 1 ELSE 0 END) AS "lotCount"',
         'product.id AS "productId"',
         'product.code AS "productCode"',
         'product.description AS "productDescription"',
@@ -380,6 +519,8 @@ export class MovementsService {
           OR LOWER(COALESCE(movement.notes, '')) LIKE :search
           OR LOWER(COALESCE(product.code, '')) LIKE :search
           OR LOWER(COALESCE(product.description, '')) LIKE :search
+          OR LOWER(COALESCE(lot."lotCode", '')) LIKE :search
+          OR LOWER(COALESCE(dl_agg."lotCodes", '')) LIKE :search
         )`,
         { search },
       );
@@ -413,6 +554,20 @@ export class MovementsService {
       .leftJoin('warehouses', 'toWarehouse', 'toWarehouse.id = movement."toWarehouseId"')
       .leftJoin('locations', 'toLocation', 'toLocation.id = movement."toLocationId"')
       .leftJoin('users', 'encargado', 'encargado.id = movement."encargadoRecepcionId"')
+      .leftJoin('lots', 'lot', 'lot.id = movement."lotId"')
+      .leftJoin(
+        (sq) =>
+          sq
+            .from('movement_details', 'md')
+            .innerJoin('lots', 'dl', 'dl.id = md."lotId"')
+            .select('md."movementId"', 'movementId')
+            .addSelect('STRING_AGG(DISTINCT dl."lotCode", \', \' ORDER BY dl."lotCode")', 'lotCodes')
+            .addSelect('STRING_AGG(DISTINCT dl."sapLot", \', \' ORDER BY dl."sapLot")', 'sapLots')
+            .addSelect('COUNT(DISTINCT dl.id)', 'lotCount')
+            .groupBy('md."movementId"'),
+        'dl_agg',
+        'dl_agg."movementId" = movement.id',
+      )
       .select([
         'movement.id AS id',
         'movement.type AS type',
@@ -432,6 +587,9 @@ export class MovementsService {
         'movement.createdAt AS "createdAt"',
         'movement.palletId AS "palletId"',
         'movement.lotId AS "lotId"',
+        'COALESCE(lot."lotCode", dl_agg."lotCodes") AS "lotCode"',
+        'COALESCE(lot."sapLot", dl_agg."sapLots") AS "sapLot"',
+        'COALESCE(dl_agg."lotCount", CASE WHEN lot.id IS NOT NULL THEN 1 ELSE 0 END) AS "lotCount"',
         'product.id AS "productId"',
         'product.code AS "productCode"',
         'product.description AS "productDescription"',
@@ -609,7 +767,8 @@ export class MovementsService {
       documentNumber: row.documentNumber, supplier: row.supplier, carrier: row.carrier,
       driver: row.driver, destination: row.destination, notes: row.notes,
       createdById: row.createdById, createdAt: row.createdAt ?? row.date,
-      palletId: row.palletId, lotId: row.lotId,
+      palletId: row.palletId, lotId: row.lotId, lotCode: row.lotCode ?? null, sapLot: row.sapLot ?? null,
+      lotCount: this.parseNumber(row.lotCount),
       encargado: row.encargadoId ? { id: row.encargadoId, username: row.encargadoUsername, fullName: row.encargadoFullName } : null,
       material: {
         id: row.productId, code: row.productCode,
@@ -624,6 +783,78 @@ export class MovementsService {
         ? { warehouseId: row.toWarehouseId, warehouseName: row.toWarehouseName, locationId: row.toLocationId, locationCode: row.toLocationCode }
         : null,
     };
+  }
+
+  private async autoFefoExit(
+    manager: EntityManager,
+    productId: string,
+    locationId: string | null,
+    warehouseId: string | null,
+    quantity: number,
+    movementId: string,
+  ): Promise<void> {
+    const palletRepo = manager.getRepository(Pallet);
+
+    const qb = palletRepo
+      .createQueryBuilder('pallet')
+      .innerJoin('lots', 'lot', 'lot.id = pallet."lotId"')
+      .where('pallet.status = :status', { status: 'AVAILABLE' })
+      .andWhere('pallet.quantity > 0')
+      .andWhere('lot."productId" = :productId', { productId })
+      .andWhere("lot.status != 'PENDING_REGULARIZATION'")
+      .orderBy("COALESCE(lot.\"fechaVencimiento\", '9999-12-31')", 'ASC')
+      .addOrderBy('pallet."createdAt"', 'ASC');
+
+    if (locationId) {
+      qb.andWhere('pallet."currentLocationId" = :locationId', { locationId });
+    } else if (warehouseId) {
+      qb.innerJoin('locations', 'loc', 'loc.id = pallet."currentLocationId"')
+        .andWhere('loc."warehouseId" = :warehouseId', { warehouseId });
+    }
+
+    const pallets = await qb.getMany();
+
+    let remaining = quantity;
+    for (const pallet of pallets) {
+      if (remaining <= 0) break;
+
+      const take = Math.min(pallet.quantity, remaining);
+
+      const stockLocationId: string | null = pallet.currentLocationId ?? null;
+      let stockWarehouseId: string | null = null;
+      if (stockLocationId) {
+        const loc = await manager.findOne(Location, { where: { id: stockLocationId } });
+        stockWarehouseId = loc?.warehouse?.id ?? null;
+      }
+      await this.applyDecrease(manager, productId, stockWarehouseId, stockLocationId, take);
+
+      pallet.quantity -= take;
+      if (pallet.quantity === 0) {
+        pallet.status = 'EXITED';
+        pallet.exitedAt = new Date();
+      } else if (pallet.status === 'AVAILABLE' || pallet.status === 'PARTIAL') {
+        pallet.status = 'PARTIAL';
+      }
+      await manager.save(pallet);
+
+      const detail = manager.create(MovementDetail, {
+        movementId,
+        lotId: pallet.lotId,
+        palletId: pallet.id,
+        quantity: take,
+        locationId: pallet.currentLocationId ?? undefined,  // FIX 4: ubicación física del palet
+      });
+      await manager.save(detail);
+
+      await this.updateLotStock(manager, pallet.lotId, -take);
+      remaining -= take;
+    }
+
+    if (remaining > 0) {
+      throw new BadRequestException(
+        `Stock insuficiente: se pueden despachar ${quantity - remaining} de ${quantity} unidades solicitadas`,
+      );
+    }
   }
 
   private describeImpact(type: MovementType) {

@@ -28,8 +28,8 @@ export class SeedController {
   @Post('reset')
   @Roles('ADMIN')
   async reset() {
-    if (process.env.NODE_ENV === 'production') {
-      throw new BadRequestException('Reset deshabilitado en producción.');
+    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_SEED !== 'true') {
+      throw new BadRequestException('Reset deshabilitado en producción. Setear ALLOW_SEED=true para habilitar.');
     }
     return this.seedService.resetData();
   }

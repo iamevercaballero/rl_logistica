@@ -8,6 +8,7 @@ import {
   Delete,
   Query,
   UseGuards,
+  HttpCode,
 } from '@nestjs/common';
 import { LotsService } from './lots.service';
 import { CreateLotDto } from './dto/create-lot.dto';
@@ -26,8 +27,9 @@ export class LotsController {
   findAll(
     @Query('productId') productId?: string,
     @Query('sapLot') sapLot?: string,
+    @Query('includePallets') includePallets?: string,
   ) {
-    return this.service.findAll(productId, sapLot);
+    return this.service.findAll(productId, sapLot, includePallets === 'true');
   }
 
   /** FEFO: lotes con stock disponible ordenados por vencimiento próximo.
@@ -64,5 +66,21 @@ export class LotsController {
   @Roles('ADMIN', 'MANAGER')
   remove(@Param('id') id: string) {
     return this.service.remove(id);
+  }
+
+  /** Reconcilia stockActual de un lote específico desde sus pallets reales. */
+  @Post(':id/reconcile')
+  @HttpCode(200)
+  @Roles('ADMIN', 'MANAGER')
+  reconcile(@Param('id') id: string) {
+    return this.service.reconcileStock(id);
+  }
+
+  /** Reconcilia stockActual de todos los lotes (o de un producto). Solo reporta correcciones. */
+  @Post('reconcile-all')
+  @HttpCode(200)
+  @Roles('ADMIN', 'MANAGER')
+  reconcileAll(@Query('productId') productId?: string) {
+    return this.service.reconcileAllStocks(productId);
   }
 }

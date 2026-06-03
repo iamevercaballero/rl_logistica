@@ -6,6 +6,14 @@ export class DailyStockQueryDto {
   date?: string;
 
   @IsOptional()
+  @IsDateString()
+  dateFrom?: string;
+
+  @IsOptional()
+  @IsDateString()
+  dateTo?: string;
+
+  @IsOptional()
   @IsUUID()
   productId?: string;
 

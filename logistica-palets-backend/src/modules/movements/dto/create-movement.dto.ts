@@ -41,6 +41,12 @@ export class PalletItemDto {
   @IsOptional()
   @IsString()
   sapLot?: string;
+
+  /** Proveedor del lote — informativo por ítem de entrada */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  proveedor?: string;
 }
 
 export class CreateMovementDto {

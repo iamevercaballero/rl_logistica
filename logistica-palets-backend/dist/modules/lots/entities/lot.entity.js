@@ -57,6 +57,9 @@ __decorate([
     __metadata("design:type", String)
 ], Lot.prototype, "status", void 0);
 exports.Lot = Lot = __decorate([
+    (0, typeorm_1.Index)('idx_lot_status', ['status']),
+    (0, typeorm_1.Index)('idx_lot_product', ['productId']),
+    (0, typeorm_1.Index)('idx_lot_vencimiento', ['fechaVencimiento']),
     (0, typeorm_1.Entity)('lots')
 ], Lot);
 //# sourceMappingURL=lot.entity.js.map

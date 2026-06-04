@@ -44,6 +44,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
+var UsersService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.UsersService = void 0;
 const common_1 = require("@nestjs/common");
@@ -51,9 +52,21 @@ const typeorm_1 = require("@nestjs/typeorm");
 const typeorm_2 = require("typeorm");
 const bcrypt = __importStar(require("bcrypt"));
 const user_entity_1 = require("./entities/user.entity");
-let UsersService = class UsersService {
+let UsersService = UsersService_1 = class UsersService {
     constructor(userRepo) {
         this.userRepo = userRepo;
+        this.logger = new common_1.Logger(UsersService_1.name);
+    }
+    async onApplicationBootstrap() {
+        var _a, _b;
+        const count = await this.userRepo.count();
+        if (count > 0)
+            return;
+        const username = (_a = process.env.BOOTSTRAP_ADMIN_USER) !== null && _a !== void 0 ? _a : 'admin';
+        const password = (_b = process.env.BOOTSTRAP_ADMIN_PASSWORD) !== null && _b !== void 0 ? _b : 'admin123';
+        const passwordHash = await bcrypt.hash(password, 10);
+        await this.userRepo.save(this.userRepo.create({ username, passwordHash, role: 'ADMIN', active: true, fullName: 'Administrador' }));
+        this.logger.warn(`Fresh install: usuario admin creado (usuario: ${username}). Cambiá la contraseña.`);
     }
     findAll() {
         return this.userRepo.find({
@@ -105,7 +118,7 @@ let UsersService = class UsersService {
     }
 };
 exports.UsersService = UsersService;
-exports.UsersService = UsersService = __decorate([
+exports.UsersService = UsersService = UsersService_1 = __decorate([
     (0, common_1.Injectable)(),
     __param(0, (0, typeorm_1.InjectRepository)(user_entity_1.User)),
     __metadata("design:paramtypes", [typeorm_2.Repository])

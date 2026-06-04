@@ -17,7 +17,7 @@ exports.UpdatePalletDto = UpdatePalletDto;
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsInt)(),
-    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Min)(0),
     __metadata("design:type", Number)
 ], UpdatePalletDto.prototype, "quantity", void 0);
 __decorate([
@@ -27,7 +27,7 @@ __decorate([
 ], UpdatePalletDto.prototype, "currentLocationId", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.IsIn)(['AVAILABLE', 'BLOCKED', 'DAMAGED', 'IN_TRANSIT']),
+    (0, class_validator_1.IsIn)(['AVAILABLE', 'PARTIAL', 'BLOCKED', 'DAMAGED', 'IN_TRANSIT', 'EMPTY']),
     __metadata("design:type", String)
 ], UpdatePalletDto.prototype, "status", void 0);
 //# sourceMappingURL=update-pallet.dto.js.map

@@ -157,6 +157,9 @@ __decorate([
     __metadata("design:type", Array)
 ], Factura.prototype, "items", void 0);
 exports.Factura = Factura = __decorate([
+    (0, typeorm_1.Index)('idx_facturas_cliente', ['clienteId']),
+    (0, typeorm_1.Index)('idx_facturas_fecha', ['fecha']),
+    (0, typeorm_1.Index)('idx_facturas_estado', ['estado']),
     (0, typeorm_1.Entity)('facturas')
 ], Factura);
 //# sourceMappingURL=factura.entity.js.map

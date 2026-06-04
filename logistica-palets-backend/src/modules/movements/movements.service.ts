@@ -1,11 +1,17 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DataSource, EntityManager, IsNull } from 'typeorm';
 import { CreateMovementDto } from './dto/create-movement.dto';
+import { CreateDocumentDto } from './dto/create-document.dto';
+import { AdjustmentRequest } from '../adjustments/entities/adjustment-request.entity';
+import { AdjustmentRequestLine } from '../adjustments/entities/adjustment-request-line.entity';
+import { UploadsService } from '../uploads/uploads.service';
 import { RegularizeMovementDto } from './dto/regularize-movement.dto';
 import { MovementsQueryDto } from './dto/movements-query.dto';
 import { Movement, MovementType } from './entities/movement.entity';
 import { MovementDetail } from './entities/movement-detail.entity';
+import { LogisticsDocument } from './entities/logistics-document.entity';
 import { RegularizationLog } from './entities/regularization-log.entity';
+import { DocumentSequenceService } from './document-sequence.service';
 import { Product } from '../products/entities/product.entity';
 import { Location } from '../locations/entities/location.entity';
 import { Warehouse } from '../warehouses/entities/warehouse.entity';
@@ -22,10 +28,188 @@ export class MovementsService {
     private readonly dataSource: DataSource,
     private readonly events: EventsGateway,
     private readonly cache: CacheService,
+    private readonly sequences: DocumentSequenceService,
+    private readonly uploads: UploadsService,
   ) {}
 
-  async create(dto: CreateMovementDto, userId: string) {
+  /**
+   * Solicita la anulación de un movimiento ENTRY, EXIT, ADJUSTMENT_IN o ADJUSTMENT_OUT.
+   * Genera automáticamente un AdjustmentRequest con la transacción compensatoria exacta
+   * y lo deja en PENDIENTE_APROBACION para que el MANAGER apruebe.
+   *
+   * Al aprobar: stock se corrige y el movimiento original queda VOIDED.
+   */
+  async requestVoid(id: string, userId: string) {
+    // ── 1. Cargar movimiento y sus detalles ──────────────────
+    const movement = await this.dataSource.getRepository(Movement).findOne({ where: { id } });
+    if (!movement) throw new NotFoundException('Movimiento no encontrado.');
+    if (movement.voidStatus !== 'NONE') {
+      throw new BadRequestException(
+        movement.voidStatus === 'VOID_PENDING'
+          ? 'Este movimiento ya tiene una solicitud de anulación pendiente de aprobación.'
+          : 'Este movimiento ya fue anulado.',
+      );
+    }
+    if (movement.type === 'TRANSFER') {
+      throw new BadRequestException('Las transferencias no pueden anularse automáticamente. Usá el Ajuste de Inventario.');
+    }
+
+    const details = await this.dataSource.getRepository(MovementDetail).find({ where: { movementId: id } });
+
+    // ── 2. Determinar tipo compensatorio ─────────────────────
+    const isIncrease = ['ENTRY', 'ADJUSTMENT_IN'].includes(movement.type);
+    const compensatingType = isIncrease ? 'ADJUSTMENT_OUT' : 'ADJUSTMENT_IN';
+
+    // ── 3. Verificar integridad de pallets (ENTRY: ¿ya salieron?) ───
+    const warnings: string[] = [];
+    if (isIncrease && details.length > 0) {
+      const palletIds = details.map((d) => d.palletId).filter(Boolean) as string[];
+      if (palletIds.length > 0) {
+        const pallets = await this.dataSource.getRepository(Pallet).findByIds(palletIds);
+        const consumed = pallets.filter((p) => p.status === 'EXITED');
+        const partial = pallets.filter((p) => p.status === 'PARTIAL');
+        if (consumed.length > 0) warnings.push(`${consumed.length} pallet(s) ya fueron despachados completamente.`);
+        if (partial.length > 0) warnings.push(`${partial.length} pallet(s) tienen salidas parciales.`);
+      }
+    }
+
+    // ── 4. Construir items compensatorios ────────────────────
+    let palletItems: Array<{ palletId?: string; lotCode?: string; quantity: number; fechaVencimiento?: string; fechaFabricacion?: string; sapLot?: string }>;
+
+    if (details.length > 0) {
+      if (isIncrease) {
+        // ENTRY void → ADJUSTMENT_OUT usando los palletIds originales
+        palletItems = details
+          .filter((d) => d.palletId && d.quantity > 0)
+          .map((d) => ({ palletId: d.palletId!, quantity: d.quantity }));
+      } else {
+        // EXIT void → ADJUSTMENT_IN usando los lotes originales
+        const lotIds = [...new Set(details.map((d) => d.lotId).filter(Boolean))] as string[];
+        const lots = lotIds.length > 0
+          ? await this.dataSource.getRepository(Lot).findByIds(lotIds)
+          : [];
+        const lotMap = Object.fromEntries(lots.map((l) => [l.id, l]));
+        palletItems = details
+          .filter((d) => d.lotId && d.quantity > 0)
+          .map((d) => {
+            const lot = lotMap[d.lotId!];
+            return {
+              lotCode: lot?.lotCode ?? `LOT-VOID-${d.lotId?.slice(0, 8)}`,
+              quantity: d.quantity,
+              fechaVencimiento: lot?.fechaVencimiento ?? undefined,
+              fechaFabricacion: lot?.fechaFabricacion ?? undefined,
+              sapLot: lot?.sapLot ?? undefined,
+            };
+          });
+      }
+    } else {
+      // Movimiento sin detalles de pallets (solo cantidad global)
+      if (isIncrease) {
+        // Sin palletId disponible → solo reducción de stock por cantidad
+        palletItems = [{ quantity: movement.quantity }];
+      } else {
+        // EXIT sin detalle → ADJUSTMENT_IN con lote si existe, sino solo cantidad
+        const lot = movement.lotId
+          ? await this.dataSource.getRepository(Lot).findOne({ where: { id: movement.lotId } })
+          : null;
+        palletItems = [{
+          lotCode: lot?.lotCode ?? `LOT-VOID-${id.slice(0, 8)}`,
+          quantity: movement.quantity,
+          fechaVencimiento: lot?.fechaVencimiento ?? undefined,
+          sapLot: lot?.sapLot ?? undefined,
+        }];
+      }
+    }
+
+    if (palletItems.length === 0 || palletItems.every((i) => i.quantity === 0)) {
+      throw new BadRequestException('No se pudo determinar la cantidad a compensar. Revisá el movimiento.');
+    }
+
+    // ── 5. Crear AdjustmentRequest en una transacción ────────
     const result = await this.dataSource.transaction(async (manager) => {
+      const code = await this.sequences.nextCode(manager, compensatingType);
+
+      const request = manager.create(AdjustmentRequest, {
+        code,
+        type: compensatingType,
+        status: 'PENDIENTE_APROBACION',
+        reason: 'DIFERENCIA_INVENTARIO',
+        notes: `Anulación automática de ${movement.type} del ${new Date(movement.date).toLocaleDateString('es-PY')}${movement.documentNumber ? ` · Rem. ${movement.documentNumber}` : ''}`,
+        warehouseId: movement.warehouseId ?? null,
+        locationId: movement.locationId ?? null,
+        originalMovementId: id,
+        createdById: userId,
+        totalLines: 1,
+        totalQuantity: palletItems.reduce((s, i) => s + i.quantity, 0),
+      });
+      await manager.save(request);
+
+      const line = manager.create(AdjustmentRequestLine, {
+        requestId: request.id,
+        productId: movement.productId,
+        palletItemsJson: JSON.stringify(palletItems),
+        totalQuantity: palletItems.reduce((s, i) => s + i.quantity, 0),
+        locationId: movement.locationId ?? null,
+      });
+      await manager.save(line);
+
+      // Marcar movimiento como VOID_PENDING
+      await manager.update(Movement, id, {
+        voidStatus: 'VOID_PENDING',
+        voidAdjRequestId: request.id,
+      });
+
+      return { requestId: request.id, code: request.code };
+    });
+
+    void this.uploads.log('MOVEMENT', id, 'ANULACION_SOLICITADA',
+      `Anulación solicitada — generado ${result.code} pendiente de aprobación`,
+      userId, undefined, undefined, result.code);
+
+    return { ...result, warnings };
+  }
+
+  async create(dto: CreateMovementDto, userId: string) {
+    const result = await this.dataSource.transaction((manager) =>
+      this.createInTransaction(manager, dto, userId),
+    );
+
+    // Post-transaction: invalidate cache + broadcast (fire-and-forget, non-blocking)
+    void Promise.all([
+      this.cache.delPattern('kpis:*'),
+      this.cache.delPattern('stock:*'),
+    ]);
+    this.events.emitMovementCreated({
+      movementId: result.movementId,
+      type: result.type,
+      warehouseId: result.warehouseId,
+    });
+    this.events.emitStockUpdated({ warehouseId: result.warehouseId });
+
+    return { movementId: result.movementId, stockImpact: result.stockImpact };
+  }
+
+  /**
+   * Procesa un único movimiento (una línea) dentro de una transacción existente.
+   * Contiene el motor de stock; reutilizado por create() y createDocument().
+   * @param documentId cabecera (remito) a la que pertenece la línea, si aplica.
+   */
+  /** Expuesto para uso desde AdjustmentsService (aprobación de ajustes). */
+  async createInTransactionPublic(
+    manager: EntityManager,
+    dto: CreateMovementDto,
+    userId: string,
+    documentId?: string,
+  ): Promise<{ movementId: string; stockImpact: string; type: MovementType; warehouseId: string | null }> {
+    return this.createInTransaction(manager, dto, userId, documentId);
+  }
+
+  private async createInTransaction(
+    manager: EntityManager,
+    dto: CreateMovementDto,
+    userId: string,
+    documentId?: string,
+  ): Promise<{ movementId: string; stockImpact: string; type: MovementType; warehouseId: string | null }> {
       const product = await manager.findOne(Product, { where: { id: dto.productId } });
       if (!product || !product.active) {
         throw new NotFoundException('Material inexistente o inactivo');
@@ -107,6 +291,7 @@ export class MovementsService {
         notes: dto.notes?.trim() || undefined,
         palletId: dto.palletId ?? undefined,
         lotId: dto.lotId ?? undefined,
+        documentId: documentId ?? undefined,
         createdById: userId,
         encargadoRecepcionId: dto.encargadoRecepcionId ?? undefined,
         status: dto.isProvisional ? 'PENDING_REGULARIZATION' : 'NORMAL',
@@ -237,21 +422,163 @@ export class MovementsService {
         type: dto.type,
         warehouseId: resolved.warehouseId ?? null,
       };
+  }
+
+  /**
+   * Crea un documento logístico (remito) con múltiples líneas (producto+lote+pallets)
+   * en UNA sola transacción. Genera el código interno RLNE/RLNS y vincula cada
+   * movimiento a la cabecera. Si una línea falla, se revierte TODO el documento.
+   */
+  async createDocument(dto: CreateDocumentDto, userId: string) {
+    const result = await this.dataSource.transaction(async (manager) => {
+      const docDate = dto.date ? new Date(dto.date) : new Date();
+      const code = await this.sequences.nextCode(manager, dto.type, docDate);
+
+      const document = manager.create(LogisticsDocument, {
+        code,
+        type: dto.type,
+        status: 'APROBADO',
+        date: docDate,
+        documentNumber: dto.documentNumber?.trim() || null,
+        supplier: dto.supplier?.trim() || null,
+        destination: dto.destination?.trim() || null,
+        warehouseId: dto.warehouseId ?? null,
+        carrier: dto.carrier?.trim() || null,
+        driver: dto.driver?.trim() || null,
+        vehiclePlate: dto.vehiclePlate?.trim() || null,
+        encargadoId: dto.encargadoId ?? null,
+        notes: dto.notes?.trim() || null,
+        createdById: userId,
+      });
+      await manager.save(document);
+
+      let totalQuantity = 0;
+      const movementIds: string[] = [];
+
+      for (const line of dto.lines) {
+        // Cada línea es un movimiento mono-producto que hereda la cabecera del documento.
+        const lineDto: CreateMovementDto = {
+          type: dto.type,
+          date: dto.date,
+          productId: line.productId,
+          quantity: line.quantity,
+          pallets: line.pallets,
+          warehouseId: dto.warehouseId,
+          locationId: line.locationId,
+          documentNumber: dto.documentNumber,
+          supplier: dto.supplier,
+          carrier: dto.carrier,
+          driver: dto.driver,
+          destination: dto.destination,
+          notes: dto.notes,
+          lotId: line.lotId,
+          encargadoRecepcionId: dto.encargadoId,
+          isProvisional: dto.isProvisional,
+          palletItems: line.palletItems,
+        };
+
+        const res = await this.createInTransaction(manager, lineDto, userId, document.id);
+        movementIds.push(res.movementId);
+        totalQuantity += line.palletItems?.length
+          ? line.palletItems.reduce((s, i) => s + i.quantity, 0)
+          : (line.quantity ?? 0);
+      }
+
+      document.totalLines = dto.lines.length;
+      document.totalQuantity = totalQuantity;
+      await manager.save(document);
+
+      return {
+        documentId: document.id,
+        code: document.code,
+        type: dto.type,
+        warehouseId: dto.warehouseId ?? null,
+        movementIds,
+      };
     });
 
-    // Post-transaction: invalidate cache + broadcast (fire-and-forget, non-blocking)
+    // Post-transaction: invalidar cache + broadcast (una sola vez por documento)
     void Promise.all([
       this.cache.delPattern('kpis:*'),
       this.cache.delPattern('stock:*'),
     ]);
-    this.events.emitMovementCreated({
-      movementId: result.movementId,
-      type: result.type,
-      warehouseId: result.warehouseId,
-    });
     this.events.emitStockUpdated({ warehouseId: result.warehouseId });
 
-    return { movementId: result.movementId, stockImpact: result.stockImpact };
+    void this.uploads.log('DOCUMENT', result.documentId, 'CREADO',
+      `Remito ${result.code} creado con ${result.movementIds.length} línea(s)`,
+      undefined, undefined, undefined, result.code);
+
+    return {
+      documentId: result.documentId,
+      code: result.code,
+      movementIds: result.movementIds,
+      stockImpact: this.describeImpact(result.type),
+    };
+  }
+
+  /** Lista documentos logísticos (remitos) con filtros básicos. */
+  async findDocuments(query: { type?: string; from?: string; to?: string; search?: string }) {
+    const qb = this.dataSource
+      .getRepository(LogisticsDocument)
+      .createQueryBuilder('d')
+      .orderBy('d.createdAt', 'DESC')
+      .take(200);
+
+    if (query.type) qb.andWhere('d.type = :type', { type: query.type });
+    if (query.from) qb.andWhere('d.date >= :from', { from: this.toStartDate(query.from) });
+    if (query.to) qb.andWhere('d.date <= :to', { to: this.toEndDate(query.to) });
+    if (query.search) {
+      qb.andWhere('(d.code ILIKE :s OR d.documentNumber ILIKE :s OR d.supplier ILIKE :s OR d.destination ILIKE :s)', {
+        s: `%${query.search}%`,
+      });
+    }
+    return qb.getMany();
+  }
+
+  /** Detalle de un documento: cabecera + sus movimientos (líneas) + detalles por palet. */
+  async findDocument(id: string) {
+    const document = await this.dataSource.getRepository(LogisticsDocument).findOne({ where: { id } });
+    if (!document) throw new NotFoundException('Documento no encontrado');
+
+    const movements = await this.dataSource
+      .getRepository(Movement)
+      .find({ where: { documentId: id }, order: { createdAt: 'ASC' } });
+
+    const movementIds = movements.map((m) => m.id);
+    const details = movementIds.length
+      ? await this.dataSource
+          .getRepository(MovementDetail)
+          .createQueryBuilder('md')
+          .where('md.movementId IN (:...ids)', { ids: movementIds })
+          .getMany()
+      : [];
+
+    return { document, movements, details };
+  }
+
+  /** Documento enriquecido para impresión: incluye nombres de producto, lote, depósito y pallets. */
+  async findDocumentForPrint(id: string) {
+    const { document, movements, details } = await this.findDocument(id);
+
+    const productIds = [...new Set(movements.map((m) => m.productId).filter(Boolean))] as string[];
+    const lotIds = [...new Set([
+      ...movements.map((m) => m.lotId).filter(Boolean),
+      ...details.map((d) => d.lotId).filter(Boolean),
+    ])] as string[];
+    const warehouseIds = [...new Set([
+      document.warehouseId,
+      ...movements.flatMap((m) => [m.warehouseId, m.toWarehouseId, m.fromWarehouseId]).filter(Boolean),
+    ].filter((v): v is string => !!v))];
+    const palletIds = [...new Set(details.map((d) => d.palletId).filter(Boolean))] as string[];
+
+    const [products, lots, warehouses, pallets] = await Promise.all([
+      productIds.length ? this.dataSource.getRepository(Product).findByIds(productIds) : Promise.resolve([] as Product[]),
+      lotIds.length ? this.dataSource.getRepository(Lot).findByIds(lotIds) : Promise.resolve([] as Lot[]),
+      warehouseIds.length ? this.dataSource.getRepository(Warehouse).findByIds(warehouseIds) : Promise.resolve([] as Warehouse[]),
+      palletIds.length ? this.dataSource.getRepository(Pallet).findByIds(palletIds) : Promise.resolve([] as Pallet[]),
+    ]);
+
+    return { document, movements, details, products, lots, warehouses, pallets };
   }
 
   /**

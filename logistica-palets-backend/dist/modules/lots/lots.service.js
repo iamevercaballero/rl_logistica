@@ -42,7 +42,7 @@ let LotsService = class LotsService {
         });
         return this.lotRepo.save(lot);
     }
-    findAll(productId, sapLot) {
+    async findAll(productId, sapLot, includePallets = false) {
         const qb = this.lotRepo
             .createQueryBuilder('lot')
             .leftJoinAndSelect('lot.product', 'product')
@@ -51,7 +51,45 @@ let LotsService = class LotsService {
             qb.andWhere('lot.productId = :productId', { productId });
         if (sapLot)
             qb.andWhere('lot.sapLot = :sapLot', { sapLot });
-        return qb.getMany();
+        const lots = await qb.getMany();
+        if (lots.length === 0)
+            return [];
+        const lotIds = lots.map((l) => l.id);
+        const counts = await this.palletRepo
+            .createQueryBuilder('p')
+            .select('p."lotId"', 'lotId')
+            .addSelect("COUNT(*) FILTER (WHERE p.status = 'AVAILABLE')", 'availableCount')
+            .addSelect("COUNT(*) FILTER (WHERE p.status = 'EXITED')", 'exitedCount')
+            .addSelect('COUNT(*)', 'totalCount')
+            .where('p."lotId" IN (:...lotIds)', { lotIds })
+            .groupBy('p."lotId"')
+            .getRawMany();
+        const countsByLot = new Map(counts.map((c) => [c.lotId, c]));
+        let palletsByLot = null;
+        if (includePallets) {
+            const pallets = await this.palletRepo
+                .createQueryBuilder('p')
+                .where('p."lotId" IN (:...lotIds)', { lotIds })
+                .orderBy('p.code', 'ASC')
+                .getMany();
+            palletsByLot = new Map();
+            for (const p of pallets) {
+                if (!palletsByLot.has(p.lotId))
+                    palletsByLot.set(p.lotId, []);
+                palletsByLot.get(p.lotId).push(p);
+            }
+        }
+        return lots.map((lot) => {
+            var _a;
+            const c = countsByLot.get(lot.id);
+            return {
+                ...lot,
+                availablePalletsCount: c ? Number(c.availableCount) : 0,
+                exitedPalletsCount: c ? Number(c.exitedCount) : 0,
+                totalPalletsCount: c ? Number(c.totalCount) : 0,
+                ...(includePallets ? { pallets: (_a = palletsByLot === null || palletsByLot === void 0 ? void 0 : palletsByLot.get(lot.id)) !== null && _a !== void 0 ? _a : [] } : {}),
+            };
+        });
     }
     async findFefo(productId, sapLot, locationId) {
         const qb = this.lotRepo
@@ -135,6 +173,44 @@ let LotsService = class LotsService {
         const lot = await this.findOne(id);
         await this.lotRepo.remove(lot);
         return { deleted: true };
+    }
+    async reconcileStock(id) {
+        var _a;
+        const lot = await this.findOne(id);
+        const result = await this.palletRepo
+            .createQueryBuilder('p')
+            .select("COALESCE(SUM(p.quantity), 0)", 'total')
+            .where('p."lotId" = :id', { id })
+            .andWhere("p.status != 'EXITED'")
+            .getRawOne();
+        const real = Number((_a = result === null || result === void 0 ? void 0 : result.total) !== null && _a !== void 0 ? _a : 0);
+        const previous = lot.stockActual;
+        lot.stockActual = real;
+        await this.lotRepo.save(lot);
+        return { lotId: id, lotCode: lot.lotCode, previous, reconciled: real, delta: real - previous };
+    }
+    async reconcileAllStocks(productId) {
+        var _a;
+        const qb = this.lotRepo.createQueryBuilder('lot');
+        if (productId)
+            qb.andWhere('lot."productId" = :productId', { productId });
+        const lots = await qb.getMany();
+        const corrections = [];
+        for (const lot of lots) {
+            const result = await this.palletRepo
+                .createQueryBuilder('p')
+                .select("COALESCE(SUM(p.quantity), 0)", 'total')
+                .where('p."lotId" = :id', { id: lot.id })
+                .andWhere("p.status != 'EXITED'")
+                .getRawOne();
+            const real = Number((_a = result === null || result === void 0 ? void 0 : result.total) !== null && _a !== void 0 ? _a : 0);
+            if (real !== lot.stockActual) {
+                corrections.push({ lotId: lot.id, lotCode: lot.lotCode, previous: lot.stockActual, reconciled: real, delta: real - lot.stockActual });
+                lot.stockActual = real;
+                await this.lotRepo.save(lot);
+            }
+        }
+        return { corrected: corrections.length, corrections };
     }
 };
 exports.LotsService = LotsService;

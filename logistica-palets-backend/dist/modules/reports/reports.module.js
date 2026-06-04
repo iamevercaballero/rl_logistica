@@ -25,6 +25,7 @@ exports.ReportsModule = ReportsModule = __decorate([
         imports: [typeorm_1.TypeOrmModule.forFeature([sap_stock_entity_1.SapStockSnapshot, stock_entity_1.Stock, movement_entity_1.Movement, product_entity_1.Product, warehouse_entity_1.Warehouse, location_entity_1.Location])],
         controllers: [reports_controller_1.ReportsController],
         providers: [reports_service_1.ReportsService],
+        exports: [reports_service_1.ReportsService],
     })
 ], ReportsModule);
 //# sourceMappingURL=reports.module.js.map

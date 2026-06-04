@@ -10,7 +10,22 @@ export declare class LotsService {
     private readonly palletRepo;
     constructor(lotRepo: Repository<Lot>, productRepo: Repository<Product>, palletRepo: Repository<Pallet>);
     create(dto: CreateLotDto): Promise<Lot>;
-    findAll(productId?: string, sapLot?: string): Promise<Lot[]>;
+    findAll(productId?: string, sapLot?: string, includePallets?: boolean): Promise<{
+        pallets?: Pallet[] | undefined;
+        availablePalletsCount: number;
+        exitedPalletsCount: number;
+        totalPalletsCount: number;
+        id: string;
+        lotCode: string;
+        productId: string;
+        product: Product;
+        fechaVencimiento?: string | null;
+        fechaFabricacion?: string | null;
+        proveedor?: string | null;
+        sapLot?: string | null;
+        stockActual: number;
+        status: string;
+    }[]>;
     findFefo(productId?: string, sapLot?: string, locationId?: string): Promise<{
         pallets: Pallet[];
         id: string;
@@ -29,5 +44,22 @@ export declare class LotsService {
     update(id: string, dto: UpdateLotDto): Promise<Lot>;
     remove(id: string): Promise<{
         deleted: boolean;
+    }>;
+    reconcileStock(id: string): Promise<{
+        lotId: string;
+        lotCode: string;
+        previous: number;
+        reconciled: number;
+        delta: number;
+    }>;
+    reconcileAllStocks(productId?: string): Promise<{
+        corrected: number;
+        corrections: {
+            lotId: string;
+            lotCode: string;
+            previous: number;
+            reconciled: number;
+            delta: number;
+        }[];
     }>;
 }

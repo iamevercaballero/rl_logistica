@@ -6,6 +6,7 @@ export declare const adjustmentReasons: readonly ["DIFERENCIA_INVENTARIO", "CONT
 export type AdjustmentReason = (typeof adjustmentReasons)[number];
 export declare class Movement {
     id: string;
+    documentId?: string | null;
     type: MovementType;
     date: Date;
     productId: string;
@@ -31,4 +32,6 @@ export declare class Movement {
     adjustmentReason?: string | null;
     adjustmentCategory?: string | null;
     createdAt: Date;
+    voidStatus: 'NONE' | 'VOID_PENDING' | 'VOIDED';
+    voidAdjRequestId?: string | null;
 }

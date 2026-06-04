@@ -39,6 +39,8 @@ __decorate([
     __metadata("design:type", Date)
 ], Stock.prototype, "updatedAt", void 0);
 exports.Stock = Stock = __decorate([
+    (0, typeorm_1.Index)('idx_stock_product_warehouse_location', ['productId', 'warehouseId', 'locationId']),
+    (0, typeorm_1.Index)('idx_stock_product', ['productId']),
     (0, typeorm_1.Entity)('stocks')
 ], Stock);
 //# sourceMappingURL=stock.entity.js.map

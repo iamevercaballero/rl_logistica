@@ -16,6 +16,7 @@ import LocationsPage from "./pages/Locations";
 import LoginPage from "./pages/Login";
 import LotsPage from "./pages/Lots";
 import MovementsPage from "./pages/Movements";
+import BitacoraPage from "./pages/Bitacora";
 import PalletsPage from "./pages/Pallets";
 import ProductsPage from "./pages/Products";
 import ReportsPage from "./pages/Reports";
@@ -23,9 +24,13 @@ import TransportsPage from "./pages/Transports";
 import WarehousesPage from "./pages/Warehouses";
 import BillingPage from "./pages/Billing";
 import SeedPage from "./pages/Seed";
+import PrintDocumentPage from "./pages/PrintDocument";
+import PrintLabelsPage from "./pages/PrintLabels";
 
 const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
+  { path: "/print/document/:id", element: <PrintDocumentPage /> },
+  { path: "/print/labels/:documentId", element: <PrintLabelsPage /> },
   {
     path: "/",
     element: <AppLayout />,
@@ -76,6 +81,14 @@ const router = createBrowserRouter([
         element: (
           <RequireRole module="movements">
             <MovementsPage />
+          </RequireRole>
+        ),
+      },
+      {
+        path: "bitacora",
+        element: (
+          <RequireRole module="bitacora">
+            <BitacoraPage />
           </RequireRole>
         ),
       },

@@ -16,6 +16,8 @@ import { WarehousesModule } from './modules/warehouses/warehouses.module';
 import { LocationsModule } from './modules/locations/locations.module';
 import { PalletsModule } from './modules/pallets/pallets.module';
 import { MovementsModule } from './modules/movements/movements.module';
+import { AdjustmentsModule } from './modules/adjustments/adjustments.module';
+import { UploadsModule } from './modules/uploads/uploads.module';
 import { TransportsModule } from './modules/transports/transports.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { BillingModule } from './modules/billing/billing.module';
@@ -106,6 +108,8 @@ import { AppController } from './app.controller';
     LocationsModule,
     PalletsModule,
     MovementsModule,
+    AdjustmentsModule,
+    UploadsModule,
     TransportsModule,
     ReportsModule,
     BillingModule,

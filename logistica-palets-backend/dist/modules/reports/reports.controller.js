@@ -50,6 +50,9 @@ let ReportsController = class ReportsController {
     kpis(query) {
         return this.service.kpis(query);
     }
+    freshness(productId) {
+        return this.service.freshness(productId);
+    }
 };
 exports.ReportsController = ReportsController;
 __decorate([
@@ -108,6 +111,14 @@ __decorate([
     __metadata("design:paramtypes", [kpis_query_dto_1.KpisQueryDto]),
     __metadata("design:returntype", void 0)
 ], ReportsController.prototype, "kpis", null);
+__decorate([
+    (0, common_1.Get)('freshness'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR'),
+    __param(0, (0, common_1.Query)('productId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], ReportsController.prototype, "freshness", null);
 exports.ReportsController = ReportsController = __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
     (0, common_1.Controller)('reports'),

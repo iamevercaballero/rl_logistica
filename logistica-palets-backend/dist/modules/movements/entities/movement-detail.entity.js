@@ -43,6 +43,10 @@ __decorate([
     __metadata("design:type", Object)
 ], MovementDetail.prototype, "role", void 0);
 exports.MovementDetail = MovementDetail = __decorate([
+    (0, typeorm_1.Index)('idx_movement_detail_movement', ['movementId']),
+    (0, typeorm_1.Index)('idx_movement_detail_pallet', ['palletId']),
+    (0, typeorm_1.Index)('idx_movement_detail_lot', ['lotId']),
+    (0, typeorm_1.Index)('idx_movement_detail_location', ['locationId']),
     (0, typeorm_1.Entity)('movement_details')
 ], MovementDetail);
 //# sourceMappingURL=movement-detail.entity.js.map

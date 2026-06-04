@@ -43,6 +43,7 @@ __decorate([
     __metadata("design:type", Date)
 ], SapStockSnapshot.prototype, "createdAt", void 0);
 exports.SapStockSnapshot = SapStockSnapshot = __decorate([
+    (0, typeorm_1.Index)('idx_sap_snapshot_date_product', ['date', 'productId']),
     (0, typeorm_1.Entity)('sap_stock_snapshots')
 ], SapStockSnapshot);
 //# sourceMappingURL=sap-stock.entity.js.map

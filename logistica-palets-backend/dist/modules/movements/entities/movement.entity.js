@@ -36,6 +36,10 @@ __decorate([
     __metadata("design:type", String)
 ], Movement.prototype, "id", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ type: 'uuid', nullable: true }),
+    __metadata("design:type", Object)
+], Movement.prototype, "documentId", void 0);
+__decorate([
     (0, typeorm_1.Column)({ type: 'varchar' }),
     __metadata("design:type", String)
 ], Movement.prototype, "type", void 0);
@@ -135,7 +139,21 @@ __decorate([
     (0, typeorm_1.Column)({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' }),
     __metadata("design:type", Date)
 ], Movement.prototype, "createdAt", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', default: 'NONE' }),
+    __metadata("design:type", String)
+], Movement.prototype, "voidStatus", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'uuid', nullable: true }),
+    __metadata("design:type", Object)
+], Movement.prototype, "voidAdjRequestId", void 0);
 exports.Movement = Movement = __decorate([
+    (0, typeorm_1.Index)('idx_movement_created_at', ['createdAt']),
+    (0, typeorm_1.Index)('idx_movement_product', ['productId']),
+    (0, typeorm_1.Index)('idx_movement_type_status', ['type', 'status']),
+    (0, typeorm_1.Index)('idx_movement_pallet', ['palletId']),
+    (0, typeorm_1.Index)('idx_movement_lot', ['lotId']),
+    (0, typeorm_1.Index)('idx_movement_document', ['documentId']),
     (0, typeorm_1.Entity)('movements')
 ], Movement);
 //# sourceMappingURL=movement.entity.js.map

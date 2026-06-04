@@ -47,6 +47,12 @@ __decorate([
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], PalletItemDto.prototype, "sapLot", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], PalletItemDto.prototype, "proveedor", void 0);
 class CreateMovementDto {
 }
 exports.CreateMovementDto = CreateMovementDto;

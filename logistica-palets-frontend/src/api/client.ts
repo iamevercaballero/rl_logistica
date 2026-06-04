@@ -79,6 +79,7 @@ api.interceptors.response.use(
         refreshQueue = [];
         clearAuthStorage();
         if (window.location.pathname !== "/login") {
+          sessionStorage.setItem("auth_redirect", window.location.pathname + window.location.search);
           window.location.href = "/login";
         }
         return Promise.reject(err);
@@ -91,6 +92,7 @@ api.interceptors.response.use(
     if (status === 401) {
       clearAuthStorage();
       if (window.location.pathname !== "/login") {
+        sessionStorage.setItem("auth_redirect", window.location.pathname + window.location.search);
         window.location.href = "/login";
       }
     }

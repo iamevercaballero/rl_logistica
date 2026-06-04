@@ -33,7 +33,7 @@ __decorate([
 ], CreatePalletDto.prototype, "currentLocationId", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.IsIn)(['AVAILABLE', 'BLOCKED', 'DAMAGED', 'IN_TRANSIT']),
+    (0, class_validator_1.IsIn)(['AVAILABLE', 'PARTIAL', 'BLOCKED', 'DAMAGED', 'IN_TRANSIT', 'EMPTY']),
     __metadata("design:type", String)
 ], CreatePalletDto.prototype, "status", void 0);
 //# sourceMappingURL=create-pallet.dto.js.map

@@ -93,6 +93,7 @@ __decorate([
     __metadata("design:type", Number)
 ], ItemFactura.prototype, "ivaLiquidado", void 0);
 exports.ItemFactura = ItemFactura = __decorate([
+    (0, typeorm_1.Index)('idx_items_factura_factura', ['facturaId']),
     (0, typeorm_1.Entity)('items_factura')
 ], ItemFactura);
 //# sourceMappingURL=item-factura.entity.js.map

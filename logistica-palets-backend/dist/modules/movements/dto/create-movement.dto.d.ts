@@ -6,6 +6,7 @@ export declare class PalletItemDto {
     fechaVencimiento?: string;
     fechaFabricacion?: string;
     sapLot?: string;
+    proveedor?: string;
 }
 export declare class CreateMovementDto {
     type: MovementType;

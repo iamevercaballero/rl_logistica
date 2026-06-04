@@ -1,9 +1,10 @@
+import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 export declare class AuthController {
     private readonly auth;
     constructor(auth: AuthService);
-    login(dto: LoginDto): Promise<{
+    login(dto: LoginDto, res: Response): Promise<{
         access_token: string;
         user: {
             userId: string;
@@ -11,5 +12,11 @@ export declare class AuthController {
             role: import("../users/entities/user.entity").UserRole;
         };
     }>;
-    me(req: any): any;
+    refresh(req: Request): Promise<{
+        access_token: string;
+    }>;
+    logout(res: Response): {
+        loggedOut: boolean;
+    };
+    me(req: Request): any;
 }

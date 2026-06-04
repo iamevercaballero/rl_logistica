@@ -99,6 +99,7 @@ const modules = [
   { key: "lots" as const, label: "Lotes", path: "/lots" },
   { key: "pallets" as const, label: "Palets", path: "/pallets" },
   { key: "movements" as const, label: "Movimientos", path: "/movements" },
+  { key: "bitacora" as const, label: "Bitácora", path: "/bitacora" },
   { key: "transports" as const, label: "Transportes", path: "/transports" },
   { key: "reports" as const, label: "Reportes", path: "/reports" },
   { key: "billing" as const, label: "Facturación", path: "/billing" },

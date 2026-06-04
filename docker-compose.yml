@@ -90,6 +90,7 @@ services:
       - "3000:3000"
     volumes:
       - ./CONTROL DE STOCK RL LOG Actualizado.xlsx:/app/CONTROL DE STOCK RL LOG Actualizado.xlsx:ro
+      - uploads_data:/app/uploads
 
   frontend:
     build:
@@ -107,4 +108,5 @@ services:
 
 volumes:
   postgres_data:
+  uploads_data:   # Archivos adjuntos y fotos de movimientos/remitos
   # Redis uses ephemeral storage (cache is rebuild-safe; no persistence volume needed)

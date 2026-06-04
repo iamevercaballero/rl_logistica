@@ -33,8 +33,8 @@ let SeedController = SeedController_1 = class SeedController {
         return this.seedService.seedFromExcel((_a = body.maxMovimientos) !== null && _a !== void 0 ? _a : 300, (_b = body.soloProductos) !== null && _b !== void 0 ? _b : false);
     }
     async reset() {
-        if (process.env.NODE_ENV === 'production') {
-            throw new common_1.BadRequestException('Reset deshabilitado en producción.');
+        if (process.env.NODE_ENV === 'production' && process.env.ALLOW_SEED !== 'true') {
+            throw new common_1.BadRequestException('Reset deshabilitado en producción. Setear ALLOW_SEED=true para habilitar.');
         }
         return this.seedService.resetData();
     }

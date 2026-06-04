@@ -9,42 +9,7 @@ import { UpsertSapStockDto } from './dto/upsert-sap-stock.dto';
 export declare class ReportsController {
     private readonly service;
     constructor(service: ReportsService);
-    stock(query: StockQueryDto): Promise<{
-        totalMaterials: number;
-        stockRows: number;
-        totalQuantity: number;
-        byWarehouse: {
-            warehouseId: any;
-            warehouseName: any;
-            quantity: number;
-        }[];
-        byMaterial: {
-            productId: any;
-            code: any;
-            description: any;
-            unitOfMeasure: any;
-            quantity: number;
-        }[];
-        items: {
-            id: any;
-            currentQuantity: number;
-            updatedAt: any;
-            material: {
-                id: any;
-                code: any;
-                description: any;
-                unitOfMeasure: any;
-            };
-            warehouse: {
-                id: any;
-                name: any;
-            } | null;
-            location: {
-                id: any;
-                code: any;
-            } | null;
-        }[];
-    }>;
+    stock(query: StockQueryDto): Promise<{}>;
     movements(query: ReportsMovementsQueryDto): Promise<{
         data: {
             id: any;
@@ -72,6 +37,11 @@ export declare class ReportsController {
                 id: any;
                 code: any;
             } | null;
+            lotCode: any;
+            sapLot: any;
+            lotCount: number;
+            status: any;
+            adjustmentReason: any;
             from: {
                 warehouseName: any;
                 locationCode: any;
@@ -110,16 +80,21 @@ export declare class ReportsController {
     dailyStock(query: DailyStockQueryDto): Promise<any>;
     upsertSapStock(dto: UpsertSapStockDto): Promise<import("./entities/sap-stock.entity").SapStockSnapshot>;
     differencesSap(query: DifferencesSapQueryDto): Promise<any>;
-    kpis(query: KpisQueryDto): Promise<{
-        range: "week" | "today" | "month";
-        totalMaterials: number;
-        totalQuantity: number;
-        movementsCount: number;
-        movementsInRange: number;
-        stockByWarehouse: {
-            warehouseId: any;
-            warehouseName: any;
-            quantity: number;
-        }[];
-    }>;
+    kpis(query: KpisQueryDto): Promise<{}>;
+    freshness(productId?: string): Promise<{
+        lotId: any;
+        lotCode: any;
+        sapLot: any;
+        fechaVencimiento: any;
+        fechaFabricacion: any;
+        stockActual: number;
+        proveedor: any;
+        diasRestantes: number;
+        product: {
+            id: any;
+            code: any;
+            description: any;
+            unitOfMeasure: any;
+        };
+    }[]>;
 }

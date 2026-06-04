@@ -52,6 +52,14 @@ let AuthService = class AuthService {
         this.usersService = usersService;
         this.jwt = jwt;
     }
+    get refreshSecret() {
+        var _a, _b;
+        return (_a = process.env.JWT_REFRESH_SECRET) !== null && _a !== void 0 ? _a : `${(_b = process.env.JWT_SECRET) !== null && _b !== void 0 ? _b : 'dev_secret'}_refresh`;
+    }
+    get refreshExpiresIn() {
+        var _a;
+        return (_a = process.env.JWT_REFRESH_EXPIRES_IN) !== null && _a !== void 0 ? _a : '7d';
+    }
     async login(username, password) {
         const user = await this.usersService.findByUsername(username);
         if (!user || !user.active) {
@@ -62,14 +70,46 @@ let AuthService = class AuthService {
             throw new common_1.UnauthorizedException('Credenciales inválidas');
         }
         const payload = { sub: user.id, username: user.username, role: user.role };
+        const [access_token, refresh_token] = await Promise.all([
+            this.jwt.signAsync(payload),
+            this.jwt.signAsync(payload, {
+                secret: this.refreshSecret,
+                expiresIn: this.refreshExpiresIn,
+            }),
+        ]);
         return {
-            access_token: await this.jwt.signAsync(payload),
+            access_token,
+            refresh_token,
             user: {
                 userId: user.id,
                 username: user.username,
                 role: user.role,
             },
         };
+    }
+    async refresh(refreshToken) {
+        if (!refreshToken) {
+            throw new common_1.UnauthorizedException('Refresh token ausente');
+        }
+        let payload;
+        try {
+            payload = await this.jwt.verifyAsync(refreshToken, {
+                secret: this.refreshSecret,
+            });
+        }
+        catch {
+            throw new common_1.UnauthorizedException('Refresh token inválido o expirado');
+        }
+        const user = await this.usersService.findByUsername(payload.username);
+        if (!user || !user.active) {
+            throw new common_1.UnauthorizedException('Usuario inactivo o eliminado');
+        }
+        const access_token = await this.jwt.signAsync({
+            sub: payload.sub,
+            username: payload.username,
+            role: payload.role,
+        });
+        return { access_token };
     }
 };
 exports.AuthService = AuthService;

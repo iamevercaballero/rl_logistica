@@ -18,13 +18,32 @@ const throttler_1 = require("@nestjs/throttler");
 const auth_service_1 = require("./auth.service");
 const login_dto_1 = require("./dto/login.dto");
 const jwt_auth_guard_1 = require("./guards/jwt-auth.guard");
-const common_2 = require("@nestjs/common");
+const REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+const REFRESH_COOKIE = 'refreshToken';
+const REFRESH_COOKIE_PATH = '/api/auth';
 let AuthController = class AuthController {
     constructor(auth) {
         this.auth = auth;
     }
-    login(dto) {
-        return this.auth.login(dto.username, dto.password);
+    async login(dto, res) {
+        const { access_token, refresh_token, user } = await this.auth.login(dto.username, dto.password);
+        res.cookie(REFRESH_COOKIE, refresh_token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+            maxAge: REFRESH_COOKIE_MAX_AGE,
+            path: REFRESH_COOKIE_PATH,
+        });
+        return { access_token, user };
+    }
+    async refresh(req) {
+        var _a;
+        const refreshToken = (_a = req.cookies) === null || _a === void 0 ? void 0 : _a[REFRESH_COOKIE];
+        return this.auth.refresh(refreshToken);
+    }
+    logout(res) {
+        res.clearCookie(REFRESH_COOKIE, { path: REFRESH_COOKIE_PATH });
+        return { loggedOut: true };
     }
     me(req) {
         return req.user;
@@ -35,14 +54,29 @@ __decorate([
     (0, throttler_1.Throttle)({ default: { limit: 5, ttl: 60000 } }),
     (0, common_1.Post)('login'),
     __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_1.Res)({ passthrough: true })),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [login_dto_1.LoginDto]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:paramtypes", [login_dto_1.LoginDto, Object]),
+    __metadata("design:returntype", Promise)
 ], AuthController.prototype, "login", null);
 __decorate([
-    (0, common_2.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
-    (0, common_2.Get)('me'),
-    __param(0, (0, common_2.Req)()),
+    (0, common_1.Post)('refresh'),
+    __param(0, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], AuthController.prototype, "refresh", null);
+__decorate([
+    (0, common_1.Post)('logout'),
+    __param(0, (0, common_1.Res)({ passthrough: true })),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], AuthController.prototype, "logout", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Get)('me'),
+    __param(0, (0, common_1.Req)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", void 0)

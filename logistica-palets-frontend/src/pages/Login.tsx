@@ -20,7 +20,13 @@ export default function LoginPage() {
     mutationFn: (vars: { username: string; password: string }) => login(vars.username, vars.password),
     onSuccess: (payload) => {
       authLogin(payload);
-      navigate("/", { replace: true });
+      const redirect = sessionStorage.getItem("auth_redirect");
+      if (redirect && redirect !== "/login") {
+        sessionStorage.removeItem("auth_redirect");
+        navigate(redirect, { replace: true });
+      } else {
+        navigate("/", { replace: true });
+      }
     },
     onError: (err) => toast.error(getFriendlyApiError(err)),
   });

@@ -47,6 +47,9 @@ __decorate([
     __metadata("design:type", Object)
 ], Pallet.prototype, "exitedAt", void 0);
 exports.Pallet = Pallet = __decorate([
+    (0, typeorm_1.Index)('idx_pallet_current_location', ['currentLocationId']),
+    (0, typeorm_1.Index)('idx_pallet_lot', ['lotId']),
+    (0, typeorm_1.Index)('idx_pallet_status', ['status']),
     (0, typeorm_1.Entity)('pallets')
 ], Pallet);
 //# sourceMappingURL=pallet.entity.js.map

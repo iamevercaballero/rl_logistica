@@ -1,0 +1,65 @@
+import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+
+/**
+ * Tipos de eventos que pueden ocurrir en la bitácora de un documento.
+ * La tabla es APPEND-ONLY: los eventos nunca se borran ni editan.
+ */
+export const documentEventTypes = [
+  'CREADO',              // Movimiento/remito/ajuste creado
+  'EDITADO',             // Metadatos modificados
+  'FOTO_ADJUNTADA',      // Archivo adjunto subido
+  'ARCHIVO_ELIMINADO',   // Archivo adjunto eliminado
+  'ENVIADO_APROBACION',  // Ajuste enviado para aprobación
+  'APROBADO',            // Ajuste aprobado, stock posteado
+  'RECHAZADO',           // Ajuste rechazado (vuelve a borrador)
+  'ANULACION_SOLICITADA',// Solicitud de anulación generada
+  'ANULADO',             // Movimiento marcado como VOIDED
+  'NOTA_IMPRESA',        // Nota RLNE/RLNS impresa o descargada
+] as const;
+
+export type DocumentEventType = (typeof documentEventTypes)[number];
+
+/**
+ * Evento de auditoría en la bitácora logística.
+ * Append-only — registra todo lo que sucede sobre un documento.
+ */
+@Index('idx_doc_event_entity', ['entityType', 'entityId'])
+@Index('idx_doc_event_created_at', ['createdAt'])
+@Entity('document_events')
+export class DocumentEvent {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  /** Tipo de entidad: MOVEMENT | DOCUMENT | ADJUSTMENT */
+  @Column({ type: 'varchar', length: 20 })
+  entityType: string;
+
+  @Column({ type: 'uuid' })
+  entityId: string;
+
+  @Column({ type: 'varchar', length: 40 })
+  eventType: DocumentEventType;
+
+  /** Descripción legible del evento. */
+  @Column({ type: 'text' })
+  description: string;
+
+  /** JSON con datos adicionales del evento (opcional). */
+  @Column({ type: 'text', nullable: true })
+  metadata?: string | null;
+
+  /** Código legible de la entidad (RLNE-2026-000001, RLAI-...) — cacheado sin JOIN. */
+  @Column({ type: 'varchar', length: 40, nullable: true })
+  entityCode?: string | null;
+
+  /** Usuario que generó el evento (null = sistema automático). */
+  @Column({ type: 'uuid', nullable: true })
+  userId?: string | null;
+
+  /** Username cacheado para mostrar sin JOIN. */
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  username?: string | null;
+
+  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  createdAt: Date;
+}

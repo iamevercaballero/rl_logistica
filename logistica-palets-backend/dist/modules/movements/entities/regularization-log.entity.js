@@ -47,6 +47,7 @@ __decorate([
     __metadata("design:type", Date)
 ], RegularizationLog.prototype, "createdAt", void 0);
 exports.RegularizationLog = RegularizationLog = __decorate([
+    (0, typeorm_1.Index)('idx_regularization_movement', ['movementId']),
     (0, typeorm_1.Entity)('regularization_logs')
 ], RegularizationLog);
 //# sourceMappingURL=regularization-log.entity.js.map

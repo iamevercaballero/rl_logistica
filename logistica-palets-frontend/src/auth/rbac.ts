@@ -6,6 +6,7 @@ export type ModuleKey =
   | "locations"
   | "pallets"
   | "movements"
+  | "bitacora"
   | "transports"
   | "reports"
   | "billing";
@@ -52,6 +53,12 @@ export const PERMS: Record<ModuleKey, ModulePermissions> = {
     read: ["ADMIN", "MANAGER", "AUDITOR"],
     create: ["ADMIN", "MANAGER", "OPERATOR"],
     update: ["ADMIN", "MANAGER"],
+    remove: [],
+  },
+  bitacora: {
+    read:   ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
+    create: [],
+    update: [],
     remove: [],
   },
   transports: {

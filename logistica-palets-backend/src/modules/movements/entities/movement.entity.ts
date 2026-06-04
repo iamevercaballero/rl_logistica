@@ -29,10 +29,15 @@ export type AdjustmentReason = (typeof adjustmentReasons)[number];
 @Index('idx_movement_type_status', ['type', 'status'])
 @Index('idx_movement_pallet', ['palletId'])
 @Index('idx_movement_lot', ['lotId'])
+@Index('idx_movement_document', ['documentId'])
 @Entity('movements')
 export class Movement {
   @PrimaryGeneratedColumn('uuid')
   id: string;
+
+  /** Cabecera (remito) que agrupa este movimiento, si fue creado vía documento. */
+  @Column({ type: 'uuid', nullable: true })
+  documentId?: string | null;
 
   @Column({ type: 'varchar' })
   type: MovementType;
@@ -108,4 +113,17 @@ export class Movement {
 
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   createdAt: Date;
+
+  /**
+   * Estado de anulación:
+   *   NONE         → sin anulación
+   *   VOID_PENDING → solicitud de anulación pendiente de aprobación
+   *   VOIDED       → anulado (transacción compensatoria aprobada y ejecutada)
+   */
+  @Column({ type: 'varchar', default: 'NONE' })
+  voidStatus: 'NONE' | 'VOID_PENDING' | 'VOIDED';
+
+  /** ID del AdjustmentRequest que anula este movimiento (si existe). */
+  @Column({ type: 'uuid', nullable: true })
+  voidAdjRequestId?: string | null;
 }

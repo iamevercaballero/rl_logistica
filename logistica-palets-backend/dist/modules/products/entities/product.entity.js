@@ -38,6 +38,22 @@ __decorate([
     (0, typeorm_1.Column)({ type: 'int', nullable: true }),
     __metadata("design:type", Object)
 ], Product.prototype, "stockMinimo", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ default: true }),
+    __metadata("design:type", Boolean)
+], Product.prototype, "stackable", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'int', nullable: true }),
+    __metadata("design:type", Object)
+], Product.prototype, "maxStackLevel", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ default: true }),
+    __metadata("design:type", Boolean)
+], Product.prototype, "canReceiveWeightOnTop", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', nullable: true }),
+    __metadata("design:type", Object)
+], Product.prototype, "stackingNotes", void 0);
 exports.Product = Product = __decorate([
     (0, typeorm_1.Entity)('products')
 ], Product);

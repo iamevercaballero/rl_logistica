@@ -68,7 +68,25 @@
       "Bash(cat /Users/ever/.zshrc | grep -E \"node|nvm|volta|fnm\" | head -20)",
       "Bash(\"/Users/ever/Documents/RL WMS/rl_logistica/logistica-palets-backend/node_modules/.bin/tsc\" --noEmit --project \"/Users/ever/Documents/RL WMS/rl_logistica/logistica-palets-backend/tsconfig.json\")",
       "Bash(ls /Applications/ 2>/dev/null | grep -iE \"node|bun|deno\"; ls /usr/bin/ | grep -iE \"node|npm\")",
-      "Bash(git -C \"/Users/ever/Documents/RL WMS/rl_logistica\" diff --stat HEAD)"
+      "Bash(git -C \"/Users/ever/Documents/RL WMS/rl_logistica\" diff --stat HEAD)",
+      "Bash(node node_modules/.bin/tsc --noEmit -p tsconfig.json)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(command -v fnm volta)",
+      "Read(//Users/ever/**)",
+      "Bash(command -v docker docker-compose)",
+      "Read(//Applications/**)",
+      "Read(//opt/homebrew/opt/**)",
+      "Read(//opt/homebrew/Cellar/**)",
+      "Bash(/opt/homebrew/bin/brew --prefix node)",
+      "Bash(timeout 15 docker info)",
+      "Bash(sed -n '3,15p' src/api/products.ts)",
+      "Bash(sed -n '3,14p' src/api/warehouses.ts)",
+      "Bash(sed -n '3,20p' src/api/locations.ts)",
+      "Bash(docker builder *)",
+      "Bash(curl -s http://localhost:3000/health)",
+      "Bash(curl -s http://localhost:3001/health)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "Bash(curl -s http://localhost:5175/ -o /dev/null -w \"Frontend HTTP status: %{http_code}\\\\n\")"
     ]
   }
 }

@@ -38,6 +38,11 @@ __decorate([
 ], ReportsMovementsQueryDto.prototype, "type", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(['NORMAL', 'PENDING_REGULARIZATION']),
+    __metadata("design:type", String)
+], ReportsMovementsQueryDto.prototype, "status", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsDateString)(),
     __metadata("design:type", String)
 ], ReportsMovementsQueryDto.prototype, "dateFrom", void 0);

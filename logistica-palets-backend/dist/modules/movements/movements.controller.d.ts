@@ -1,6 +1,7 @@
 import { Request } from 'express';
 import { MovementsService } from './movements.service';
 import { CreateMovementDto } from './dto/create-movement.dto';
+import { CreateDocumentDto } from './dto/create-document.dto';
 import { RegularizeMovementDto } from './dto/regularize-movement.dto';
 import { MovementsQueryDto } from './dto/movements-query.dto';
 export declare class MovementsController {
@@ -13,6 +14,44 @@ export declare class MovementsController {
     }): Promise<{
         movementId: string;
         stockImpact: string;
+    }>;
+    createDocument(dto: CreateDocumentDto, req: Request & {
+        user: {
+            userId: string;
+        };
+    }): Promise<{
+        documentId: string;
+        code: string;
+        movementIds: string[];
+        stockImpact: string;
+    }>;
+    findDocuments(query: {
+        type?: string;
+        from?: string;
+        to?: string;
+        search?: string;
+    }): Promise<import("./entities/logistics-document.entity").LogisticsDocument[]>;
+    findDocument(id: string): Promise<{
+        document: import("./entities/logistics-document.entity").LogisticsDocument;
+        movements: import("./entities/movement.entity").Movement[];
+        details: import("./entities/movement-detail.entity").MovementDetail[];
+    }>;
+    requestVoid(id: string, req: Request & {
+        user: {
+            userId: string;
+        };
+    }): Promise<{
+        warnings: string[];
+        requestId: string;
+        code: string;
+    }>;
+    editMetadata(id: string, dto: RegularizeMovementDto, req: Request & {
+        user: {
+            userId: string;
+        };
+    }): Promise<{
+        edited: boolean;
+        changes: number;
     }>;
     regularize(id: string, dto: RegularizeMovementDto, req: Request & {
         user: {
@@ -42,6 +81,9 @@ export declare class MovementsController {
             createdAt: unknown;
             palletId: unknown;
             lotId: unknown;
+            lotCode: {} | null;
+            sapLot: {} | null;
+            lotCount: number;
             encargado: {
                 id: {};
                 username: unknown;
@@ -100,6 +142,9 @@ export declare class MovementsController {
         createdAt: unknown;
         palletId: unknown;
         lotId: unknown;
+        lotCode: {} | null;
+        sapLot: {} | null;
+        lotCount: number;
         encargado: {
             id: {};
             username: unknown;

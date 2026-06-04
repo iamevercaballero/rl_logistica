@@ -1,8 +1,11 @@
+import { OnApplicationBootstrap } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { User, UserRole } from './entities/user.entity';
-export declare class UsersService {
+export declare class UsersService implements OnApplicationBootstrap {
     private readonly userRepo;
+    private readonly logger;
     constructor(userRepo: Repository<User>);
+    onApplicationBootstrap(): Promise<void>;
     findAll(): Promise<User[]>;
     findActive(): Promise<User[]>;
     findByUsername(username: string): Promise<User | null>;

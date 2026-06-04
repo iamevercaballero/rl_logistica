@@ -3,12 +3,18 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import ProductSearch from "../components/ProductSearch";
 import AdjustmentInForm from "./AdjustmentInForm";
 import AdjustmentOutForm from "./AdjustmentOutForm";
+import InventoryAdjustmentPage from "./InventoryAdjustment";
 import {
   createMovement,
+  createDocument,
   getMovements,
+  getDocuments,
   regularizeMovement,
   type Movement,
   type MovementType,
+  type PalletItem,
+  type CreateDocumentPayload,
+  type LogisticsDocument,
 } from "../api/movements";
 import { fefoLots, generateSapLot, type Lot } from "../api/lots";
 import type { LotPallet } from "../api/pallets";
@@ -21,6 +27,20 @@ import { getFriendlyApiError } from "../utils/apiError";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 
 type PalletLine = { qty: string };
+
+// ── Línea del carrito de remito: un producto ya cargado (con sus lotes/pallets)
+//    listo para agregarse al documento multi-producto.
+type CartLine = {
+  key: number;
+  productId: string;
+  productLabel: string;
+  palletItems: PalletItem[];
+  totalQty: number;
+  palletsCount: number;
+  summary: string;
+  locationId?: string;
+};
+let _cartKey = 0;
 
 // ── Tipo formulario entrada simplificado (una cantidad total por lote)
 type LotGroup = {
@@ -132,6 +152,19 @@ export default function MovementsPage() {
 
   // Formulario común
   const [movType, setMovType] = useState<MovementType>("ENTRY");
+  // UI-only: cuando es true muestra el módulo de Ajuste de Inventario (RLAI/RLAO)
+  const [showInventoryAdj, setShowInventoryAdj] = useState(false);
+  // UI-only: historial de remitos (RLNE/RLNS) con botones de impresión
+  const [showDocHistory, setShowDocHistory] = useState(false);
+
+  const isDocType = movType === "ENTRY" || movType === "EXIT";
+  const docsQ = useQuery({
+    queryKey: ["documents", movType, showDocHistory],
+    queryFn: () => getDocuments({ type: movType as "ENTRY" | "EXIT" }),
+    enabled: isDocType && showDocHistory,
+    staleTime: 30_000,
+  });
+  const documents: LogisticsDocument[] = docsQ.data ?? [];
   const [product, setProduct] = useState<Product | null>(null);
   const [warehouseId, setWarehouseId] = useState("");
   const [locationId, setLocationId] = useState("");
@@ -152,6 +185,9 @@ export default function MovementsPage() {
 
   // TRANSFERENCIA (sigue usando selección de palets por FEFO)
   const [fefoRows, setFefoRows] = useState<FefoRow[]>([]);
+
+  // CARRITO de remito (entrada/salida multi-producto): productos ya cargados.
+  const [cart, setCart] = useState<CartLine[]>([]);
 
   // WIZARD — sólo para ENTRY (2 pasos)
   const [wizardStep, setWizardStep] = useState(1);
@@ -243,6 +279,7 @@ export default function MovementsPage() {
     setEncargadoId(""); setDate("");
     setEntrySapLot(generateSapLot()); setLotGroups([newLotGroup()]);
     setFefoRows([]);
+    setCart([]);
     setFormError("");
     setWizardStep(1);
   }
@@ -353,16 +390,33 @@ export default function MovementsPage() {
   });
   const saving = createMovementMut.isPending;
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!product) { setFormError("Seleccioná un material."); return; }
-    setFormError("");
+  const createDocumentMut = useMutation({
+    mutationFn: (payload: CreateDocumentPayload) => createDocument(payload),
+    onSuccess: (res) => {
+      invalidateAfterMovement();
+      toast.success(`Remito ${res.code} registrado (${res.movementIds.length} producto(s))`);
+      setCart([]);
+      resetForm();
+    },
+    onError: (err) => {
+      const msg = getFriendlyApiError(err);
+      setFormError(msg);
+      toast.error(msg);
+    },
+  });
+  const savingDoc = createDocumentMut.isPending;
+
+  /**
+   * Construye la línea (producto + items) del producto actualmente cargado.
+   * Devuelve { error } si falta data, o null si no hay producto seleccionado.
+   */
+  function buildCurrentLine(): { line: CartLine } | { error: string } | null {
+    if (!product) return null;
 
     if (isEntry) {
       const validGroups = lotGroups.filter((g) => g.lotCode.trim() && Number(g.quantity) > 0);
-      if (validGroups.length === 0) { setFormError("Agregá al menos un lote con código y cantidad."); return; }
-
-      const allItems = validGroups.flatMap((g) => {
+      if (validGroups.length === 0) return { error: "Agregá al menos un lote con código y cantidad." };
+      const palletItems: PalletItem[] = validGroups.flatMap((g) => {
         const base = {
           lotCode: g.lotCode.trim(),
           fechaVencimiento: g.fechaVencimiento || undefined,
@@ -374,48 +428,121 @@ export default function MovementsPage() {
         }
         return [{ ...base, quantity: Number(g.quantity) }];
       });
-      const totalPallets = allItems.length > 0 ? allItems.length : validGroups.reduce((s, g) => s + (Number(g.palletCount) || 0), 0);
+      const totalQty = palletItems.reduce((s, i) => s + (i.quantity || 0), 0);
+      return {
+        line: {
+          key: ++_cartKey,
+          productId: product.id,
+          productLabel: `${product.code} · ${product.description}`,
+          palletItems,
+          totalQty,
+          palletsCount: palletItems.length,
+          summary: `Lotes: ${validGroups.map((g) => g.lotCode.trim()).join(", ")}`,
+          locationId: locationId || undefined,
+        },
+      };
+    }
 
-      createMovementMut.mutate({
-        type: movType, date: date || undefined, productId: product.id,
-        warehouseId: warehouseId || undefined, locationId: locationId || undefined,
-        documentNumber: documentNumber || undefined, supplier: supplier || undefined,
-        carrier: carrier || undefined, driver: driver || undefined,
-        notes: notes || undefined, encargadoRecepcionId: encargadoId || undefined,
-        pallets: totalPallets > 0 ? totalPallets : undefined,
-        palletItems: allItems,
-      });
-    } else if (movType === "EXIT") {
-      const palletItems: { palletId: string; quantity: number }[] = [];
-      for (const row of fefoRows) {
-        const targetQty = Number(row.exitQtyInput);
-        const selectedPallets = row.lot.pallets.filter((p) => row.selectedIds.has(p.id));
-        if (selectedPallets.length === 0) continue;
-        if (targetQty > 0) {
-          // Distribuye la cantidad exacta: el último pallet recibe solo el resto
-          let remaining = targetQty;
-          for (const p of selectedPallets) {
-            if (remaining <= 0) break;
-            const take = Math.min(p.quantity, remaining);
-            palletItems.push({ palletId: p.id, quantity: take });
-            remaining -= take;
-          }
-        } else {
-          // Selección manual: usa cantidad completa de cada pallet
-          for (const p of selectedPallets) {
-            palletItems.push({ palletId: p.id, quantity: p.quantity });
-          }
+    // SALIDA: arma palletItems desde la selección FEFO (mismo cálculo que antes).
+    const palletItems: PalletItem[] = [];
+    for (const row of fefoRows) {
+      const targetQty = Number(row.exitQtyInput);
+      const selectedPallets = row.lot.pallets.filter((p) => row.selectedIds.has(p.id));
+      if (selectedPallets.length === 0) continue;
+      if (targetQty > 0) {
+        let remaining = targetQty;
+        for (const p of selectedPallets) {
+          if (remaining <= 0) break;
+          const take = Math.min(p.quantity, remaining);
+          palletItems.push({ palletId: p.id, quantity: take });
+          remaining -= take;
+        }
+      } else {
+        for (const p of selectedPallets) {
+          palletItems.push({ palletId: p.id, quantity: p.quantity });
         }
       }
-      if (palletItems.length === 0) { setFormError("Ingresá una cantidad en al menos un lote para despachar."); return; }
-      createMovementMut.mutate({
-        type: "EXIT", date: date || undefined, productId: product.id,
-        documentNumber: documentNumber || undefined, carrier: carrier || undefined,
-        driver: driver || undefined, destination: destination || undefined,
-        notes: notes || undefined, encargadoRecepcionId: encargadoId || undefined,
+    }
+    if (palletItems.length === 0) return { error: "Ingresá una cantidad en al menos un lote para despachar." };
+    const totalQty = palletItems.reduce((s, i) => s + (i.quantity || 0), 0);
+    const lotsUsed = fefoRows.filter((r) => r.selectedIds.size > 0).map((r) => r.lot.lotCode);
+    return {
+      line: {
+        key: ++_cartKey,
+        productId: product.id,
+        productLabel: `${product.code} · ${product.description}`,
         palletItems,
-      });
-    } else if (isTransfer) {
+        totalQty,
+        palletsCount: palletItems.length,
+        summary: lotsUsed.length ? `Lotes: ${lotsUsed.join(", ")}` : `${palletItems.length} pallet(s)`,
+      },
+    };
+  }
+
+  /** Limpia solo la sección de producto; mantiene la cabecera del remito. */
+  function resetProductSection() {
+    setProduct(null);
+    setLotGroups([newLotGroup()]);
+    setEntrySapLot(generateSapLot());
+    setFefoRows([]);
+    setWizardStep(1);
+  }
+
+  /** Agrega el producto actual al carrito y limpia la sección de producto. */
+  function addToCart(): boolean {
+    const res = buildCurrentLine();
+    if (!res) { setFormError("Seleccioná un material."); return false; }
+    if ("error" in res) { setFormError(res.error); return false; }
+    setFormError("");
+    setCart((c) => [...c, res.line]);
+    resetProductSection();
+    return true;
+  }
+
+  function removeFromCart(key: number) {
+    setCart((c) => c.filter((l) => l.key !== key));
+  }
+
+  /** Envía el remito completo: carrito + producto actual (si está cargado y válido). */
+  function submitDocument() {
+    let lines = cart;
+    if (product) {
+      const res = buildCurrentLine();
+      if (res && "error" in res) {
+        if (cart.length === 0) { setFormError(res.error); return; }
+      } else if (res && "line" in res) {
+        lines = [...cart, res.line];
+      }
+    }
+    if (lines.length === 0) { setFormError("Agregá al menos un producto al remito."); return; }
+    setFormError("");
+
+    const payload: CreateDocumentPayload = {
+      type: isEntry ? "ENTRY" : "EXIT",
+      date: date || undefined,
+      documentNumber: documentNumber || undefined,
+      supplier: isEntry ? supplier || undefined : undefined,
+      destination: !isEntry ? destination || undefined : undefined,
+      warehouseId: warehouseId || undefined,
+      carrier: carrier || undefined,
+      driver: driver || undefined,
+      notes: notes || undefined,
+      encargadoId: encargadoId || undefined,
+      lines: lines.map((l) => ({
+        productId: l.productId,
+        locationId: l.locationId,
+        palletItems: l.palletItems,
+      })),
+    };
+    createDocumentMut.mutate(payload);
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setFormError("");
+
+    if (isTransfer) {
+      if (!product) { setFormError("Seleccioná un material."); return; }
       const palletItems = fefoRows.flatMap((row) =>
         row.lot.pallets.filter((p) => row.selectedIds.has(p.id)).map((p) => ({ palletId: p.id, quantity: p.quantity }))
       );
@@ -426,7 +553,11 @@ export default function MovementsPage() {
         fromLocationId: fromLocationId || undefined, toLocationId,
         notes: notes || undefined, palletItems,
       });
+      return;
     }
+
+    // ENTRY / EXIT → documento multi-producto (remito)
+    submitDocument();
   }
 
   // ── Regularización
@@ -642,28 +773,145 @@ export default function MovementsPage() {
         </div>
       )}
 
+      {/* ── Ajuste de Inventario (RLAI/RLAO) — componente dedicado ── */}
+      {showInventoryAdj && <InventoryAdjustmentPage />}
+
       {/* ── Ajuste de Entrada — componente dedicado ── */}
-      {movType === "ADJUSTMENT_IN" && (
+      {!showInventoryAdj && movType === "ADJUSTMENT_IN" && (
         <AdjustmentInForm
           onTypeChange={(t) => {
-            setMovType(t);
-            resetForm();
+            if (t === "INVENTORY_ADJUSTMENT") { setShowInventoryAdj(true); resetForm(); }
+            else { setShowInventoryAdj(false); setMovType(t); resetForm(); }
           }}
         />
       )}
 
       {/* ── Ajuste de Salida — componente dedicado ── */}
-      {movType === "ADJUSTMENT_OUT" && (
+      {!showInventoryAdj && movType === "ADJUSTMENT_OUT" && (
         <AdjustmentOutForm
           onTypeChange={(t) => {
-            setMovType(t);
-            resetForm();
+            if (t === "INVENTORY_ADJUSTMENT") { setShowInventoryAdj(true); resetForm(); }
+            else { setShowInventoryAdj(false); setMovType(t); resetForm(); }
           }}
         />
       )}
 
+      {/* ── Toggle historial / nuevo remito (solo para ENTRY y EXIT) ── */}
+      {!showInventoryAdj && isDocType && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+          <button
+            type="button"
+            onClick={() => setShowDocHistory(false)}
+            style={{
+              padding: "6px 18px", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer",
+              background: !showDocHistory ? "var(--primary)" : "var(--panel-hi)",
+              color: !showDocHistory ? "#fff" : "var(--muted)",
+              border: !showDocHistory ? "none" : "1px solid var(--border)",
+            }}
+          >
+            Nuevo remito
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowDocHistory(true)}
+            style={{
+              padding: "6px 18px", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer",
+              background: showDocHistory ? "var(--primary)" : "var(--panel-hi)",
+              color: showDocHistory ? "#fff" : "var(--muted)",
+              border: showDocHistory ? "none" : "1px solid var(--border)",
+            }}
+          >
+            Historial de remitos
+          </button>
+        </div>
+      )}
+
+      {/* ── Historial de remitos (RLNE / RLNS) con botones de impresión ── */}
+      {!showInventoryAdj && isDocType && showDocHistory && (
+        <section className="card">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>
+              {movType === "ENTRY" ? "Remitos de Entrada (RLNE)" : "Remitos de Salida (RLNS)"}
+            </h3>
+            <button
+              type="button"
+              onClick={() => docsQ.refetch()}
+              style={{ background: "none", border: "1px solid var(--border)", borderRadius: 6, padding: "4px 12px", fontSize: 12, cursor: "pointer", color: "var(--muted)" }}
+            >
+              Actualizar
+            </button>
+          </div>
+
+          {docsQ.isLoading ? (
+            <p style={{ color: "var(--muted)", fontSize: 13 }}>Cargando...</p>
+          ) : documents.length === 0 ? (
+            <p style={{ color: "var(--muted)", fontSize: 13 }}>No hay remitos registrados.</p>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Código</th>
+                    <th>Fecha</th>
+                    <th>{movType === "ENTRY" ? "Proveedor" : "Destino"}</th>
+                    <th>N° externo</th>
+                    <th style={{ textAlign: "right" }}>Productos</th>
+                    <th style={{ textAlign: "right" }}>Unidades</th>
+                    <th style={{ textAlign: "center" }}>Estado</th>
+                    <th style={{ textAlign: "center" }}>Imprimir</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {documents.map((doc) => (
+                    <tr key={doc.id}>
+                      <td style={{ fontFamily: "monospace", fontWeight: 700, fontSize: 13, color: "var(--primary)", whiteSpace: "nowrap" }}>
+                        {doc.code}
+                      </td>
+                      <td style={{ fontSize: 12, whiteSpace: "nowrap", color: "var(--muted)" }}>
+                        {new Date(doc.date).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" })}
+                      </td>
+                      <td style={{ fontSize: 13 }}>{(movType === "ENTRY" ? doc.supplier : doc.destination) ?? "—"}</td>
+                      <td style={{ fontSize: 12, color: "var(--muted)", fontFamily: "monospace" }}>{doc.documentNumber ?? "—"}</td>
+                      <td style={{ textAlign: "right", fontWeight: 700 }}>{doc.totalLines}</td>
+                      <td style={{ textAlign: "right", fontWeight: 700 }}>{doc.totalQuantity.toLocaleString("es-PY")}</td>
+                      <td style={{ textAlign: "center" }}>
+                        <span style={{
+                          display: "inline-block", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 700,
+                          background: doc.status === "APROBADO" ? "var(--badge-in-bg, #dcfce7)" : "var(--badge-adj-bg, #fef9c3)",
+                          color: doc.status === "APROBADO" ? "var(--badge-in-text, #166534)" : "var(--badge-adj-text, #854d0e)",
+                        }}>
+                          {doc.status.replace("_", " ")}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: "center", whiteSpace: "nowrap" }}>
+                        <button
+                          type="button"
+                          title="Imprimir nota"
+                          onClick={() => window.open(`/print/document/${doc.id}`, "_blank")}
+                          style={{ background: "none", border: "1px solid var(--border)", borderRadius: 5, padding: "3px 8px", cursor: "pointer", fontSize: 14, marginRight: 4 }}
+                        >
+                          🖨️
+                        </button>
+                        <button
+                          type="button"
+                          title="Imprimir etiquetas de pallet"
+                          onClick={() => window.open(`/print/labels/${doc.id}`, "_blank")}
+                          style={{ background: "none", border: "1px solid var(--border)", borderRadius: 5, padding: "3px 8px", cursor: "pointer", fontSize: 14 }}
+                        >
+                          🏷️
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
       {/* ── Formulario (ENTRY, EXIT, TRANSFER) ── */}
-      {movType !== "ADJUSTMENT_IN" && movType !== "ADJUSTMENT_OUT" && <section className="card">
+      {!showInventoryAdj && movType !== "ADJUSTMENT_IN" && movType !== "ADJUSTMENT_OUT" && !showDocHistory && <section className="card">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
           <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Registrar movimiento</h3>
           {/* Wizard step indicator — only for ENTRY */}
@@ -729,17 +977,27 @@ export default function MovementsPage() {
           )}
           {(movType !== "ENTRY" || wizardStep === 1) && (
           <div style={{ display: "grid", gridTemplateColumns: "200px 1fr auto", gap: 8, alignItems: "center" }}>
-            <select className="input" value={movType}
+            <select className="input"
+              value={showInventoryAdj ? "INVENTORY_ADJUSTMENT" : movType}
               onChange={(e) => {
-                setMovType(e.target.value as MovementType);
-                setProduct(null); setFefoRows([]); setLotGroups([newLotGroup()]);
-                setWizardStep(1);
-              }}>
+                const val = e.target.value;
+                if (val === "INVENTORY_ADJUSTMENT") {
+                  setShowInventoryAdj(true);
+                  resetForm();
+                } else {
+                  setShowInventoryAdj(false);
+                  setMovType(val as MovementType);
+                  setProduct(null); setFefoRows([]); setLotGroups([newLotGroup()]);
+                  setWizardStep(1);
+                }
+              }}
+            >
               <option value="ENTRY">Entrada</option>
               <option value="EXIT">Salida</option>
               <option value="TRANSFER">Transferencia</option>
               <option value="ADJUSTMENT_IN">Ajuste entrada</option>
               <option value="ADJUSTMENT_OUT">Ajuste salida</option>
+              <option value="INVENTORY_ADJUSTMENT">Ajuste de inventario</option>
             </select>
             <ProductSearch value={product} onChange={setProduct} />
             <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} title="Fecha (vacío = hoy)" style={{ width: 150 }} />
@@ -1204,13 +1462,55 @@ export default function MovementsPage() {
           )}
 
 
+          {/* Carrito de productos del remito (entrada/salida multi-producto) */}
+          {!isTransfer && cart.length > 0 && (
+            <div style={{ border: "1.5px solid var(--primary)", borderRadius: 10, overflow: "hidden" }}>
+              <div style={{ background: "var(--bg)", padding: "8px 12px", borderBottom: "1px solid var(--border)", fontSize: 13, fontWeight: 800 }}>
+                Productos en este remito ({cart.length})
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table className="table" style={{ margin: 0 }}>
+                  <thead>
+                    <tr>
+                      <th>Producto</th>
+                      <th>Detalle</th>
+                      <th style={{ textAlign: "right" }}>Cantidad</th>
+                      <th style={{ textAlign: "right" }}>Pallets</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cart.map((l) => (
+                      <tr key={l.key}>
+                        <td style={{ fontWeight: 600 }}>{l.productLabel}</td>
+                        <td style={{ color: "var(--muted)", fontSize: 12 }}>{l.summary}</td>
+                        <td style={{ textAlign: "right" }}>{l.totalQty.toLocaleString("es-PY")}</td>
+                        <td style={{ textAlign: "right" }}>{l.palletsCount}</td>
+                        <td style={{ textAlign: "right" }}>
+                          <button type="button" className="btn" onClick={() => removeFromCart(l.key)} style={{ padding: "2px 8px", color: "var(--danger)" }} aria-label="Quitar producto">×</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {formError && (
             <div className="form-error" role="alert">{formError}</div>
           )}
 
-          {/* Navigation buttons */}
-          {movType === "ENTRY" ? (
+          {/* Navigation / acciones */}
+          {isTransfer ? (
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <button className="btn btn--primary" type="submit" disabled={saving || !product}>
+                {saving ? "Guardando..." : "Registrar movimiento"}
+              </button>
+              <button type="button" className="btn" onClick={resetForm}>Limpiar</button>
+            </div>
+          ) : movType === "ENTRY" ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               {wizardStep > 1 && (
                 <button type="button" className="btn" onClick={() => setWizardStep((s) => s - 1)} aria-label="Paso anterior">
                   ← Anterior
@@ -1230,21 +1530,29 @@ export default function MovementsPage() {
                 </button>
               )}
               {wizardStep === 2 && (
+                <button type="button" className="btn" onClick={addToCart} disabled={!product}>
+                  + Agregar otro producto
+                </button>
+              )}
+              {(wizardStep === 2 || cart.length > 0) && (
                 <button
                   className="btn btn--primary"
                   type="submit"
-                  disabled={saving}
-                  aria-label="Confirmar y registrar entrada"
+                  disabled={savingDoc}
+                  aria-label="Registrar remito de entrada"
                 >
-                  {saving ? "Guardando..." : "✓ Confirmar entrada"}
+                  {savingDoc ? "Guardando..." : `✓ Registrar remito${cart.length ? ` (${cart.length + (product ? 1 : 0)} prod.)` : ""}`}
                 </button>
               )}
               <button type="button" className="btn" onClick={resetForm}>Limpiar</button>
             </div>
           ) : (
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <button className="btn btn--primary" type="submit" disabled={saving || !product}>
-                {saving ? "Guardando..." : "Registrar movimiento"}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <button type="button" className="btn" onClick={addToCart} disabled={!product}>
+                + Agregar otro producto
+              </button>
+              <button className="btn btn--primary" type="submit" disabled={savingDoc}>
+                {savingDoc ? "Guardando..." : `Registrar remito${cart.length ? ` (${cart.length + (product ? 1 : 0)} prod.)` : ""}`}
               </button>
               <button type="button" className="btn" onClick={resetForm}>Limpiar</button>
             </div>

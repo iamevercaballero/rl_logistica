@@ -16,6 +16,7 @@ exports.MovementsController = void 0;
 const common_1 = require("@nestjs/common");
 const movements_service_1 = require("./movements.service");
 const create_movement_dto_1 = require("./dto/create-movement.dto");
+const create_document_dto_1 = require("./dto/create-document.dto");
 const regularize_movement_dto_1 = require("./dto/regularize-movement.dto");
 const movements_query_dto_1 = require("./dto/movements-query.dto");
 const jwt_auth_guard_1 = require("../auth/guards/jwt-auth.guard");
@@ -27,6 +28,21 @@ let MovementsController = class MovementsController {
     }
     create(dto, req) {
         return this.service.create(dto, req.user.userId);
+    }
+    createDocument(dto, req) {
+        return this.service.createDocument(dto, req.user.userId);
+    }
+    findDocuments(query) {
+        return this.service.findDocuments(query);
+    }
+    findDocument(id) {
+        return this.service.findDocument(id);
+    }
+    requestVoid(id, req) {
+        return this.service.requestVoid(id, req.user.userId);
+    }
+    editMetadata(id, dto, req) {
+        return this.service.editMetadata(id, dto, req.user.userId);
     }
     regularize(id, dto, req) {
         return this.service.regularize(id, dto, req.user.userId);
@@ -48,6 +64,50 @@ __decorate([
     __metadata("design:paramtypes", [create_movement_dto_1.CreateMovementDto, Object]),
     __metadata("design:returntype", void 0)
 ], MovementsController.prototype, "create", null);
+__decorate([
+    (0, common_1.Post)('documents'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR'),
+    __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [create_document_dto_1.CreateDocumentDto, Object]),
+    __metadata("design:returntype", void 0)
+], MovementsController.prototype, "createDocument", null);
+__decorate([
+    (0, common_1.Get)('documents'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR'),
+    __param(0, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], MovementsController.prototype, "findDocuments", null);
+__decorate([
+    (0, common_1.Get)('documents/:id'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR'),
+    __param(0, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], MovementsController.prototype, "findDocument", null);
+__decorate([
+    (0, common_1.Post)(':id/void'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", void 0)
+], MovementsController.prototype, "requestVoid", null);
+__decorate([
+    (0, common_1.Patch)(':id/edit'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Body)()),
+    __param(2, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, regularize_movement_dto_1.RegularizeMovementDto, Object]),
+    __metadata("design:returntype", void 0)
+], MovementsController.prototype, "editMetadata", null);
 __decorate([
     (0, common_1.Patch)(':id/regularize'),
     (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER'),

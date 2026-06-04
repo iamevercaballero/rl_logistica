@@ -4,6 +4,7 @@ export declare class ReportsMovementsQueryDto {
     locationId?: string;
     productId?: string;
     type?: MovementType;
+    status?: 'NORMAL' | 'PENDING_REGULARIZATION';
     dateFrom?: string;
     dateTo?: string;
     search?: string;

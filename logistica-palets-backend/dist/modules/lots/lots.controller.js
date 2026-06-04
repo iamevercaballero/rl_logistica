@@ -24,8 +24,8 @@ let LotsController = class LotsController {
     constructor(service) {
         this.service = service;
     }
-    findAll(productId, sapLot) {
-        return this.service.findAll(productId, sapLot);
+    findAll(productId, sapLot, includePallets) {
+        return this.service.findAll(productId, sapLot, includePallets === 'true');
     }
     fefo(productId, sapLot, locationId) {
         return this.service.findFefo(productId, sapLot, locationId);
@@ -42,6 +42,12 @@ let LotsController = class LotsController {
     remove(id) {
         return this.service.remove(id);
     }
+    reconcile(id) {
+        return this.service.reconcileStock(id);
+    }
+    reconcileAll(productId) {
+        return this.service.reconcileAllStocks(productId);
+    }
 };
 exports.LotsController = LotsController;
 __decorate([
@@ -49,8 +55,9 @@ __decorate([
     (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR'),
     __param(0, (0, common_1.Query)('productId')),
     __param(1, (0, common_1.Query)('sapLot')),
+    __param(2, (0, common_1.Query)('includePallets')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:paramtypes", [String, String, String]),
     __metadata("design:returntype", void 0)
 ], LotsController.prototype, "findAll", null);
 __decorate([
@@ -96,6 +103,24 @@ __decorate([
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", void 0)
 ], LotsController.prototype, "remove", null);
+__decorate([
+    (0, common_1.Post)(':id/reconcile'),
+    (0, common_1.HttpCode)(200),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER'),
+    __param(0, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], LotsController.prototype, "reconcile", null);
+__decorate([
+    (0, common_1.Post)('reconcile-all'),
+    (0, common_1.HttpCode)(200),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MANAGER'),
+    __param(0, (0, common_1.Query)('productId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], LotsController.prototype, "reconcileAll", null);
 exports.LotsController = LotsController = __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
     (0, common_1.Controller)('lots'),

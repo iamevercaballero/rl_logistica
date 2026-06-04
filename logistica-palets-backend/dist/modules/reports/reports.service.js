@@ -17,10 +17,12 @@ const common_1 = require("@nestjs/common");
 const typeorm_1 = require("typeorm");
 const typeorm_2 = require("@nestjs/typeorm");
 const sap_stock_entity_1 = require("./entities/sap-stock.entity");
+const cache_service_1 = require("../cache/cache.service");
 let ReportsService = class ReportsService {
-    constructor(dataSource, sapStockRepo) {
+    constructor(dataSource, sapStockRepo, cache) {
         this.dataSource = dataSource;
         this.sapStockRepo = sapStockRepo;
+        this.cache = cache;
     }
     parseNumber(value) {
         return Number(value) || 0;
@@ -49,7 +51,28 @@ let ReportsService = class ReportsService {
         start.setDate(start.getDate() - days);
         return { start, end: now };
     }
+    getPreviousRangeDates(range) {
+        const now = new Date();
+        if (range === 'today') {
+            const end = new Date(now);
+            end.setHours(0, 0, 0, 0);
+            const start = new Date(end);
+            start.setDate(start.getDate() - 1);
+            return { start, end };
+        }
+        const days = range === 'week' ? 7 : 30;
+        const end = new Date(now);
+        end.setDate(end.getDate() - days);
+        const start = new Date(end);
+        start.setDate(start.getDate() - days);
+        return { start, end };
+    }
     async stock(query) {
+        var _a, _b;
+        const cacheKey = `stock:${(_a = query.warehouseId) !== null && _a !== void 0 ? _a : 'all'}:${(_b = query.locationId) !== null && _b !== void 0 ? _b : 'all'}`;
+        const cached = await this.cache.get(cacheKey);
+        if (cached)
+            return cached;
         const qb = this.dataSource
             .createQueryBuilder()
             .from('stocks', 's')
@@ -99,7 +122,7 @@ let ReportsService = class ReportsService {
                 .orderBy('p.code', 'ASC')
                 .getRawMany(),
         ]);
-        return {
+        const stockResult = {
             totalMaterials: this.parseNumber(totalsRaw === null || totalsRaw === void 0 ? void 0 : totalsRaw.materials),
             stockRows: this.parseNumber(totalsRaw === null || totalsRaw === void 0 ? void 0 : totalsRaw.stockRows),
             totalQuantity: this.parseNumber(totalsRaw === null || totalsRaw === void 0 ? void 0 : totalsRaw.totalQuantity),
@@ -129,6 +152,8 @@ let ReportsService = class ReportsService {
                 location: row.locationId ? { id: row.locationId, code: row.locationCode } : null,
             })),
         };
+        void this.cache.set(cacheKey, stockResult, 30);
+        return stockResult;
     }
     async movements(query) {
         var _a, _b, _c;
@@ -144,6 +169,15 @@ let ReportsService = class ReportsService {
             .leftJoin('locations', 'fl', 'fl.id = m."fromLocationId"')
             .leftJoin('warehouses', 'tw', 'tw.id = m."toWarehouseId"')
             .leftJoin('locations', 'tl', 'tl.id = m."toLocationId"')
+            .leftJoin('lots', 'lot', 'lot.id = m."lotId"')
+            .leftJoin((sq) => sq
+            .from('movement_details', 'md')
+            .innerJoin('lots', 'dl', 'dl.id = md."lotId"')
+            .select('md."movementId"', 'movementId')
+            .addSelect('STRING_AGG(DISTINCT dl."lotCode", \', \' ORDER BY dl."lotCode")', 'lotCodes')
+            .addSelect('STRING_AGG(DISTINCT dl."sapLot", \', \' ORDER BY dl."sapLot")', 'sapLots')
+            .addSelect('COUNT(DISTINCT dl.id)', 'lotCount')
+            .groupBy('md."movementId"'), 'dl_agg', 'dl_agg."movementId" = m.id')
             .select('m.id', 'id')
             .addSelect('m.type', 'type')
             .addSelect('m.date', 'date')
@@ -155,6 +189,8 @@ let ReportsService = class ReportsService {
             .addSelect('m.driver', 'driver')
             .addSelect('m.destination', 'destination')
             .addSelect('m.notes', 'notes')
+            .addSelect('m.status', 'status')
+            .addSelect('m."adjustmentReason"', 'adjustmentReason')
             .addSelect('p.id', 'productId')
             .addSelect('p.code', 'productCode')
             .addSelect('p.description', 'productDescription')
@@ -166,7 +202,10 @@ let ReportsService = class ReportsService {
             .addSelect('fw.name', 'fromWarehouseName')
             .addSelect('fl.code', 'fromLocationCode')
             .addSelect('tw.name', 'toWarehouseName')
-            .addSelect('tl.code', 'toLocationCode');
+            .addSelect('tl.code', 'toLocationCode')
+            .addSelect('COALESCE(lot."lotCode", dl_agg."lotCodes")', 'lotCode')
+            .addSelect('COALESCE(lot."sapLot", dl_agg."sapLots")', 'sapLot')
+            .addSelect('COALESCE(dl_agg."lotCount", CASE WHEN lot.id IS NOT NULL THEN 1 ELSE 0 END)', 'lotCount');
         if (query.warehouseId) {
             qb.andWhere('(m."warehouseId" = :warehouseId OR m."fromWarehouseId" = :warehouseId OR m."toWarehouseId" = :warehouseId)', { warehouseId: query.warehouseId });
         }
@@ -177,6 +216,8 @@ let ReportsService = class ReportsService {
             qb.andWhere('m."productId" = :productId', { productId: query.productId });
         if (query.type)
             qb.andWhere('m.type = :type', { type: query.type });
+        if (query.status)
+            qb.andWhere('m.status = :status', { status: query.status });
         if (query.dateFrom)
             qb.andWhere('m.date >= :dateFrom', { dateFrom: this.toStartDate(query.dateFrom) });
         if (query.dateTo)
@@ -194,29 +235,37 @@ let ReportsService = class ReportsService {
             qb.clone().select('COUNT(m.id)', 'total').getRawOne(),
         ]);
         return {
-            data: data.map((row) => ({
-                id: row.id,
-                type: row.type,
-                date: row.date,
-                quantity: this.parseNumber(row.quantity),
-                pallets: row.pallets === null || row.pallets === undefined ? null : this.parseNumber(row.pallets),
-                documentNumber: row.documentNumber,
-                supplier: row.supplier,
-                carrier: row.carrier,
-                driver: row.driver,
-                destination: row.destination,
-                notes: row.notes,
-                material: {
-                    id: row.productId,
-                    code: row.productCode,
-                    description: row.productDescription,
-                    unitOfMeasure: row.unitOfMeasure,
-                },
-                warehouse: row.warehouseId ? { id: row.warehouseId, name: row.warehouseName } : null,
-                location: row.locationId ? { id: row.locationId, code: row.locationCode } : null,
-                from: row.fromWarehouseName || row.fromLocationCode ? { warehouseName: row.fromWarehouseName, locationCode: row.fromLocationCode } : null,
-                to: row.toWarehouseName || row.toLocationCode ? { warehouseName: row.toWarehouseName, locationCode: row.toLocationCode } : null,
-            })),
+            data: data.map((row) => {
+                var _a, _b, _c, _d;
+                return ({
+                    id: row.id,
+                    type: row.type,
+                    date: row.date,
+                    quantity: this.parseNumber(row.quantity),
+                    pallets: row.pallets === null || row.pallets === undefined ? null : this.parseNumber(row.pallets),
+                    documentNumber: row.documentNumber,
+                    supplier: row.supplier,
+                    carrier: row.carrier,
+                    driver: row.driver,
+                    destination: row.destination,
+                    notes: row.notes,
+                    material: {
+                        id: row.productId,
+                        code: row.productCode,
+                        description: row.productDescription,
+                        unitOfMeasure: row.unitOfMeasure,
+                    },
+                    warehouse: row.warehouseId ? { id: row.warehouseId, name: row.warehouseName } : null,
+                    location: row.locationId ? { id: row.locationId, code: row.locationCode } : null,
+                    lotCode: (_a = row.lotCode) !== null && _a !== void 0 ? _a : null,
+                    sapLot: (_b = row.sapLot) !== null && _b !== void 0 ? _b : null,
+                    lotCount: this.parseNumber(row.lotCount),
+                    status: (_c = row.status) !== null && _c !== void 0 ? _c : 'NORMAL',
+                    adjustmentReason: (_d = row.adjustmentReason) !== null && _d !== void 0 ? _d : null,
+                    from: row.fromWarehouseName || row.fromLocationCode ? { warehouseName: row.fromWarehouseName, locationCode: row.fromLocationCode } : null,
+                    to: row.toWarehouseName || row.toLocationCode ? { warehouseName: row.toWarehouseName, locationCode: row.toLocationCode } : null,
+                });
+            }),
             meta: {
                 page,
                 limit,
@@ -284,10 +333,13 @@ let ReportsService = class ReportsService {
         };
     }
     async dailyStock(query) {
-        var _a, _b;
-        const date = (_b = (_a = query.date) === null || _a === void 0 ? void 0 : _a.slice(0, 10)) !== null && _b !== void 0 ? _b : new Date().toISOString().slice(0, 10);
-        const dayStart = `${date}T00:00:00.000Z`;
-        const dayEnd = `${date}T23:59:59.999Z`;
+        var _a, _b, _c, _d;
+        const today = new Date().toISOString().slice(0, 10);
+        const from = ((_b = (_a = query.dateFrom) !== null && _a !== void 0 ? _a : query.date) !== null && _b !== void 0 ? _b : today).slice(0, 10);
+        const to = ((_d = (_c = query.dateTo) !== null && _c !== void 0 ? _c : query.date) !== null && _d !== void 0 ? _d : today).slice(0, 10);
+        const date = from;
+        const dayStart = `${from}T00:00:00.000Z`;
+        const dayEnd = `${to}T23:59:59.999Z`;
         const movementFilter = this.buildMovementScopeFilter(query, 2);
         const sapFilter = this.buildSapScopeFilter(query, 1);
         const rows = await this.dataSource.query(`
@@ -382,8 +434,18 @@ let ReportsService = class ReportsService {
     async kpis(query) {
         var _a;
         const range = (_a = query.range) !== null && _a !== void 0 ? _a : 'today';
+        const cacheKey = `kpis:${range}`;
+        const cached = await this.cache.get(cacheKey);
+        if (cached)
+            return cached;
         const { start, end } = this.getRangeDates(range);
-        const [stockRaw, movementsRaw, stockByWarehouseRaw] = await Promise.all([
+        const { start: prevStart, end: prevEnd } = this.getPreviousRangeDates(range);
+        const now = new Date();
+        const in15 = new Date(now);
+        in15.setDate(in15.getDate() + 15);
+        const in60 = new Date(now);
+        in60.setDate(in60.getDate() + 60);
+        const [stockRaw, movementsRaw, prevMovementsRaw, stockByWarehouseRaw, pendingRaw, expiringRaw,] = await Promise.all([
             this.dataSource
                 .createQueryBuilder()
                 .from('stocks', 's')
@@ -398,6 +460,12 @@ let ReportsService = class ReportsService {
                 .getRawOne(),
             this.dataSource
                 .createQueryBuilder()
+                .from('movements', 'm')
+                .select('COUNT(m.id)', 'prevMovements')
+                .where('m.date >= :prevStart AND m.date < :prevEnd', { prevStart, prevEnd })
+                .getRawOne(),
+            this.dataSource
+                .createQueryBuilder()
                 .from('stocks', 's')
                 .leftJoin('warehouses', 'w', 'w.id = s."warehouseId"')
                 .select('w.id', 'warehouseId')
@@ -407,19 +475,100 @@ let ReportsService = class ReportsService {
                 .addGroupBy('w.name')
                 .orderBy('w.name', 'ASC')
                 .getRawMany(),
+            this.dataSource
+                .createQueryBuilder()
+                .from('movements', 'm')
+                .select('COUNT(m.id)', 'pending')
+                .where('m.status = :status', { status: 'PENDING_REGULARIZATION' })
+                .getRawOne(),
+            this.dataSource
+                .createQueryBuilder()
+                .from('lots', 'l')
+                .select('l.id', 'id')
+                .addSelect('l."fechaVencimiento"', 'fechaVencimiento')
+                .addSelect('l."stockActual"', 'stockActual')
+                .where('l."fechaVencimiento" IS NOT NULL')
+                .andWhere('l."fechaVencimiento" <= :in60', { in60 })
+                .andWhere('l."fechaVencimiento" >= :now', { now })
+                .andWhere('l."stockActual" > 0')
+                .orderBy('l."fechaVencimiento"', 'ASC')
+                .limit(50)
+                .getRawMany(),
         ]);
-        return {
+        const currentMov = this.parseNumber(movementsRaw === null || movementsRaw === void 0 ? void 0 : movementsRaw.movementsInRange);
+        const prevMov = this.parseNumber(prevMovementsRaw === null || prevMovementsRaw === void 0 ? void 0 : prevMovementsRaw.prevMovements);
+        let movementsDelta = null;
+        if (prevMov > 0) {
+            movementsDelta = Math.round(((currentMov - prevMov) / prevMov) * 100);
+        }
+        else if (currentMov > 0) {
+            movementsDelta = 100;
+        }
+        const expiringCritical = expiringRaw.filter((r) => new Date(r.fechaVencimiento) <= in15).length;
+        const kpisResult = {
             range,
             totalMaterials: this.parseNumber(stockRaw === null || stockRaw === void 0 ? void 0 : stockRaw.materials),
             totalQuantity: this.parseNumber(stockRaw === null || stockRaw === void 0 ? void 0 : stockRaw.totalQuantity),
-            movementsCount: this.parseNumber(movementsRaw === null || movementsRaw === void 0 ? void 0 : movementsRaw.movementsInRange),
-            movementsInRange: this.parseNumber(movementsRaw === null || movementsRaw === void 0 ? void 0 : movementsRaw.movementsInRange),
+            movementsCount: currentMov,
+            movementsInRange: currentMov,
+            movementsPrev: prevMov,
+            movementsDelta,
+            pendingRegularizations: this.parseNumber(pendingRaw === null || pendingRaw === void 0 ? void 0 : pendingRaw.pending),
+            expiringLots: expiringRaw.length,
+            expiringCritical,
             stockByWarehouse: stockByWarehouseRaw.map((row) => ({
                 warehouseId: row.warehouseId,
                 warehouseName: row.warehouseName,
                 quantity: this.parseNumber(row.quantity),
             })),
         };
+        void this.cache.set(cacheKey, kpisResult, 60);
+        return kpisResult;
+    }
+    async freshness(productId) {
+        const qb = this.dataSource
+            .createQueryBuilder()
+            .from('lots', 'l')
+            .innerJoin('products', 'p', 'p.id = l."productId"')
+            .select('l.id', 'lotId')
+            .addSelect('l."lotCode"', 'lotCode')
+            .addSelect('l."sapLot"', 'sapLot')
+            .addSelect('l."fechaVencimiento"', 'fechaVencimiento')
+            .addSelect('l."fechaFabricacion"', 'fechaFabricacion')
+            .addSelect('l."stockActual"', 'stockActual')
+            .addSelect('l."proveedor"', 'proveedor')
+            .addSelect('p.id', 'productId')
+            .addSelect('p.code', 'productCode')
+            .addSelect('p.description', 'productDescription')
+            .addSelect('p."unitOfMeasure"', 'unitOfMeasure')
+            .where('l."fechaVencimiento" IS NOT NULL')
+            .andWhere('l."stockActual" > 0');
+        if (productId) {
+            qb.andWhere('l."productId" = :productId', { productId });
+        }
+        const rows = await qb.orderBy('l."fechaVencimiento"', 'ASC').getRawMany();
+        const now = new Date();
+        return rows.map((r) => {
+            var _a, _b, _c, _d;
+            const venc = new Date(r.fechaVencimiento);
+            const diasRestantes = Math.round((venc.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+            return {
+                lotId: r.lotId,
+                lotCode: r.lotCode,
+                sapLot: (_a = r.sapLot) !== null && _a !== void 0 ? _a : null,
+                fechaVencimiento: r.fechaVencimiento,
+                fechaFabricacion: (_b = r.fechaFabricacion) !== null && _b !== void 0 ? _b : null,
+                stockActual: this.parseNumber(r.stockActual),
+                proveedor: (_c = r.proveedor) !== null && _c !== void 0 ? _c : null,
+                diasRestantes,
+                product: {
+                    id: r.productId,
+                    code: r.productCode,
+                    description: r.productDescription,
+                    unitOfMeasure: (_d = r.unitOfMeasure) !== null && _d !== void 0 ? _d : null,
+                },
+            };
+        });
     }
     buildMovementScopeFilter(query, placeholderOffset) {
         const params = [];
@@ -461,6 +610,7 @@ exports.ReportsService = ReportsService = __decorate([
     (0, common_1.Injectable)(),
     __param(1, (0, typeorm_2.InjectRepository)(sap_stock_entity_1.SapStockSnapshot)),
     __metadata("design:paramtypes", [typeorm_1.DataSource,
-        typeorm_1.Repository])
+        typeorm_1.Repository,
+        cache_service_1.CacheService])
 ], ReportsService);
 //# sourceMappingURL=reports.service.js.map

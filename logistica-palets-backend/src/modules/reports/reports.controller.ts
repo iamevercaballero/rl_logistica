@@ -7,6 +7,8 @@ import { KpisQueryDto } from './dto/kpis-query.dto';
 import { DailyStockQueryDto } from './dto/daily-stock-query.dto';
 import { DifferencesSapQueryDto } from './dto/differences-sap-query.dto';
 import { UpsertSapStockDto } from './dto/upsert-sap-stock.dto';
+import { AnalyticsQueryDto } from './dto/analytics-query.dto';
+import { ForecastQueryDto } from './dto/forecast-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles/roles.guard';
 import { Roles } from '../auth/roles/roles.decorator';
@@ -62,5 +64,17 @@ export class ReportsController {
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
   freshness(@Query('productId') productId?: string) {
     return this.service.freshness(productId);
+  }
+
+  @Get('analytics')
+  @Roles('ADMIN', 'MANAGER', 'AUDITOR')
+  analytics(@Query() query: AnalyticsQueryDto) {
+    return this.service.analytics(query);
+  }
+
+  @Get('forecast')
+  @Roles('ADMIN', 'MANAGER', 'AUDITOR')
+  forecast(@Query() query: ForecastQueryDto) {
+    return this.service.forecast(query);
   }
 }

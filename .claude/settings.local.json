@@ -86,7 +86,9 @@
       "Bash(curl -s http://localhost:3000/health)",
       "Bash(curl -s http://localhost:3001/health)",
       "mcp__Claude_in_Chrome__tabs_context_mcp",
-      "Bash(curl -s http://localhost:5175/ -o /dev/null -w \"Frontend HTTP status: %{http_code}\\\\n\")"
+      "Bash(curl -s http://localhost:5175/ -o /dev/null -w \"Frontend HTTP status: %{http_code}\\\\n\")",
+      "Bash(ls ~/.nvm/versions/node/ 2>/dev/null || ls ~/.nodenv/versions/ 2>/dev/null || find /usr -name \"node\" -type f 2>/dev/null | head -5 || find /opt -name \"node\" -type f 2>/dev/null | head -5)",
+      "Bash(\"/Users/ever/Documents/RL WMS/rl_logistica/node_modules/node/bin/node\" --version)"
     ]
   }
 }

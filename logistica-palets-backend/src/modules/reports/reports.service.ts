@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DataSource, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { StockQueryDto } from './dto/stock-query.dto';
@@ -7,16 +7,22 @@ import { KpisQueryDto } from './dto/kpis-query.dto';
 import { DailyStockQueryDto } from './dto/daily-stock-query.dto';
 import { DifferencesSapQueryDto } from './dto/differences-sap-query.dto';
 import { UpsertSapStockDto } from './dto/upsert-sap-stock.dto';
+import { AnalyticsQueryDto } from './dto/analytics-query.dto';
+import { ForecastQueryDto } from './dto/forecast-query.dto';
 import { SapStockSnapshot } from './entities/sap-stock.entity';
 import { CacheService } from '../cache/cache.service';
+import { ForecastMlService, type MlProductForecast } from './forecast-ml.service';
 
 @Injectable()
 export class ReportsService {
+  private readonly logger = new Logger(ReportsService.name);
+
   constructor(
     private readonly dataSource: DataSource,
     @InjectRepository(SapStockSnapshot)
     private readonly sapStockRepo: Repository<SapStockSnapshot>,
     private readonly cache: CacheService,
+    private readonly forecastMl: ForecastMlService,
   ) {}
 
   private parseNumber(value: unknown) {
@@ -675,5 +681,252 @@ export class ReportsService {
     }
 
     return { params, whereSuffix: clauses.length ? ` AND ${clauses.join(' AND ')}` : '' };
+  }
+
+  async analytics(query: AnalyticsQueryDto) {
+    const days = query.range === 'week' ? 7 : 30;
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+
+    const [throughput, topProducts, activityByDow] = await Promise.all([
+      this.dataSource.query(
+        `SELECT
+          DATE_TRUNC('day', m.date)::date AS day,
+          COALESCE(SUM(CASE WHEN m.type = 'ENTRY' THEN m.quantity ELSE 0 END), 0)::int AS entries,
+          COALESCE(SUM(CASE WHEN m.type = 'EXIT' THEN m.quantity ELSE 0 END), 0)::int AS exits,
+          COUNT(CASE WHEN m.type = 'ENTRY' THEN 1 END)::int AS "entryCount",
+          COUNT(CASE WHEN m.type = 'EXIT' THEN 1 END)::int AS "exitCount"
+        FROM movements m
+        WHERE m.date >= $1
+        GROUP BY DATE_TRUNC('day', m.date)
+        ORDER BY day ASC`,
+        [since],
+      ),
+
+      this.dataSource.query(
+        `SELECT
+          p.id AS "productId",
+          p.code,
+          p.description,
+          COALESCE(SUM(m.quantity), 0)::int AS "totalVolume",
+          COUNT(m.id)::int AS "movementCount",
+          COALESCE(SUM(CASE WHEN m.type = 'ENTRY' THEN m.quantity ELSE 0 END), 0)::int AS entries,
+          COALESCE(SUM(CASE WHEN m.type = 'EXIT' THEN m.quantity ELSE 0 END), 0)::int AS exits
+        FROM movements m
+        INNER JOIN products p ON p.id = m."productId"
+        WHERE m.date >= $1
+        GROUP BY p.id, p.code, p.description
+        ORDER BY "totalVolume" DESC
+        LIMIT 10`,
+        [since],
+      ),
+
+      this.dataSource.query(
+        `SELECT
+          EXTRACT(DOW FROM m.date)::int AS dow,
+          COUNT(m.id)::int AS count,
+          COALESCE(SUM(m.quantity), 0)::int AS volume
+        FROM movements m
+        WHERE m.date >= $1
+        GROUP BY EXTRACT(DOW FROM m.date)
+        ORDER BY dow ASC`,
+        [since],
+      ),
+    ]);
+
+    return {
+      range: query.range ?? 'month',
+      throughput: (throughput as Record<string, unknown>[]).map((r) => ({
+        day: r.day,
+        entries: this.parseNumber(r.entries),
+        exits: this.parseNumber(r.exits),
+        entryCount: this.parseNumber(r.entryCount),
+        exitCount: this.parseNumber(r.exitCount),
+      })),
+      topProducts: (topProducts as Record<string, unknown>[]).map((r) => ({
+        productId: r.productId,
+        code: r.code,
+        description: r.description,
+        totalVolume: this.parseNumber(r.totalVolume),
+        movementCount: this.parseNumber(r.movementCount),
+        entries: this.parseNumber(r.entries),
+        exits: this.parseNumber(r.exits),
+      })),
+      activityByDow: (activityByDow as Record<string, unknown>[]).map((r) => ({
+        dow: this.parseNumber(r.dow),
+        count: this.parseNumber(r.count),
+        volume: this.parseNumber(r.volume),
+      })),
+    };
+  }
+
+  async forecast(query: ForecastQueryDto) {
+    const lookback = query.lookbackDays ?? 30;
+    const horizon = query.horizonDays ?? 14;
+    const lookbackStart = new Date();
+    lookbackStart.setDate(lookbackStart.getDate() - lookback);
+
+    const productFilter = query.productId ? `AND p.id = $3` : '';
+    const params: unknown[] = query.productId
+      ? [lookbackStart, lookback, query.productId]
+      : [lookbackStart, lookback];
+
+    // ── 1. Statistical baseline (always runs) ─────────────────────────────────
+    const rows = await this.dataSource.query(
+      `SELECT
+        p.id AS "productId",
+        p.code,
+        p.description,
+        p."unitOfMeasure",
+        COALESCE(stock_totals."totalStock", 0) AS "currentStock",
+        COALESCE(
+          SUM(CASE
+            WHEN m.type IN ('EXIT', 'ADJUSTMENT_OUT') AND m.date >= $1
+            THEN m.quantity::float ELSE 0
+          END) / NULLIF($2::float, 0),
+          0
+        ) AS "avgDailyConsumption",
+        COALESCE(
+          SUM(CASE
+            WHEN m.type = 'ENTRY' AND m.date >= $1
+            THEN m.quantity::float ELSE 0
+          END) / NULLIF($2::float, 0),
+          0
+        ) AS "avgDailyEntry"
+      FROM products p
+      LEFT JOIN (
+        SELECT "productId", SUM("currentQuantity") AS "totalStock"
+        FROM stocks
+        GROUP BY "productId"
+      ) stock_totals ON stock_totals."productId" = p.id
+      LEFT JOIN movements m ON m."productId" = p.id
+      WHERE p.active = true ${productFilter}
+      GROUP BY p.id, p.code, p.description, p."unitOfMeasure", stock_totals."totalStock"
+      ORDER BY p.code ASC`,
+      params,
+    );
+
+    // ── 2. ML forecast (best-effort — does NOT block if service is down) ──────
+    let mlResults: Map<string, MlProductForecast> | null = null;
+    try {
+      mlResults = await this.forecastMl.predict({
+        productId: query.productId,
+        horizonDays: horizon,
+        lookbackDays: lookback,
+      });
+      if (mlResults) {
+        this.logger.debug(`ML forecasts received for ${mlResults.size} products`);
+      }
+    } catch {
+      this.logger.warn('ML forecast call failed; using statistical fallback');
+    }
+
+    // ── 3. Merge ML into statistical results ──────────────────────────────────
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    return (rows as Record<string, unknown>[]).map((row) => {
+      const productId = row.productId as string;
+      const currentStock = this.parseNumber(row.currentStock);
+      const statConsumption = parseFloat(String(row.avgDailyConsumption)) || 0;
+      const avgDailyEntry = parseFloat(String(row.avgDailyEntry)) || 0;
+
+      const ml = mlResults?.get(productId);
+      const isML = Boolean(
+        ml && ml.modelType !== 'no_data' && ml.modelType !== 'fallback' && ml.forecast.length > 0,
+      );
+
+      // Use ML avg daily consumption when available, else fall back to statistical
+      const avgDailyConsumption = isML && ml!.avgDailyConsumption > 0
+        ? ml!.avgDailyConsumption
+        : statConsumption;
+
+      const netDaily = avgDailyConsumption - avgDailyEntry;
+
+      const daysOfStock =
+        avgDailyConsumption > 0
+          ? netDaily > 0
+            ? Math.floor(currentStock / netDaily)
+            : null
+          : null;
+
+      const projectedStockout =
+        daysOfStock !== null
+          ? new Date(today.getTime() + daysOfStock * 86_400_000).toISOString().slice(0, 10)
+          : null;
+
+      const status =
+        avgDailyConsumption === 0
+          ? 'NO_DATA'
+          : daysOfStock === null
+            ? 'OK'
+            : daysOfStock === 0
+              ? 'CRITICAL'
+              : daysOfStock <= 7
+                ? 'LOW'
+                : daysOfStock <= 14
+                  ? 'WARNING'
+                  : 'OK';
+
+      // ── Build forecast days with confidence intervals ──────────────────────
+      type ForecastDay = {
+        date: string;
+        projectedStock: number;
+        demand: number;
+        lower: number | null;
+        upper: number | null;
+      };
+
+      const forecastDays: ForecastDay[] = [];
+      let projectedStock = currentStock;
+
+      if (isML && ml!.forecast.length > 0) {
+        // ML path: use model's daily demand predictions to build cumulative stock projection
+        for (const day of ml!.forecast) {
+          const demandToday = day.value;
+          projectedStock = Math.max(0, projectedStock - demandToday + avgDailyEntry);
+          forecastDays.push({
+            date: day.date,
+            projectedStock: Math.round(projectedStock),
+            demand: day.value,
+            lower: day.lower,
+            upper: day.upper,
+          });
+        }
+      } else {
+        // Statistical path: constant daily rate, no CI
+        for (let i = 1; i <= horizon; i++) {
+          projectedStock = Math.max(0, projectedStock - statConsumption + avgDailyEntry);
+          forecastDays.push({
+            date: new Date(today.getTime() + i * 86_400_000).toISOString().slice(0, 10),
+            projectedStock: Math.round(projectedStock),
+            demand: parseFloat(statConsumption.toFixed(1)),
+            lower: null,
+            upper: null,
+          });
+        }
+      }
+
+      return {
+        product: {
+          id: productId,
+          code: row.code,
+          description: row.description,
+          unitOfMeasure: row.unitOfMeasure ?? null,
+        },
+        currentStock,
+        avgDailyConsumption: parseFloat(avgDailyConsumption.toFixed(2)),
+        avgDailyEntry: parseFloat(avgDailyEntry.toFixed(2)),
+        daysOfStock,
+        projectedStockout,
+        status,
+        // ML metadata — null when ML service was unavailable
+        forecastType: isML ? ('ML' as const) : ('STATISTICAL' as const),
+        mlModel: isML ? (ml!.modelType as string) : null,
+        mlMae: isML ? (ml!.mae ?? null) : null,
+        mlDataPoints: isML ? ml!.dataPoints : null,
+        forecast: forecastDays,
+      };
+    });
   }
 }

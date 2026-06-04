@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { fmtDateMonthShort, fmtDateShort, fmtDateLong } from "../utils/dateFormat";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
-  Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -16,10 +17,11 @@ import { fefoLots } from "../api/lots";
 import {
   getKpis,
   getMovementsReport,
-  getStockReport,
   type ReportRange,
 } from "../api/reports";
 import { getActiveAlerts, type ActiveAlert } from "../api/alerts";
+import { getAnalytics, getForecast, type ForecastRow as ForecastRowData } from "../api/forecast";
+import { getUpcomingPlans, type ProductionPlanRow } from "../api/productionPlans";
 import { useSocket, type StockUpdatedPayload } from "../contexts/SocketContext";
 
 /* ── Constants ────────────────────────────────────────────────────────────── */
@@ -39,6 +41,35 @@ const MOVE_BADGE: Record<string, string> = {
   ADJUSTMENT_OUT: "badge badge--adjout",
 };
 
+const PLAN_STATUS_LABEL: Record<string, string> = {
+  PLANNED: "Planificado",
+  CONFIRMED: "Confirmado",
+  EXECUTED: "Ejecutado",
+  CANCELLED: "Cancelado",
+};
+
+const PLAN_STATUS_COLOR: Record<string, string> = {
+  PLANNED: "var(--info)",
+  CONFIRMED: "var(--success)",
+  EXECUTED: "var(--muted)",
+  CANCELLED: "var(--danger)",
+};
+
+const FORECAST_STATUS_COLOR: Record<string, string> = {
+  CRITICAL: "var(--danger)",
+  LOW: "var(--warning)",
+  WARNING: "rgba(245,158,11,0.8)",
+  OK: "var(--success)",
+  NO_DATA: "var(--muted)",
+};
+
+const FORECAST_STATUS_BG: Record<string, string> = {
+  CRITICAL: "rgba(239,68,68,0.08)",
+  LOW: "rgba(245,158,11,0.08)",
+  WARNING: "rgba(245,158,11,0.04)",
+  OK: "rgba(16,185,129,0.06)",
+  NO_DATA: "transparent",
+};
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
 function formatRelativeDate(value: string) {
@@ -70,7 +101,7 @@ function expiryColor(days: number): string {
 function expiryBg(days: number): string {
   if (days <= 15) return "rgba(239,68,68,0.08)";
   if (days <= 45) return "rgba(245,158,11,0.08)";
-  return "rgba(16,185,129,0.08)";
+  return "rgba(16,185,129,0.06)";
 }
 
 function expiryBorder(days: number): string {
@@ -129,7 +160,6 @@ function KpiCard({ label, value, icon, delta, accentColor = "var(--primary)", su
         borderColor: alert ? "rgba(239,68,68,0.4)" : undefined,
       }}
     >
-      {/* Accent strip */}
       <div
         aria-hidden="true"
         style={{
@@ -146,23 +176,17 @@ function KpiCard({ label, value, icon, delta, accentColor = "var(--primary)", su
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 6 }}>
           <div
             style={{
-              width: 36,
-              height: 36,
-              borderRadius: 10,
+              width: 36, height: 36, borderRadius: 10,
               background: `${accentColor}18`,
               border: `1px solid ${accentColor}30`,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: accentColor,
-              flexShrink: 0,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              color: accentColor, flexShrink: 0,
             }}
           >
             {icon}
           </div>
           {delta !== undefined && <TrendBadge delta={delta} />}
         </div>
-
         <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>
           {label}
         </div>
@@ -177,7 +201,6 @@ function KpiCard({ label, value, icon, delta, accentColor = "var(--primary)", su
   );
 }
 
-/* ── Skeleton KPI card ────────────────────────────────────────────────────── */
 function KpiCardSkeleton() {
   return (
     <div className="card" style={{ height: 128, marginBottom: 0 }}>
@@ -185,21 +208,6 @@ function KpiCardSkeleton() {
       <div style={{ background: "var(--panel-hi)", height: 32, width: "40%", borderRadius: 4, animation: "dt-shimmer 1.4s ease infinite" }} />
     </div>
   );
-}
-
-/* ── Entries vs exits line chart data builder ─────────────────────────────── */
-function buildTimeSeriesData(movements: ReturnType<typeof Array.prototype.slice>) {
-  const map = new Map<string, { date: string; entradas: number; salidas: number }>();
-
-  for (const m of movements) {
-    const dateKey = fmtDateShort(m.date);
-    const existing = map.get(dateKey) ?? { date: dateKey, entradas: 0, salidas: 0 };
-    if (m.type === "ENTRY" || m.type === "ADJUSTMENT_IN") existing.entradas += m.quantity;
-    if (m.type === "EXIT" || m.type === "ADJUSTMENT_OUT") existing.salidas += m.quantity;
-    map.set(dateKey, existing);
-  }
-
-  return Array.from(map.values()).slice(-14); // last 14 data points
 }
 
 /* ── AlertsPanel ─────────────────────────────────────────────────────────── */
@@ -212,7 +220,6 @@ const ALERT_TYPE_LABEL: Record<string, string> = {
 
 function AlertsPanel({ alerts }: { alerts: ActiveAlert[] }) {
   if (alerts.length === 0) return null;
-
   const criticals = alerts.filter((a) => a.severity === "critical");
   const warnings = alerts.filter((a) => a.severity === "warning");
 
@@ -220,104 +227,47 @@ function AlertsPanel({ alerts }: { alerts: ActiveAlert[] }) {
     <section
       className="card"
       aria-label="Alertas activas"
-      style={{
-        marginBottom: 12,
-        borderColor: criticals.length > 0 ? "rgba(239,68,68,0.35)" : "rgba(245,158,11,0.35)",
-      }}
+      style={{ marginBottom: 12, borderColor: criticals.length > 0 ? "rgba(239,68,68,0.35)" : "rgba(245,158,11,0.35)" }}
     >
-      {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <svg
-            width="16" height="16" viewBox="0 0 24 24" fill="none"
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
             stroke={criticals.length > 0 ? "var(--danger)" : "var(--warning)"}
-            strokeWidth="2" aria-hidden="true"
-          >
+            strokeWidth="2" aria-hidden="true">
             <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-            <line x1="12" y1="9" x2="12" y2="13" />
-            <line x1="12" y1="17" x2="12.01" y2="17" />
+            <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
           </svg>
-          <h3
-            style={{
-              fontSize: 14, fontWeight: 700, margin: 0,
-              color: criticals.length > 0 ? "var(--danger)" : "var(--warning)",
-            }}
-          >
+          <h3 style={{ fontSize: 14, fontWeight: 700, margin: 0, color: criticals.length > 0 ? "var(--danger)" : "var(--warning)" }}>
             Alertas activas
           </h3>
           {criticals.length > 0 && (
-            <span
-              style={{
-                background: "rgba(239,68,68,0.12)", color: "var(--danger)",
-                border: "1px solid rgba(239,68,68,0.35)", borderRadius: 999,
-                padding: "1px 8px", fontSize: 11, fontWeight: 700,
-              }}
-              role="status"
-              aria-label={`${criticals.length} alertas críticas`}
-            >
+            <span style={{ background: "rgba(239,68,68,0.12)", color: "var(--danger)", border: "1px solid rgba(239,68,68,0.35)", borderRadius: 999, padding: "1px 8px", fontSize: 11, fontWeight: 700 }}>
               {criticals.length} crítica{criticals.length !== 1 ? "s" : ""}
             </span>
           )}
           {warnings.length > 0 && (
-            <span
-              style={{
-                background: "rgba(245,158,11,0.12)", color: "var(--warning)",
-                border: "1px solid rgba(245,158,11,0.35)", borderRadius: 999,
-                padding: "1px 8px", fontSize: 11, fontWeight: 700,
-              }}
-              role="status"
-              aria-label={`${warnings.length} advertencias`}
-            >
+            <span style={{ background: "rgba(245,158,11,0.12)", color: "var(--warning)", border: "1px solid rgba(245,158,11,0.35)", borderRadius: 999, padding: "1px 8px", fontSize: 11, fontWeight: 700 }}>
               {warnings.length} advertencia{warnings.length !== 1 ? "s" : ""}
             </span>
           )}
         </div>
-        <span style={{ fontSize: 11, color: "var(--muted)" }}>
-          {alerts.length} alerta{alerts.length !== 1 ? "s" : ""} en total
-        </span>
+        <span style={{ fontSize: 11, color: "var(--muted)" }}>{alerts.length} alerta{alerts.length !== 1 ? "s" : ""} en total</span>
       </div>
 
-      {/* Alert list — criticals first, then warnings */}
       <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 260, overflowY: "auto" }}>
         {[...criticals, ...warnings].map((a) => {
           const isCrit = a.severity === "critical";
           return (
-            <div
-              key={a.id}
-              style={{
-                display: "flex", alignItems: "flex-start", gap: 10,
-                padding: "8px 12px", borderRadius: 8,
-                background: isCrit ? "rgba(239,68,68,0.06)" : "rgba(245,158,11,0.06)",
-                border: `1px solid ${isCrit ? "rgba(239,68,68,0.2)" : "rgba(245,158,11,0.2)"}`,
-              }}
-            >
-              <span
-                aria-hidden="true"
-                style={{
-                  display: "inline-block", flexShrink: 0,
-                  width: 8, height: 8, borderRadius: "50%", marginTop: 5,
-                  background: isCrit ? "var(--danger)" : "var(--warning)",
-                }}
-              />
+            <div key={a.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 12px", borderRadius: 8, background: isCrit ? "rgba(239,68,68,0.06)" : "rgba(245,158,11,0.06)", border: `1px solid ${isCrit ? "rgba(239,68,68,0.2)" : "rgba(245,158,11,0.2)"}` }}>
+              <span aria-hidden="true" style={{ display: "inline-block", flexShrink: 0, width: 8, height: 8, borderRadius: "50%", marginTop: 5, background: isCrit ? "var(--danger)" : "var(--warning)" }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <span
-                    style={{
-                      fontSize: 11, fontWeight: 700, padding: "1px 7px", borderRadius: 999,
-                      color: isCrit ? "var(--danger)" : "var(--warning)",
-                      background: isCrit ? "rgba(239,68,68,0.12)" : "rgba(245,158,11,0.12)",
-                      border: `1px solid ${isCrit ? "rgba(239,68,68,0.3)" : "rgba(245,158,11,0.3)"}`,
-                    }}
-                  >
+                  <span style={{ fontSize: 11, fontWeight: 700, padding: "1px 7px", borderRadius: 999, color: isCrit ? "var(--danger)" : "var(--warning)", background: isCrit ? "rgba(239,68,68,0.12)" : "rgba(245,158,11,0.12)", border: `1px solid ${isCrit ? "rgba(239,68,68,0.3)" : "rgba(245,158,11,0.3)"}` }}>
                     {ALERT_TYPE_LABEL[a.type] ?? a.type}
                   </span>
-                  <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                    {formatRelativeDate(a.triggeredAt)}
-                  </span>
+                  <span style={{ fontSize: 11, color: "var(--muted)" }}>{formatRelativeDate(a.triggeredAt)}</span>
                 </div>
-                <p style={{ fontSize: 12, color: "var(--text)", margin: "3px 0 0", lineHeight: 1.4 }}>
-                  {a.message}
-                </p>
+                <p style={{ fontSize: 12, color: "var(--text)", margin: "3px 0 0", lineHeight: 1.4 }}>{a.message}</p>
               </div>
             </div>
           );
@@ -327,29 +277,100 @@ function AlertsPanel({ alerts }: { alerts: ActiveAlert[] }) {
   );
 }
 
-/* ── LiveDot — animated indicator shown when WS is connected ─────────────── */
+/* ── LiveDot ──────────────────────────────────────────────────────────────── */
 function LiveDot({ connected }: { connected: boolean }) {
   if (!connected) return null;
   return (
-    <span
-      title="Actualización en tiempo real activa"
-      aria-label="Conectado en tiempo real"
-      style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
-    >
-      <span
-        aria-hidden="true"
-        style={{
-          width: 8,
-          height: 8,
-          borderRadius: "50%",
-          background: "var(--success)",
-          boxShadow: "0 0 0 2px rgba(16,185,129,0.25)",
-          display: "inline-block",
-          animation: "live-pulse 2s ease-in-out infinite",
-        }}
-      />
+    <span title="Actualización en tiempo real activa" aria-label="Conectado en tiempo real" style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+      <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--success)", boxShadow: "0 0 0 2px rgba(16,185,129,0.25)", display: "inline-block", animation: "live-pulse 2s ease-in-out infinite" }} />
       <span style={{ fontSize: 11, color: "var(--success)", fontWeight: 600 }}>En vivo</span>
     </span>
+  );
+}
+
+/* ── ForecastStatusBadge ──────────────────────────────────────────────────── */
+function ForecastStatusBadge({ status }: { status: string }) {
+  const labels: Record<string, string> = { CRITICAL: "Crítico", LOW: "Bajo", WARNING: "Alerta", OK: "OK", NO_DATA: "Sin datos" };
+  return (
+    <span style={{
+      fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 999,
+      color: FORECAST_STATUS_COLOR[status] ?? "var(--muted)",
+      background: FORECAST_STATUS_BG[status] ?? "transparent",
+      border: `1px solid ${FORECAST_STATUS_COLOR[status] ?? "var(--border)"}30`,
+    }}>
+      {labels[status] ?? status}
+    </span>
+  );
+}
+
+/* ── ML Model badge ───────────────────────────────────────────────────────── */
+const ML_MODEL_LABEL: Record<string, string> = {
+  "holt-winters": "HW",
+  "holt-trend":   "Holt",
+  "ses":          "SES",
+  "mean_fallback": "Mean",
+  "fallback":     "Est",
+};
+
+function ModelBadge({ forecastType, mlModel, mlMae }: {
+  forecastType: "ML" | "STATISTICAL";
+  mlModel: string | null;
+  mlMae: number | null;
+}) {
+  const isML = forecastType === "ML";
+  const label = isML ? (ML_MODEL_LABEL[mlModel ?? ""] ?? "ML") : "EST";
+  const title = isML
+    ? `Modelo ML: ${mlModel}${mlMae !== null ? ` · MAE ${mlMae.toFixed(1)}` : ""}`
+    : "Estimación estadística (promedio móvil)";
+
+  return (
+    <span
+      title={title}
+      style={{
+        fontSize: 9, fontWeight: 800, padding: "1px 5px", borderRadius: 4,
+        color: isML ? "var(--primary)" : "var(--muted)",
+        background: isML ? "rgba(99,102,241,0.10)" : "rgba(107,114,128,0.08)",
+        border: `1px solid ${isML ? "rgba(99,102,241,0.3)" : "rgba(107,114,128,0.2)"}`,
+        letterSpacing: "0.03em",
+        cursor: "help",
+      }}
+    >
+      {isML ? `ML·${label}` : label}
+    </span>
+  );
+}
+
+/* ── UpcomingPlanRow ──────────────────────────────────────────────────────── */
+function UpcomingPlanRow({ plan }: { plan: ProductionPlanRow }) {
+  const days = daysUntil(plan.plannedDate);
+  const isEntry = plan.type === "ENTRY";
+  const color = isEntry ? "var(--success)" : "var(--danger)";
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 10px", borderRadius: 8, background: "var(--bg)", border: "1px solid var(--border-dim)" }}>
+      <div style={{ width: 28, height: 28, borderRadius: 8, background: `${color}18`, border: `1px solid ${color}30`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5">
+          {isEntry ? <path d="M12 19V5M5 12l7-7 7 7" /> : <path d="M12 5v14M19 12l-7 7-7-7" />}
+        </svg>
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {plan.product.code}
+        </div>
+        <div style={{ fontSize: 11, color: "var(--muted)" }}>
+          {plan.plannedQuantity.toLocaleString("es-PY")} u.
+          {plan.plannedPallets ? ` · ${plan.plannedPallets} pal.` : ""}
+          {plan.warehouseName ? ` · ${plan.warehouseName}` : ""}
+        </div>
+      </div>
+      <div style={{ textAlign: "right", flexShrink: 0 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: days === 0 ? "var(--warning)" : "var(--text-variant)" }}>
+          {days === 0 ? "Hoy" : `en ${days}d`}
+        </span>
+        <div style={{ fontSize: 10, color: PLAN_STATUS_COLOR[plan.status], fontWeight: 600 }}>
+          {PLAN_STATUS_LABEL[plan.status]}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -357,31 +378,18 @@ function LiveDot({ connected }: { connected: boolean }) {
 export default function DashboardPage() {
   const [range, setRange] = useState<ReportRange>("today");
   const [warehouseId, setWarehouseId] = useState("");
+  const [analyticsRange, setAnalyticsRange] = useState<"week" | "month">("month");
   const qc = useQueryClient();
   const { connected, on, off } = useSocket();
 
-  const [warehousesQ, kpisQ, movementsQ, stockQ] = useQueries({
+  const [warehousesQ, kpisQ, movementsQ] = useQueries({
     queries: [
       { queryKey: ["warehouses"], queryFn: listWarehouses, staleTime: 5 * 60_000 },
-      {
-        queryKey: ["kpis", range],
-        queryFn: () => getKpis(range),
-        refetchInterval: 60_000,
-      },
-      {
-        queryKey: ["movements", "report", { limit: 50 }],
-        queryFn: () => getMovementsReport({ limit: 50 }),
-        refetchInterval: 60_000,
-      },
-      {
-        queryKey: ["stock", "report", warehouseId || "all"],
-        queryFn: () => getStockReport(warehouseId || undefined),
-        refetchInterval: 60_000,
-      },
+      { queryKey: ["kpis", range], queryFn: () => getKpis(range), refetchInterval: 60_000 },
+      { queryKey: ["movements", "report", { limit: 50 }], queryFn: () => getMovementsReport({ limit: 50 }), refetchInterval: 60_000 },
     ],
   });
 
-  // Expiring lots (FEFO, no productId filter = all)
   const expiringQ = useQuery({
     queryKey: ["lots", "fefo", "expiring"],
     queryFn: () => fefoLots(),
@@ -389,10 +397,30 @@ export default function DashboardPage() {
     refetchInterval: 5 * 60_000,
   });
 
-  // Active alerts — refetch every 5 min (cron runs every 10 min server-side)
   const alertsQ = useQuery({
     queryKey: ["alerts", "active"],
     queryFn: getActiveAlerts,
+    staleTime: 5 * 60_000,
+    refetchInterval: 5 * 60_000,
+  });
+
+  const analyticsQ = useQuery({
+    queryKey: ["analytics", analyticsRange],
+    queryFn: () => getAnalytics(analyticsRange),
+    staleTime: 5 * 60_000,
+    refetchInterval: 5 * 60_000,
+  });
+
+  const forecastQ = useQuery({
+    queryKey: ["forecast"],
+    queryFn: () => getForecast({ lookbackDays: 30, horizonDays: 14 }),
+    staleTime: 10 * 60_000,
+    refetchInterval: 10 * 60_000,
+  });
+
+  const upcomingPlansQ = useQuery({
+    queryKey: ["production-plans", "upcoming"],
+    queryFn: () => getUpcomingPlans(7),
     staleTime: 5 * 60_000,
     refetchInterval: 5 * 60_000,
   });
@@ -402,7 +430,6 @@ export default function DashboardPage() {
   const allMoves = movementsQ.data?.data ?? [];
   const recentMoves = allMoves.slice(0, 8);
 
-  // Expiring lots: filter to those with fechaVencimiento <= 60 days, with stock > 0
   const expiringLots = useMemo(() => {
     const lots = expiringQ.data ?? [];
     return lots
@@ -413,10 +440,49 @@ export default function DashboardPage() {
       .slice(0, 12);
   }, [expiringQ.data]);
 
+  // Forecast KPIs derived
+  const forecastSummary = useMemo(() => {
+    const rows = forecastQ.data ?? [];
+    const withConsumption = rows.filter((r) => r.avgDailyConsumption > 0);
+    const critical = rows.filter((r) => r.status === "CRITICAL" || r.status === "LOW").length;
+    const avgCoverage =
+      withConsumption.length > 0
+        ? Math.round(
+            withConsumption
+              .filter((r) => r.daysOfStock !== null)
+              .reduce((sum, r) => sum + (r.daysOfStock ?? 0), 0) /
+              withConsumption.filter((r) => r.daysOfStock !== null).length,
+          )
+        : null;
+    return { critical, avgCoverage };
+  }, [forecastQ.data]);
+
+  // Analytics KPIs derived
+  const analyticsSummary = useMemo(() => {
+    const tp = analyticsQ.data?.throughput ?? [];
+    if (tp.length === 0) return { totalEntries: 0, totalExits: 0, avgDailyEntries: 0, avgDailyExits: 0 };
+    const totalEntries = tp.reduce((s, d) => s + d.entries, 0);
+    const totalExits = tp.reduce((s, d) => s + d.exits, 0);
+    return {
+      totalEntries,
+      totalExits,
+      avgDailyEntries: Math.round(totalEntries / tp.length),
+      avgDailyExits: Math.round(totalExits / tp.length),
+    };
+  }, [analyticsQ.data]);
+
+  // Critical/low forecast rows
+  const criticalForecast = useMemo(
+    () =>
+      (forecastQ.data ?? [])
+        .filter((r) => r.status === "CRITICAL" || r.status === "LOW" || r.status === "WARNING")
+        .sort((a, b) => (a.daysOfStock ?? 999) - (b.daysOfStock ?? 999))
+        .slice(0, 8),
+    [forecastQ.data],
+  );
+
   const isLoading = kpisQ.isLoading;
   const isError = kpisQ.isError;
-
-  const timeSeriesData = useMemo(() => buildTimeSeriesData(allMoves), [allMoves]);
 
   const rangeLabel: Record<ReportRange, string> = {
     today: "hoy",
@@ -424,16 +490,13 @@ export default function DashboardPage() {
     month: "últimos 30 días",
   };
 
-  // ── WebSocket: invalidate queries when the backend pushes a stock update ──
   useEffect(() => {
     const handler = (_payload: StockUpdatedPayload) => {
-      // Invalidate all KPI and stock queries so the next render shows fresh data.
-      // TanStack Query will re-fetch in the background (no loading flash).
       void qc.invalidateQueries({ queryKey: ["kpis"] });
-      void qc.invalidateQueries({ queryKey: ["stock"] });
       void qc.invalidateQueries({ queryKey: ["movements", "report"] });
+      void qc.invalidateQueries({ queryKey: ["analytics"] });
+      void qc.invalidateQueries({ queryKey: ["forecast"] });
     };
-
     on("stock:updated", handler);
     return () => off("stock:updated", handler);
   }, [on, off, qc]);
@@ -441,29 +504,20 @@ export default function DashboardPage() {
   function refetchAll() {
     void kpisQ.refetch();
     void movementsQ.refetch();
-    void stockQ.refetch();
     void expiringQ.refetch();
+    void analyticsQ.refetch();
+    void forecastQ.refetch();
+    void upcomingPlansQ.refetch();
   }
 
   /* ── Render ─────────────────────────────────────────────────────────────── */
   return (
     <div>
       {/* Page header */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 12,
-          alignItems: "flex-end",
-          flexWrap: "wrap",
-          marginBottom: 20,
-        }}
-      >
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 20 }}>
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-            <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.5, margin: 0 }}>
-              Dashboard
-            </h1>
+            <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.5, margin: 0 }}>Dashboard</h1>
             <LiveDot connected={connected} />
           </div>
           <p style={{ color: "var(--muted)", marginBottom: 0, fontSize: 14 }}>
@@ -471,33 +525,16 @@ export default function DashboardPage() {
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <select
-            className="input"
-            value={range}
-            onChange={(e) => setRange(e.target.value as ReportRange)}
-            aria-label="Rango de fechas"
-          >
+          <select className="input" value={range} onChange={(e) => setRange(e.target.value as ReportRange)} aria-label="Rango de fechas">
             <option value="today">Hoy</option>
             <option value="week">Esta semana</option>
             <option value="month">Este mes</option>
           </select>
-          <select
-            className="input"
-            value={warehouseId}
-            onChange={(e) => setWarehouseId(e.target.value)}
-            aria-label="Depósito"
-          >
+          <select className="input" value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)} aria-label="Depósito">
             <option value="">Todos los depósitos</option>
-            {warehouses.map((w) => (
-              <option key={w.id} value={w.id}>{w.name}</option>
-            ))}
+            {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
-          <button
-            className="btn"
-            onClick={refetchAll}
-            aria-label="Actualizar datos"
-            title="Actualizar"
-          >
+          <button className="btn" onClick={refetchAll} aria-label="Actualizar datos" title="Actualizar">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
               <polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" />
               <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
@@ -506,91 +543,238 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Error */}
       {isError && (
-        <div
-          className="form-error"
-          role="alert"
-          style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}
-        >
+        <div className="form-error" role="alert" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
           <span style={{ fontWeight: 600 }}>No se pudo cargar el dashboard.</span>
           <button className="btn btn--primary" onClick={refetchAll}>Reintentar</button>
         </div>
       )}
 
-      {/* ── KPI row ──────────────────────────────────────────────────────── */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-          gap: 12,
-          marginBottom: 16,
-        }}
-        aria-busy={isLoading}
-      >
+      {/* ── KPI row principal ──────────────────────────────────────────────── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12, marginBottom: 16 }} aria-busy={isLoading}>
         {isLoading ? (
-          [0, 1, 2, 3, 4].map((i) => <KpiCardSkeleton key={i} />)
+          [0, 1, 2, 3, 4, 5].map((i) => <KpiCardSkeleton key={i} />)
         ) : kpis ? (
           <>
             <KpiCard
               label="Materiales con stock"
               value={kpis.totalMaterials}
-              icon={
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                  <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" />
-                </svg>
-              }
+              icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" /></svg>}
               accentColor="var(--primary)"
             />
-
             <KpiCard
               label="Unidades en stock"
               value={kpis.totalQuantity}
-              icon={
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                  <rect x="2" y="3" width="6" height="6" /><rect x="9" y="3" width="6" height="6" />
-                  <rect x="16" y="3" width="6" height="6" /><rect x="2" y="12" width="6" height="6" />
-                  <rect x="9" y="12" width="6" height="6" /><rect x="16" y="12" width="6" height="6" />
-                </svg>
-              }
+              icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="6" height="6" /><rect x="9" y="3" width="6" height="6" /><rect x="16" y="3" width="6" height="6" /><rect x="2" y="12" width="6" height="6" /><rect x="9" y="12" width="6" height="6" /><rect x="16" y="12" width="6" height="6" /></svg>}
               accentColor="var(--info)"
             />
-
             <KpiCard
               label="Movimientos"
               value={kpis.movementsInRange}
-              icon={
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                  <path d="M7 16V4m0 0L3 8m4-4l4 4" /><path d="M17 8v12m0 0l4-4m-4 4l-4-4" />
-                </svg>
-              }
+              icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M7 16V4m0 0L3 8m4-4l4 4" /><path d="M17 8v12m0 0l4-4m-4 4l-4-4" /></svg>}
               delta={kpis.movementsDelta}
               subtitle={`Período anterior: ${kpis.movementsPrev}`}
               accentColor="var(--success)"
             />
-
             <KpiCard
               label="Lotes a vencer (60d)"
               value={kpis.expiringLots}
-              icon={
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                  <line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" />
-                  <line x1="3" y1="10" x2="21" y2="10" />
-                </svg>
-              }
+              icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>}
               accentColor={kpis.expiringCritical > 0 ? "var(--danger)" : kpis.expiringLots > 0 ? "var(--warning)" : "var(--success)"}
               subtitle={kpis.expiringCritical > 0 ? `${kpis.expiringCritical} críticos (≤15 días)` : undefined}
               alert={kpis.expiringCritical > 0}
+            />
+            {/* ── Nuevos KPIs Fase 5 ── */}
+            <KpiCard
+              label="Cobertura media"
+              value={forecastSummary.avgCoverage !== null ? `${forecastSummary.avgCoverage}d` : "—"}
+              icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 3v18h18" /><path d="M18 17l-5-5-4 4-3-3" /></svg>}
+              accentColor={
+                forecastSummary.avgCoverage === null ? "var(--muted)" :
+                forecastSummary.avgCoverage < 7 ? "var(--danger)" :
+                forecastSummary.avgCoverage < 14 ? "var(--warning)" :
+                "var(--success)"
+              }
+              subtitle="Días de stock (últimos 30d)"
+              alert={(forecastSummary.avgCoverage ?? 99) < 7}
+            />
+            <KpiCard
+              label="Mat. en riesgo"
+              value={forecastSummary.critical}
+              icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>}
+              accentColor={forecastSummary.critical > 0 ? "var(--danger)" : "var(--success)"}
+              subtitle="Con stock < 7 días"
+              alert={forecastSummary.critical > 0}
             />
           </>
         ) : null}
       </div>
 
-      {/* ── Active alerts panel ──────────────────────────────────────────── */}
+      {/* ── Active alerts ─────────────────────────────────────────────────── */}
       {!alertsQ.isLoading && (alertsQ.data?.length ?? 0) > 0 && (
         <AlertsPanel alerts={alertsQ.data!} />
       )}
+
+      {/* ── Throughput chart + Top materiales ─────────────────────────────── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 12, marginBottom: 12, alignItems: "start" }}>
+        {/* Throughput bar chart */}
+        <section className="card" aria-label="Throughput diario" style={{ marginBottom: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>Throughput diario</h3>
+            <div style={{ display: "flex", gap: 6 }}>
+              {(["week", "month"] as const).map((r) => (
+                <button
+                  key={r}
+                  className={`btn${analyticsRange === r ? " btn--primary" : ""}`}
+                  style={{ fontSize: 11, padding: "3px 10px" }}
+                  onClick={() => setAnalyticsRange(r)}
+                >
+                  {r === "week" ? "7d" : "30d"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 16, marginBottom: 10 }}>
+            <span style={{ fontSize: 11, color: "var(--muted)" }}>
+              Total entradas: <strong style={{ color: "var(--success)" }}>{analyticsSummary.totalEntries.toLocaleString("es-PY")}</strong>
+            </span>
+            <span style={{ fontSize: 11, color: "var(--muted)" }}>
+              Total salidas: <strong style={{ color: "var(--danger)" }}>{analyticsSummary.totalExits.toLocaleString("es-PY")}</strong>
+            </span>
+            <span style={{ fontSize: 11, color: "var(--muted)" }}>
+              Promedio/día: <strong style={{ color: "var(--text)" }}>{analyticsSummary.avgDailyExits.toLocaleString("es-PY")}</strong>
+            </span>
+          </div>
+          <div style={{ height: 180 }}>
+            {analyticsQ.isLoading ? (
+              <div style={{ height: 180, background: "var(--panel-hi)", borderRadius: 8, animation: "dt-shimmer 1.4s ease infinite" }} />
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={analyticsQ.data?.throughput ?? []} barSize={14}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                  <XAxis dataKey="day" tick={{ fontSize: 10, fill: "var(--muted)" }} axisLine={false} tickLine={false}
+                    tickFormatter={(v) => { const d = new Date(v + "T00:00:00"); return `${d.getDate()}/${d.getMonth() + 1}`; }} />
+                  <YAxis tick={{ fontSize: 10, fill: "var(--muted)" }} axisLine={false} tickLine={false} width={36} />
+                  <Tooltip
+                    contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12, color: "var(--text)" }}
+                    labelFormatter={(v) => fmtDateShort(v)}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11, color: "var(--muted)" }} />
+                  <Bar dataKey="entries" name="Entradas" fill="var(--success)" opacity={0.85} radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="exits" name="Salidas" fill="var(--danger)" opacity={0.85} radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </section>
+
+        {/* Top materiales */}
+        <section className="card" aria-label="Top materiales por volumen" style={{ marginBottom: 0 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>
+            Top materiales · {analyticsRange === "week" ? "7d" : "30d"}
+          </h3>
+          {analyticsQ.isLoading ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {[0, 1, 2, 3, 4].map((i) => (
+                <div key={i} style={{ height: 32, background: "var(--panel-hi)", borderRadius: 6, animation: "dt-shimmer 1.4s ease infinite" }} />
+              ))}
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              {(analyticsQ.data?.topProducts ?? []).slice(0, 8).map((p, i) => {
+                const maxVol = analyticsQ.data?.topProducts[0]?.totalVolume ?? 1;
+                const pct = Math.round((p.totalVolume / maxVol) * 100);
+                return (
+                  <div key={p.productId}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 3 }}>
+                      <span style={{ fontWeight: 700, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "60%" }}>
+                        <span style={{ color: "var(--muted)", marginRight: 4 }}>{i + 1}.</span>{p.code}
+                      </span>
+                      <span style={{ color: "var(--muted)", flexShrink: 0 }}>
+                        {p.totalVolume.toLocaleString("es-PY")} u
+                      </span>
+                    </div>
+                    <div style={{ height: 4, background: "var(--border-dim)", borderRadius: 2 }}>
+                      <div style={{ height: "100%", width: `${pct}%`, background: "var(--primary)", borderRadius: 2, transition: "width 0.4s ease" }} />
+                    </div>
+                  </div>
+                );
+              })}
+              {(analyticsQ.data?.topProducts ?? []).length === 0 && (
+                <p style={{ color: "var(--muted)", fontSize: 12, margin: 0 }}>Sin movimientos en el período</p>
+              )}
+            </div>
+          )}
+        </section>
+      </div>
+
+      {/* ── Cobertura de Stock + Plan Producción próximos 7 días ───────────── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 12, marginBottom: 12, alignItems: "start" }}>
+        {/* Cobertura */}
+        <section className="card" aria-label="Cobertura de stock" style={{ marginBottom: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>
+              Cobertura de stock
+              {forecastSummary.critical > 0 && (
+                <span style={{ marginLeft: 8, background: "rgba(239,68,68,0.12)", color: "var(--danger)", border: "1px solid rgba(239,68,68,0.35)", borderRadius: 999, padding: "1px 8px", fontSize: 11, fontWeight: 700 }}>
+                  {forecastSummary.critical} en riesgo
+                </span>
+              )}
+            </h3>
+            <span style={{ fontSize: 11, color: "var(--muted)" }}>Basado en 30 días de consumo</span>
+          </div>
+
+          {forecastQ.isLoading ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {[0, 1, 2, 3].map((i) => <div key={i} style={{ height: 40, background: "var(--panel-hi)", borderRadius: 6, animation: "dt-shimmer 1.4s ease infinite" }} />)}
+            </div>
+          ) : criticalForecast.length === 0 ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 0", color: "var(--success)" }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12" /></svg>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>Todos los materiales tienen cobertura suficiente</span>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              {criticalForecast.map((row) => (
+                <ForecastRow key={row.product.id} row={row} />
+              ))}
+              {(forecastQ.data?.length ?? 0) > criticalForecast.length && (
+                <p style={{ fontSize: 11, color: "var(--muted)", textAlign: "right", marginTop: 6, marginBottom: 0 }}>
+                  +{(forecastQ.data?.length ?? 0) - criticalForecast.length} materiales en estado OK
+                </p>
+              )}
+            </div>
+          )}
+        </section>
+
+        {/* Plan de Producción próximos 7 días */}
+        <section className="card" aria-label="Plan de producción próximos 7 días" style={{ marginBottom: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>Plan próximos 7d</h3>
+            <Link to="/planning" style={{ fontSize: 11, color: "var(--primary)", fontWeight: 600, textDecoration: "none" }}>
+              Ver todo →
+            </Link>
+          </div>
+          {upcomingPlansQ.isLoading ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {[0, 1, 2].map((i) => <div key={i} style={{ height: 48, background: "var(--panel-hi)", borderRadius: 6, animation: "dt-shimmer 1.4s ease infinite" }} />)}
+            </div>
+          ) : (upcomingPlansQ.data?.length ?? 0) === 0 ? (
+            <div style={{ padding: "12px 0", textAlign: "center" }}>
+              <p style={{ color: "var(--muted)", fontSize: 12, marginBottom: 8 }}>No hay planes para los próximos 7 días</p>
+              <Link to="/planning" className="btn btn--primary" style={{ fontSize: 11, padding: "4px 12px" }}>
+                + Crear plan
+              </Link>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 280, overflowY: "auto" }}>
+              {upcomingPlansQ.data!.map((p) => (
+                <UpcomingPlanRow key={p.id} plan={p} />
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
 
       {/* ── Latest movements feed ────────────────────────────────────────── */}
       {!isLoading && kpis && (
@@ -602,19 +786,7 @@ export default function DashboardPage() {
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 6, overflowY: "auto", maxHeight: 240 }}>
                 {recentMoves.map((m) => (
-                  <div
-                    key={m.id}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      gap: 8,
-                      padding: "7px 10px",
-                      borderRadius: 8,
-                      background: "var(--bg)",
-                      border: "1px solid var(--border-dim)",
-                    }}
-                  >
+                  <div key={m.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 8, background: "var(--bg)", border: "1px solid var(--border-dim)" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                       <span className={MOVE_BADGE[m.type] ?? "badge"} style={{ flexShrink: 0 }}>
                         {MOVE_LABEL[m.type] ?? m.type}
@@ -635,111 +807,27 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ── Entries vs Exits time series ─────────────────────────────────── */}
-      {!isLoading && timeSeriesData.length > 1 && (
-        <section className="card" aria-label="Entradas y salidas por día" style={{ marginBottom: 12 }}>
-          <h3 style={{ marginBottom: 12, fontSize: 14, fontWeight: 700 }}>Entradas vs. Salidas</h3>
-          <div style={{ height: 180 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={timeSeriesData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                <XAxis dataKey="date" tick={{ fontSize: 11, fill: "var(--muted)" }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: "var(--muted)" }} axisLine={false} tickLine={false} width={40} />
-                <Tooltip
-                  contentStyle={{
-                    background: "var(--panel)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 8,
-                    fontSize: 12,
-                    color: "var(--text)",
-                  }}
-                />
-                <Legend wrapperStyle={{ fontSize: 12, color: "var(--muted)" }} />
-                <Line
-                  type="monotone"
-                  dataKey="entradas"
-                  name="Entradas"
-                  stroke="var(--success)"
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{ r: 4 }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="salidas"
-                  name="Salidas"
-                  stroke="var(--danger)"
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{ r: 4 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </section>
-      )}
-
-      {/* ── Expiring lots panel ───────────────────────────────────────────── */}
+      {/* ── Expiring lots ─────────────────────────────────────────────────── */}
       {!isLoading && expiringLots.length > 0 && (
         <section className="card" aria-label="Lotes próximos a vencer" style={{ marginBottom: 0 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
             <h3 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>
               Lotes próximos a vencer
               {expiringLots.filter((l) => l.daysUntilExpiry <= 15).length > 0 && (
-                <span
-                  style={{
-                    marginLeft: 8,
-                    background: "rgba(239,68,68,0.12)",
-                    color: "var(--danger)",
-                    border: "1px solid rgba(239,68,68,0.35)",
-                    borderRadius: 999,
-                    padding: "1px 8px",
-                    fontSize: 11,
-                    fontWeight: 700,
-                  }}
-                  role="status"
-                  aria-label={`${expiringLots.filter((l) => l.daysUntilExpiry <= 15).length} críticos`}
-                >
+                <span style={{ marginLeft: 8, background: "rgba(239,68,68,0.12)", color: "var(--danger)", border: "1px solid rgba(239,68,68,0.35)", borderRadius: 999, padding: "1px 8px", fontSize: 11, fontWeight: 700 }}>
                   {expiringLots.filter((l) => l.daysUntilExpiry <= 15).length} críticos
                 </span>
               )}
             </h3>
-            <span style={{ fontSize: 12, color: "var(--muted)" }}>
-              Próximos 60 días con stock &gt; 0
-            </span>
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>Próximos 60 días con stock &gt; 0</span>
           </div>
-
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 8 }}>
             {expiringLots.map((lot) => (
-              <div
-                key={lot.id}
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: 8,
-                  background: expiryBg(lot.daysUntilExpiry),
-                  border: `1px solid ${expiryBorder(lot.daysUntilExpiry)}`,
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 4,
-                }}
-                role="listitem"
-              >
+              <div key={lot.id} style={{ padding: "10px 12px", borderRadius: 8, background: expiryBg(lot.daysUntilExpiry), border: `1px solid ${expiryBorder(lot.daysUntilExpiry)}`, display: "flex", flexDirection: "column", gap: 4 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
-                    {lot.product?.code ?? "—"}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      color: expiryColor(lot.daysUntilExpiry),
-                      background: "transparent",
-                    }}
-                    aria-label={`${lot.daysUntilExpiry} días hasta vencimiento`}
-                  >
-                    {lot.daysUntilExpiry === 0
-                      ? "¡Vence hoy!"
-                      : `${lot.daysUntilExpiry}d`}
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>{lot.product?.code ?? "—"}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: expiryColor(lot.daysUntilExpiry) }}>
+                    {lot.daysUntilExpiry === 0 ? "¡Vence hoy!" : `${lot.daysUntilExpiry}d`}
                   </span>
                 </div>
                 <div style={{ fontSize: 11, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -749,14 +837,57 @@ export default function DashboardPage() {
                   <span>Lote: <strong style={{ color: "var(--text-variant)" }}>{lot.lotCode}</strong></span>
                   <span>Stock: <strong style={{ color: "var(--text-variant)" }}>{lot.stockActual.toLocaleString("es-PY")}</strong></span>
                 </div>
-                <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                  Vence: {fmtDateLong(lot.fechaVencimiento)}
-                </div>
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>Vence: {fmtDateLong(lot.fechaVencimiento)}</div>
               </div>
             ))}
           </div>
         </section>
       )}
+    </div>
+  );
+}
+
+/* ── ForecastRow sub-component (outside to avoid re-render) ──────────────── */
+function ForecastRow({ row }: { row: ForecastRowData }) {
+  // Confidence band from next forecast day (demand lower..upper)
+  const nextDay = row.forecast[0];
+  const hasCi = nextDay?.lower !== null && nextDay?.upper !== null;
+  const ciWidth = hasCi ? (nextDay!.upper! - nextDay!.lower!).toFixed(1) : null;
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 10, padding: "8px 10px",
+      borderRadius: 8,
+      background: FORECAST_STATUS_BG[row.status],
+      border: `1px solid ${FORECAST_STATUS_COLOR[row.status]}25`,
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>{row.product.code}</span>
+          <ForecastStatusBadge status={row.status} />
+          <ModelBadge forecastType={row.forecastType} mlModel={row.mlModel} mlMae={row.mlMae} />
+        </div>
+        <div style={{ fontSize: 11, color: "var(--muted)" }}>
+          Stock: <strong style={{ color: "var(--text-variant)" }}>{row.currentStock.toLocaleString("es-PY")}</strong>
+          {" · "}
+          demanda: {row.avgDailyConsumption.toFixed(1)}/d
+          {hasCi && (
+            <span style={{ marginLeft: 4, color: "var(--muted)", opacity: 0.75 }}>
+              ±{(parseFloat(ciWidth!) / 2).toFixed(1)}
+            </span>
+          )}
+        </div>
+      </div>
+      <div style={{ textAlign: "right", flexShrink: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 900, color: FORECAST_STATUS_COLOR[row.status] }}>
+          {row.daysOfStock !== null ? `${row.daysOfStock}d` : "∞"}
+        </div>
+        {row.projectedStockout && (
+          <div style={{ fontSize: 10, color: "var(--muted)" }}>
+            {new Date(row.projectedStockout + "T00:00:00").toLocaleDateString("es-PY", { day: "2-digit", month: "short" })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

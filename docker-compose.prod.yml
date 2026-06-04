@@ -61,6 +61,7 @@ services:
       DB_PORT:           5432
       REDIS_HOST:        redis
       REDIS_PORT:        6379
+      ML_SERVICE_URL:    http://ml-service:8000
       # Entorno — fuerza modo producción (pino JSON, cache, etc.)
       NODE_ENV:          production
       # Seguridad crítica — estos valores NO se sobreescriben aunque .env.prod
@@ -72,6 +73,8 @@ services:
       db:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      ml-service:
         condition: service_healthy
     healthcheck:
       test:
@@ -86,6 +89,30 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     networks: [internal]
+
+  # ── ML Forecast Service (Python / Holt-Winters) ───────────────────────────
+  ml-service:
+    build:
+      context: ./ml-service
+      dockerfile: Dockerfile
+    container_name: rl_logistica_ml_prod
+    restart: unless-stopped
+    env_file: [.env.prod]
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      LOG_LEVEL: WARNING
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks: [internal]
+    # Sin 'ports': no expuesto al host; sólo accesible por el backend internamente.
 
   # ── Frontend (React → Nginx) ───────────────────────────────────────────────
   frontend:

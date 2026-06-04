@@ -9,7 +9,9 @@ export type ModuleKey =
   | "bitacora"
   | "transports"
   | "reports"
-  | "billing";
+  | "billing"
+  | "planning"
+  | "forecast";
 
 type ModulePermissions = {
   read: Role[];
@@ -78,6 +80,18 @@ export const PERMS: Record<ModuleKey, ModulePermissions> = {
     create: ["ADMIN", "MANAGER"],
     update: ["ADMIN", "MANAGER"],
     remove: ["ADMIN"],
+  },
+  planning: {
+    read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
+    create: ["ADMIN", "MANAGER"],
+    update: ["ADMIN", "MANAGER"],
+    remove: ["ADMIN", "MANAGER"],
+  },
+  forecast: {
+    read: ["ADMIN", "MANAGER", "AUDITOR"],
+    create: [],
+    update: [],
+    remove: [],
   },
 };
 

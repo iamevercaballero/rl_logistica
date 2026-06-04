@@ -26,6 +26,8 @@ import BillingPage from "./pages/Billing";
 import SeedPage from "./pages/Seed";
 import PrintDocumentPage from "./pages/PrintDocument";
 import PrintLabelsPage from "./pages/PrintLabels";
+import PlanProduccionPage from "./pages/PlanProduccion";
+import ForecastPage from "./pages/Forecast";
 
 const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -113,6 +115,22 @@ const router = createBrowserRouter([
         element: (
           <RequireRole module="billing">
             <BillingPage />
+          </RequireRole>
+        ),
+      },
+      {
+        path: "planning",
+        element: (
+          <RequireRole module="planning">
+            <PlanProduccionPage />
+          </RequireRole>
+        ),
+      },
+      {
+        path: "forecast",
+        element: (
+          <RequireRole module="forecast">
+            <ForecastPage />
           </RequireRole>
         ),
       },

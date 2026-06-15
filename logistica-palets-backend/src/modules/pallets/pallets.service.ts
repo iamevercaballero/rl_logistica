@@ -323,6 +323,7 @@ export class PalletsService {
    * o crea una nueva en 0. Garantiza que origen y destino operen sobre la
    * misma fila canónica y nunca se dupliquen.
    */
+  /** Obtiene (con lock pesimista) o crea la fila de stock. Mismo patrón que MovementsService. */
   private async findOrCreateStock(
     manager: EntityManager,
     productId: string,
@@ -336,6 +337,7 @@ export class PalletsService {
         warehouseId: warehouseId ?? IsNull(),
         locationId: locationId ?? IsNull(),
       },
+      lock: { mode: 'pessimistic_write' },
     });
     if (existing) return existing;
     return repo.create({ productId, warehouseId, locationId, currentQuantity: 0, updatedAt: new Date() });

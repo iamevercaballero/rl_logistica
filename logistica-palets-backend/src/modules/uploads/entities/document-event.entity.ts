@@ -15,6 +15,7 @@ export const documentEventTypes = [
   'ANULACION_SOLICITADA',// Solicitud de anulación generada
   'ANULADO',             // Movimiento marcado como VOIDED
   'NOTA_IMPRESA',        // Nota RLNE/RLNS impresa o descargada
+  'INSPECCION',          // Inspección de vehículo registrada
 ] as const;
 
 export type DocumentEventType = (typeof documentEventTypes)[number];

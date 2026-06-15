@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getDispatchLog,
   deleteAttachment,
-  attachmentFileUrl,
+  openAttachmentBlob,
   ATTACHMENT_CATEGORIES,
   type AttachmentEntityType,
 } from "../api/attachments";
@@ -29,6 +29,7 @@ const EVENT_ICONS: Record<string, string> = {
   ANULACION_SOLICITADA: "⊘",
   ANULADO:              "🔴",
   NOTA_IMPRESA:         "🖨️",
+  INSPECCION:           "🔍",
 };
 
 function fileIcon(mimeType: string): string {
@@ -121,15 +122,14 @@ export default function DispatchLogDrawer({ entityType, entityId, title, onClose
                         </div>
                       </div>
                       <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                        <a
-                          href={attachmentFileUrl(a.id)}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button
                           className="btn"
-                          style={{ fontSize: 12, padding: "4px 10px", textDecoration: "none" }}
+                          style={{ fontSize: 12, padding: "4px 10px" }}
+                          onClick={() => void openAttachmentBlob(a.id)}
+                          title="Ver archivo"
                         >
                           Ver
-                        </a>
+                        </button>
                         {canDelete && (
                           <button
                             className="btn"

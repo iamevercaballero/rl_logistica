@@ -1,11 +1,13 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { DataSource, EntityManager, IsNull } from 'typeorm';
+import { DataSource, EntityManager, In, IsNull } from 'typeorm';
 import { CreateMovementDto } from './dto/create-movement.dto';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { AdjustmentRequest } from '../adjustments/entities/adjustment-request.entity';
 import { AdjustmentRequestLine } from '../adjustments/entities/adjustment-request-line.entity';
 import { UploadsService } from '../uploads/uploads.service';
 import { RegularizeMovementDto } from './dto/regularize-movement.dto';
+import { RequestQuantityEditDto } from './dto/request-quantity-edit.dto';
+import { TransferBatchDto } from './dto/transfer-batch.dto';
 import { MovementsQueryDto } from './dto/movements-query.dto';
 import { Movement, MovementType } from './entities/movement.entity';
 import { MovementDetail } from './entities/movement-detail.entity';
@@ -134,7 +136,7 @@ export class MovementsService {
         type: compensatingType,
         status: 'PENDIENTE_APROBACION',
         reason: 'DIFERENCIA_INVENTARIO',
-        notes: `Anulación automática de ${movement.type} del ${new Date(movement.date).toLocaleDateString('es-PY')}${movement.documentNumber ? ` · Rem. ${movement.documentNumber}` : ''}`,
+        notes: `Anulación automática de ${movement.type} del ${new Date(movement.date).toLocaleDateString('es-PY')}${movement.documentNumber ? ` · MIC/Fac/Rem. ${movement.documentNumber}` : ''}`,
         warehouseId: movement.warehouseId ?? null,
         locationId: movement.locationId ?? null,
         originalMovementId: id,
@@ -187,6 +189,50 @@ export class MovementsService {
     this.events.emitStockUpdated({ warehouseId: result.warehouseId });
 
     return { movementId: result.movementId, stockImpact: result.stockImpact };
+  }
+
+  /**
+   * Transferencia multi-producto: mueve los pallets seleccionados (de distintos
+   * productos) de una ubicación a otra en UNA sola transacción. Genera un
+   * movimiento TRANSFER por producto; si una línea falla se revierte todo.
+   * El stock se descuenta desde la ubicación real de cada pallet (robusto ante
+   * pallets que ya no estén físicamente en el origen indicado).
+   */
+  async createTransferBatch(dto: TransferBatchDto, userId: string) {
+    if (dto.fromLocationId === dto.toLocationId) {
+      throw new BadRequestException('Origen y destino no pueden ser la misma ubicación');
+    }
+
+    const result = await this.dataSource.transaction(async (manager) => {
+      const movementIds: string[] = [];
+      let totalQty = 0;
+      let totalPallets = 0;
+
+      for (const line of dto.lines) {
+        const res = await this.createInTransaction(manager, {
+          type: 'TRANSFER',
+          date: dto.date,
+          productId: line.productId,
+          fromLocationId: dto.fromLocationId,
+          toLocationId: dto.toLocationId,
+          notes: dto.notes,
+          palletItems: line.palletItems,
+        }, userId);
+        movementIds.push(res.movementId);
+        totalQty += line.palletItems.reduce((s, i) => s + i.quantity, 0);
+        totalPallets += line.palletItems.length;
+      }
+
+      return { movementIds, totalQty, totalPallets };
+    });
+
+    void Promise.all([
+      this.cache.delPattern('kpis:*'),
+      this.cache.delPattern('stock:*'),
+    ]);
+    this.events.emitStockUpdated({ warehouseId: null });
+
+    return result;
   }
 
   /**
@@ -316,7 +362,8 @@ export class MovementsService {
           let detailLocationId: string | null = null;
 
           if (item.palletId) {
-            const pallet = await manager.getRepository(Pallet).findOne({ where: { id: item.palletId } });
+            // Lock pesimista: evita que dos despachos concurrentes resten del mismo palet.
+            const pallet = await manager.getRepository(Pallet).findOne({ where: { id: item.palletId }, lock: { mode: 'pessimistic_write' } });
             if (!pallet) throw new NotFoundException(`Palet no encontrado: ${item.palletId}`);
             if (pallet.status === 'EXITED') throw new BadRequestException(`El palet ${pallet.code} ya fue despachado`);
             resolvedLotId = pallet.lotId;
@@ -661,6 +708,296 @@ export class MovementsService {
     ]);
 
     return result;
+  }
+
+  /** Desglose por lote de un movimiento: cantidades y estado actual de sus pallets (para edición). */
+  async getLotsBreakdown(id: string) {
+    const movement = await this.dataSource.getRepository(Movement).findOne({ where: { id } });
+    if (!movement) throw new NotFoundException('Movimiento no encontrado');
+
+    const details = await this.dataSource.getRepository(MovementDetail).find({ where: { movementId: id } });
+    const lotIds = [...new Set([
+      ...details.map((d) => d.lotId).filter(Boolean) as string[],
+      ...(movement.lotId ? [movement.lotId] : []),
+    ])];
+    const palletIds = [...new Set(details.map((d) => d.palletId).filter(Boolean))] as string[];
+
+    const [lots, pallets] = await Promise.all([
+      lotIds.length ? this.dataSource.getRepository(Lot).findByIds(lotIds) : Promise.resolve([] as Lot[]),
+      palletIds.length ? this.dataSource.getRepository(Pallet).findByIds(palletIds) : Promise.resolve([] as Pallet[]),
+    ]);
+    const palletMap = Object.fromEntries(pallets.map((p) => [p.id, p]));
+
+    const breakdown = lots.map((lot) => {
+      const lotDetails = details.filter((d) => d.lotId === lot.id);
+      const quantity = lotDetails.length
+        ? lotDetails.reduce((s, d) => s + d.quantity, 0)
+        : movement.quantity; // movimiento bulk con lotId directo, sin detalles
+      const lotPallets = lotDetails
+        .filter((d) => d.palletId && palletMap[d.palletId])
+        .map((d) => {
+          const p = palletMap[d.palletId!];
+          return {
+            id: p.id,
+            code: p.code,
+            status: p.status,
+            quantityInMovement: d.quantity,
+            currentQuantity: p.quantity,
+          };
+        });
+      // Máximo descontable hoy: lo que queda físicamente en los pallets de este movimiento
+      const availableQty = lotPallets
+        .filter((p) => p.status !== 'EXITED')
+        .reduce((s, p) => s + p.currentQuantity, 0);
+      return {
+        lotId: lot.id,
+        lotCode: lot.lotCode,
+        sapLot: lot.sapLot ?? null,
+        fechaVencimiento: lot.fechaVencimiento ?? null,
+        fechaFabricacion: lot.fechaFabricacion ?? null,
+        proveedor: lot.proveedor ?? null,
+        quantity,
+        availableQty,
+        pallets: lotPallets,
+      };
+    });
+
+    return { movementId: id, type: movement.type, quantity: movement.quantity, lots: breakdown };
+  }
+
+  /**
+   * Solicita la corrección de lotes/cantidades/pallets de una ENTRADA ya posteada.
+   * - Renombres de código de lote se aplican directo (sin impacto de stock) y quedan
+   *   auditados en regularization_logs; los códigos de pallets derivados se renombran en cascada.
+   * - Las diferencias de cantidad generan AdjustmentRequest (RLAI/RLAO) en PENDIENTE_APROBACION:
+   *   el stock NO cambia hasta que el MANAGER apruebe. A diferencia de la anulación,
+   *   NO se setea originalMovementId (el movimiento original no se marca VOIDED).
+   */
+  async requestQuantityEdit(id: string, dto: RequestQuantityEditDto, userId: string) {
+    const movement = await this.dataSource.getRepository(Movement).findOne({ where: { id } });
+    if (!movement) throw new NotFoundException('Movimiento no encontrado');
+    if (movement.type !== 'ENTRY') {
+      throw new BadRequestException('La corrección de cantidades solo está disponible para entradas.');
+    }
+    if (movement.voidStatus !== 'NONE') {
+      throw new BadRequestException('El movimiento tiene una anulación en curso o ya fue anulado.');
+    }
+
+    const details = await this.dataSource.getRepository(MovementDetail).find({ where: { movementId: id } });
+    const movementLotIds = new Set([
+      ...details.map((d) => d.lotId).filter(Boolean) as string[],
+      ...(movement.lotId ? [movement.lotId] : []),
+    ]);
+    const lots = dto.lots.length
+      ? await this.dataSource.getRepository(Lot).findByIds(dto.lots.map((l) => l.lotId))
+      : [];
+    const lotMap = Object.fromEntries(lots.map((l) => [l.id, l]));
+    const palletIds = [...new Set(details.map((d) => d.palletId).filter(Boolean))] as string[];
+    const pallets = palletIds.length
+      ? await this.dataSource.getRepository(Pallet).findByIds(palletIds)
+      : [];
+    const palletMap = Object.fromEntries(pallets.map((p) => [p.id, p]));
+
+    type IncreaseItem = {
+      lotCode: string; quantity: number;
+      fechaVencimiento?: string; fechaFabricacion?: string; sapLot?: string; proveedor?: string;
+    };
+    type LotField = 'sapLot' | 'proveedor' | 'fechaVencimiento' | 'fechaFabricacion';
+    const renames: Array<{ lot: Lot; newCode: string }> = [];
+    const fieldUpdates: Array<{ lot: Lot; field: LotField; oldValue: string | null; newValue: string }> = [];
+    const increaseItems: IncreaseItem[] = [];
+    const decreaseItems: Array<{ palletId: string; quantity: number }> = [];
+    const warnings: string[] = [];
+
+    for (const edit of dto.lots) {
+      const lot = lotMap[edit.lotId];
+      if (!lot) throw new NotFoundException(`Lote no encontrado: ${edit.lotId}`);
+      if (!movementLotIds.has(lot.id)) {
+        throw new BadRequestException(`El lote ${lot.lotCode} no pertenece a este movimiento.`);
+      }
+
+      // ── Renombre de código de lote ──
+      const newCode = edit.newLotCode?.trim();
+      if (newCode && newCode !== lot.lotCode) {
+        const collision = await this.dataSource
+          .getRepository(Lot)
+          .findOne({ where: { productId: lot.productId, lotCode: newCode } });
+        if (collision && collision.id !== lot.id) {
+          throw new BadRequestException(`Ya existe otro lote "${newCode}" para este producto.`);
+        }
+        renames.push({ lot, newCode });
+      }
+
+      // ── Datos del lote (sapLot, fechas, proveedor) — directo, auditado ──
+      const lotFieldEdits: Array<[LotField, string | undefined]> = [
+        ['sapLot', edit.sapLot],
+        ['proveedor', edit.proveedor],
+        ['fechaVencimiento', edit.fechaVencimiento],
+        ['fechaFabricacion', edit.fechaFabricacion],
+      ];
+      for (const [field, raw] of lotFieldEdits) {
+        const newVal = raw?.trim();
+        if (!newVal) continue;
+        const oldVal = lot[field] ?? null;
+        if (newVal !== oldVal) {
+          fieldUpdates.push({ lot, field, oldValue: oldVal, newValue: newVal });
+        }
+      }
+
+      // ── Reducciones por pallet (newQuantity ≤ cantidad actual) ──
+      const lotDetails = details.filter((d) => d.lotId === lot.id);
+      const lotPalletIds = new Set(lotDetails.map((d) => d.palletId).filter(Boolean) as string[]);
+      for (const pe of edit.palletEdits ?? []) {
+        const pallet = palletMap[pe.palletId];
+        if (!pallet || !lotPalletIds.has(pe.palletId)) {
+          throw new BadRequestException(`El pallet indicado no pertenece al lote ${lot.lotCode} de este movimiento.`);
+        }
+        if (pallet.status === 'EXITED') {
+          warnings.push(`El pallet ${pallet.code} ya fue despachado — no se modifica.`);
+          continue;
+        }
+        if (pe.newQuantity > pallet.quantity) {
+          throw new BadRequestException(
+            `El pallet ${pallet.code} tiene ${pallet.quantity} unid. — solo se puede reducir. ` +
+            `Para sumar unidades usá "Agregar pallets nuevos" del lote.`,
+          );
+        }
+        const take = pallet.quantity - pe.newQuantity;
+        if (take > 0) decreaseItems.push({ palletId: pallet.id, quantity: take });
+      }
+
+      // ── Agregado de unidades → pallets nuevos al aprobar ──
+      if (edit.addQuantity && edit.addQuantity > 0) {
+        const effectiveCode = newCode || lot.lotCode;
+        const count = Math.max(1, edit.addPalletCount ?? 1);
+        const base = Math.floor(edit.addQuantity / count);
+        const rem = edit.addQuantity % count;
+        for (let i = 0; i < count; i++) {
+          const qty = i < rem ? base + 1 : base;
+          if (qty <= 0) continue;
+          increaseItems.push({
+            lotCode: effectiveCode,
+            quantity: qty,
+            fechaVencimiento: edit.fechaVencimiento?.trim() || lot.fechaVencimiento || undefined,
+            fechaFabricacion: edit.fechaFabricacion?.trim() || lot.fechaFabricacion || undefined,
+            sapLot: edit.sapLot?.trim() || lot.sapLot || undefined,
+            proveedor: edit.proveedor?.trim() || lot.proveedor || undefined,
+          });
+        }
+      }
+    }
+
+    if (renames.length === 0 && fieldUpdates.length === 0 && increaseItems.length === 0 && decreaseItems.length === 0) {
+      throw new BadRequestException('No hay cambios para aplicar.');
+    }
+
+    const result = await this.dataSource.transaction(async (manager) => {
+      // 1. Renombres directos: lote + cascada a códigos de pallets + auditoría
+      for (const { lot, newCode } of renames) {
+        const oldCode = lot.lotCode;
+        const lotPallets = await manager.getRepository(Pallet).find({ where: { lotId: lot.id } });
+        const toRename = lotPallets.filter((p) => p.code.startsWith(`${oldCode}-P`));
+        // pallet.code es único globalmente: verificar que los nuevos códigos estén libres
+        const newCodes = toRename.map((p) => `${newCode}${p.code.slice(oldCode.length)}`);
+        if (newCodes.length > 0) {
+          const taken = await manager.getRepository(Pallet).find({ where: { code: In(newCodes) } });
+          if (taken.length > 0) {
+            throw new BadRequestException(
+              `No se puede renombrar a "${newCode}": el código de pallet ${taken[0].code} ya existe en otro lote.`,
+            );
+          }
+        }
+        for (const p of toRename) {
+          p.code = `${newCode}${p.code.slice(oldCode.length)}`;
+          await manager.save(p);
+        }
+        lot.lotCode = newCode;
+        await manager.save(Lot, lot);
+        await manager.save(manager.create(RegularizationLog, {
+          movementId: id,
+          field: `lot.${oldCode}.lotCode`,
+          oldValue: oldCode,
+          newValue: newCode,
+          changedById: userId,
+          reason: dto.reason,
+        }));
+      }
+
+      // 2. Datos del lote (sapLot, fechas, proveedor) — directo + auditoría
+      for (const fu of fieldUpdates) {
+        (fu.lot as unknown as Record<string, unknown>)[fu.field] = fu.newValue;
+        await manager.save(Lot, fu.lot);
+        await manager.save(manager.create(RegularizationLog, {
+          movementId: id,
+          field: `lot.${fu.lot.lotCode}.${fu.field}`,
+          oldValue: fu.oldValue,
+          newValue: fu.newValue,
+          changedById: userId,
+          reason: dto.reason,
+        }));
+      }
+
+      // 3. Solicitudes de ajuste por los deltas — pendientes de aprobación
+      const requests: Array<{ requestId: string; code: string; type: string; totalQuantity: number }> = [];
+      const createRequest = async (
+        type: 'ADJUSTMENT_IN' | 'ADJUSTMENT_OUT',
+        items: Array<{ quantity: number }>,
+      ) => {
+        const code = await this.sequences.nextCode(manager, type);
+        const totalQuantity = items.reduce((s, i) => s + i.quantity, 0);
+        const request = manager.create(AdjustmentRequest, {
+          code,
+          type,
+          status: 'PENDIENTE_APROBACION',
+          reason: 'DIFERENCIA_INVENTARIO',
+          notes: `Corrección de cantidad de ENTRADA del ${new Date(movement.date).toLocaleDateString('es-PY')}` +
+            `${movement.documentNumber ? ` · MIC/Fac/Rem. ${movement.documentNumber}` : ''} — ${dto.reason}`,
+          warehouseId: movement.warehouseId ?? null,
+          locationId: movement.locationId ?? null,
+          createdById: userId,
+          totalLines: 1,
+          totalQuantity,
+        });
+        await manager.save(request);
+        const line = manager.create(AdjustmentRequestLine, {
+          requestId: request.id,
+          productId: movement.productId,
+          palletItemsJson: JSON.stringify(items),
+          totalQuantity,
+          locationId: movement.locationId ?? null,
+        });
+        await manager.save(line);
+        requests.push({ requestId: request.id, code, type, totalQuantity });
+      };
+
+      if (increaseItems.length > 0) await createRequest('ADJUSTMENT_IN', increaseItems);
+      if (decreaseItems.length > 0) await createRequest('ADJUSTMENT_OUT', decreaseItems);
+
+      return { renamed: renames.length, lotFieldChanges: fieldUpdates.length, requests };
+    });
+
+    // Bitácora del movimiento
+    const parts: string[] = [];
+    if (result.renamed > 0) parts.push(`${result.renamed} lote(s) renombrado(s)`);
+    if (result.lotFieldChanges > 0) parts.push(`${result.lotFieldChanges} dato(s) de lote actualizado(s)`);
+    for (const r of result.requests) {
+      parts.push(`${r.code} (${r.type === 'ADJUSTMENT_IN' ? '+' : '−'}${r.totalQuantity} unid.) pendiente de aprobación`);
+    }
+    void this.uploads.log(
+      'MOVEMENT', id,
+      result.requests.length > 0 ? 'ENVIADO_APROBACION' : 'EDITADO',
+      `Corrección de lotes/cantidades — ${parts.join(' · ')}`,
+      userId,
+    );
+
+    if (result.renamed > 0 || result.lotFieldChanges > 0) {
+      void Promise.all([
+        this.cache.delPattern('kpis:*'),
+        this.cache.delPattern('stock:*'),
+      ]);
+    }
+
+    return { ...result, warnings };
   }
 
   async regularize(id: string, dto: RegularizeMovementDto, userId: string) {
@@ -1017,14 +1354,28 @@ export class MovementsService {
     await manager.save(stock);
   }
 
+  /**
+   * Obtiene (con lock pesimista) o crea la fila de stock de una celda
+   * (producto+depósito+ubicación). El lock serializa el read-modify-write
+   * concurrente sobre una celda EXISTENTE → evita lost updates / sobreventa
+   * (el caso de alta frecuencia: dos salidas del mismo producto/ubicación).
+   *
+   * Para una celda NUEVA el caller setea la cantidad y guarda. La carrera
+   * create-create (dos entradas simultáneas de una celda inexistente) la cubre
+   * el índice único `uq_stock_cell`: la segunda inserción falla con 23505 y la
+   * operación se reintenta, en vez de quedar dos filas divergentes en silencio.
+   *
+   * Requiere estar dentro de una transacción (manager transaccional).
+   */
   private async findOrCreateStock(
     manager: EntityManager, productId: string, warehouseId: string | null, locationId: string | null,
   ) {
     const repository = manager.getRepository(Stock);
-    const stock = await repository.findOne({
+    const existing = await repository.findOne({
       where: { productId, warehouseId: warehouseId ?? IsNull(), locationId: locationId ?? IsNull() },
+      lock: { mode: 'pessimistic_write' },
     });
-    if (stock) return stock;
+    if (existing) return existing;
     return repository.create({ productId, warehouseId, locationId, currentQuantity: 0, updatedAt: new Date() });
   }
 
@@ -1064,7 +1415,14 @@ export class MovementsService {
 
   private async updateLotStock(manager: EntityManager, lotId: string, delta: number) {
     const repo = manager.getRepository(Lot);
-    const lot = await repo.findOne({ where: { id: lotId } });
+    // Lock pesimista vía QueryBuilder: dos movimientos que tocan el mismo lote se
+    // serializan. Se usa QB (no findOne) porque Lot tiene un @ManyToOne(Product)
+    // eager y FOR UPDATE no puede aplicarse al lado nullable de un outer join.
+    const lot = await repo
+      .createQueryBuilder('lot')
+      .setLock('pessimistic_write')
+      .where('lot.id = :id', { id: lotId })
+      .getOne();
     if (lot) {
       lot.stockActual = Math.max(0, lot.stockActual + delta);
       await repo.save(lot);
@@ -1139,11 +1497,18 @@ export class MovementsService {
         .andWhere('loc."warehouseId" = :warehouseId', { warehouseId });
     }
 
-    const pallets = await qb.getMany();
+    // Selección FEFO sin lock (solo para ordenar candidatos). El lock se toma
+    // por-palet adentro del loop, en orden FEFO consistente → sin deadlock.
+    const candidates = await qb.getMany();
 
     let remaining = quantity;
-    for (const pallet of pallets) {
+    for (const candidate of candidates) {
       if (remaining <= 0) break;
+
+      // Re-leer con lock pesimista y revalidar: otra salida concurrente pudo
+      // haber tomado este palet entre la selección y este punto.
+      const pallet = await palletRepo.findOne({ where: { id: candidate.id }, lock: { mode: 'pessimistic_write' } });
+      if (!pallet || pallet.quantity <= 0 || pallet.status === 'EXITED' || pallet.status === 'EMPTY') continue;
 
       const take = Math.min(pallet.quantity, remaining);
 

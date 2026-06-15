@@ -27,6 +27,13 @@ export class WarehousesController {
     return this.service.findAll();
   }
 
+  /** Layout del depósito: ubicaciones con estructura + ocupación + resumen por zona. */
+  @Get(':id/layout')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  layout(@Param('id') id: string) {
+    return this.service.layout(id);
+  }
+
   @Get(':id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
   findOne(@Param('id') id: string) {

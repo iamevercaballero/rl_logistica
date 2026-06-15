@@ -14,6 +14,8 @@ import { MovementsService } from './movements.service';
 import { CreateMovementDto } from './dto/create-movement.dto';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { RegularizeMovementDto } from './dto/regularize-movement.dto';
+import { RequestQuantityEditDto } from './dto/request-quantity-edit.dto';
+import { TransferBatchDto } from './dto/transfer-batch.dto';
 import { MovementsQueryDto } from './dto/movements-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles/roles.guard';
@@ -35,6 +37,13 @@ export class MovementsController {
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   createDocument(@Body() dto: CreateDocumentDto, @Req() req: Request & { user: { userId: string } }) {
     return this.service.createDocument(dto, req.user.userId);
+  }
+
+  /** Transferencia multi-producto: N pallets de una ubicación a otra en una sola transacción. */
+  @Post('transfer-batch')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
+  createTransferBatch(@Body() dto: TransferBatchDto, @Req() req: Request & { user: { userId: string } }) {
+    return this.service.createTransferBatch(dto, req.user.userId);
   }
 
   /** Lista documentos logísticos (remitos). */
@@ -91,6 +100,28 @@ export class MovementsController {
     @Req() req: Request & { user: { userId: string } },
   ) {
     return this.service.regularize(id, dto, req.user.userId);
+  }
+
+  /** Desglose por lote (cantidades y pallets actuales) — usado por el editor de ajustes. */
+  @Get(':id/lots')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  getLotsBreakdown(@Param('id') id: string) {
+    return this.service.getLotsBreakdown(id);
+  }
+
+  /**
+   * Corrección de lotes/cantidades/pallets de una entrada posteada.
+   * Renombres de lote se aplican directo (auditados); las diferencias de cantidad
+   * generan solicitudes RLAI/RLAO en PENDIENTE_APROBACION (stock intacto hasta aprobar).
+   */
+  @Post(':id/request-quantity-edit')
+  @Roles('ADMIN', 'MANAGER')
+  requestQuantityEdit(
+    @Param('id') id: string,
+    @Body() dto: RequestQuantityEditDto,
+    @Req() req: Request & { user: { userId: string } },
+  ) {
+    return this.service.requestQuantityEdit(id, dto, req.user.userId);
   }
 
   @Get()

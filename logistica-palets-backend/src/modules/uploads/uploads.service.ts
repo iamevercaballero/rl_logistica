@@ -155,6 +155,7 @@ export class UploadsService {
   async getAllEvents(query: {
     entityType?: string;
     eventType?: string;
+    excludeEventTypes?: string; // CSV, e.g. "FOTO_ADJUNTADA,ARCHIVO_ELIMINADO"
     from?: string;
     to?: string;
     search?: string;
@@ -172,8 +173,12 @@ export class UploadsService {
 
     if (query.entityType) qb.andWhere('e.entityType = :et', { et: query.entityType });
     if (query.eventType)  qb.andWhere('e.eventType = :ev', { ev: query.eventType });
-    if (query.from)       qb.andWhere('e.createdAt >= :from', { from: new Date(query.from) });
-    if (query.to)         qb.andWhere('e.createdAt <= :to', { to: new Date(query.to + 'T23:59:59') });
+    if (query.excludeEventTypes) {
+      const excluded = query.excludeEventTypes.split(',').map((s) => s.trim()).filter(Boolean);
+      if (excluded.length > 0) qb.andWhere('e.eventType NOT IN (:...excl)', { excl: excluded });
+    }
+    if (query.from) qb.andWhere('e.createdAt >= :from', { from: new Date(query.from) });
+    if (query.to)   qb.andWhere('e.createdAt <= :to', { to: new Date(query.to + 'T23:59:59') });
     if (query.search) {
       qb.andWhere('(e.description ILIKE :s OR e.entityCode ILIKE :s OR e.username ILIKE :s)',
         { s: `%${query.search}%` });

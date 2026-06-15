@@ -189,7 +189,7 @@ function HistoryTimeline({ events }: { events: PalletHistoryEvent[] }) {
                 )}
                 {ev.documentNumber && (
                   <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                    Doc: <strong style={{ color: "var(--text-variant)" }}>{ev.documentNumber}</strong>
+                    MIC/Fac/Rem.: <strong style={{ color: "var(--text-variant)" }}>{ev.documentNumber}</strong>
                   </span>
                 )}
                 {ev.supplier && (

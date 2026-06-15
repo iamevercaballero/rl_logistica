@@ -10,14 +10,16 @@ import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 
 interface Props {
-  entityType: AttachmentEntityType;
-  entityId: string;
+  entityType?: AttachmentEntityType;
+  entityId?: string;
   onUploaded?: () => void;
+  /** Modo diferido: en vez de subir, entrega el archivo al padre (p.ej. remito aún no confirmado). */
+  onCollect?: (file: File, name: string, category: AttachmentCategory) => void;
 }
 
 const ACCEPTED = ".pdf,.jpg,.jpeg,.png,.webp,.heic,.doc,.docx,.xls,.xlsx";
 
-export default function AttachmentUploader({ entityType, entityId, onUploaded }: Props) {
+export default function AttachmentUploader({ entityType, entityId, onUploaded, onCollect }: Props) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -28,7 +30,7 @@ export default function AttachmentUploader({ entityType, entityId, onUploaded }:
   const [error, setError] = useState("");
 
   const mut = useMutation({
-    mutationFn: () => uploadAttachment(file!, name, category, entityType, entityId),
+    mutationFn: () => uploadAttachment(file!, name, category, entityType!, entityId!),
     onSuccess: () => {
       toast.success(`Archivo "${name}" adjuntado`);
       setFile(null);
@@ -60,6 +62,13 @@ export default function AttachmentUploader({ entityType, entityId, onUploaded }:
     if (!file) { setError("Seleccioná un archivo."); return; }
     if (!name.trim()) { setError("El nombre del archivo es obligatorio."); return; }
     setError("");
+    if (onCollect) {
+      onCollect(file, name.trim(), category);
+      setFile(null);
+      setName("");
+      if (inputRef.current) inputRef.current.value = "";
+      return;
+    }
     mut.mutate();
   }
 
@@ -83,7 +92,7 @@ export default function AttachmentUploader({ entityType, entityId, onUploaded }:
         <div style={{ fontSize: 10, fontWeight: 700, color: "var(--danger)", textTransform: "uppercase", marginBottom: 3 }}>Nombre del archivo *</div>
         <input
           className="input"
-          placeholder="Ej: Remito proveedor firmado"
+          placeholder="Ej: MIC/Factura/Remito firmado"
           value={name}
           onChange={(e) => setName(e.target.value)}
           maxLength={200}
@@ -118,7 +127,7 @@ export default function AttachmentUploader({ entityType, entityId, onUploaded }:
       {error && <div style={{ color: "var(--danger)", fontSize: 13 }}>{error}</div>}
 
       <button className="btn btn--primary" type="submit" disabled={mut.isPending || !file}>
-        {mut.isPending ? "Subiendo..." : "Adjuntar archivo"}
+        {onCollect ? "Agregar a la lista" : mut.isPending ? "Subiendo..." : "Adjuntar archivo"}
       </button>
     </form>
   );

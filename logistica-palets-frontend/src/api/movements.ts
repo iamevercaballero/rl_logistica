@@ -44,6 +44,7 @@ export type Movement = {
   lotCode?: string | null;     // si lotCount > 1 viene concatenado con ", "
   sapLot?: string | null;
   lotCount?: number;           // 0 / 1 / N
+  lotsDetail?: Array<{ lotCode: string; sapLot?: string | null; pallets: number; quantity: number }> | null;
   adjustmentReason?: string | null;
   adjustmentCategory?: string | null;
   encargado?: { id: string; username: string; fullName?: string | null } | null;
@@ -221,6 +222,75 @@ export async function editMovementMetadata(
   },
 ): Promise<{ edited: boolean; changes: number }> {
   const { data } = await api.patch(`/movements/${id}/edit`, payload);
+  return data;
+}
+
+/**
+ * Transferencia multi-producto: mueve los pallets seleccionados de una ubicación
+ * a otra en una sola transacción (un movimiento TRANSFER por producto).
+ */
+export async function transferBatch(payload: {
+  date?: string;
+  fromLocationId: string;
+  toLocationId: string;
+  notes?: string;
+  lines: { productId: string; palletItems: { palletId: string; quantity: number }[] }[];
+}): Promise<{ movementIds: string[]; totalQty: number; totalPallets: number }> {
+  const { data } = await api.post("/movements/transfer-batch", payload);
+  return data;
+}
+
+/** Desglose por lote de un movimiento: datos del lote y pallets actuales (para el editor). */
+export type MovementLotBreakdown = {
+  lotId: string;
+  lotCode: string;
+  sapLot?: string | null;
+  fechaVencimiento?: string | null;
+  fechaFabricacion?: string | null;
+  proveedor?: string | null;
+  quantity: number;
+  availableQty: number;
+  pallets: { id: string; code: string; status: string; quantityInMovement: number; currentQuantity: number }[];
+};
+
+export async function getMovementLots(id: string): Promise<{
+  movementId: string;
+  type: MovementType;
+  quantity: number;
+  lots: MovementLotBreakdown[];
+}> {
+  const { data } = await api.get(`/movements/${id}/lots`);
+  return data;
+}
+
+/**
+ * Corrección de lotes/pallets de una entrada posteada.
+ * Renombres y datos del lote se aplican directo (auditados); las reducciones
+ * por pallet y los agregados generan solicitudes RLAI/RLAO pendientes de
+ * aprobación (el stock no cambia hasta aprobar).
+ */
+export type QuantityEditLotPayload = {
+  lotId: string;
+  newLotCode?: string;
+  sapLot?: string;
+  fechaVencimiento?: string;
+  fechaFabricacion?: string;
+  proveedor?: string;
+  palletEdits?: { palletId: string; newQuantity: number }[];
+  addQuantity?: number;
+  addPalletCount?: number;
+};
+
+export async function requestQuantityEdit(
+  id: string,
+  payload: { reason: string; lots: QuantityEditLotPayload[] },
+): Promise<{
+  renamed: number;
+  lotFieldChanges: number;
+  requests: { requestId: string; code: string; type: string; totalQuantity: number }[];
+  warnings: string[];
+}> {
+  const { data } = await api.post(`/movements/${id}/request-quantity-edit`, payload);
   return data;
 }
 

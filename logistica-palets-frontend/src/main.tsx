@@ -26,6 +26,7 @@ import BillingPage from "./pages/Billing";
 import SeedPage from "./pages/Seed";
 import PrintDocumentPage from "./pages/PrintDocument";
 import PrintLabelsPage from "./pages/PrintLabels";
+import UsersPage from "./pages/Users";
 
 const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -113,6 +114,14 @@ const router = createBrowserRouter([
         element: (
           <RequireRole module="billing">
             <BillingPage />
+          </RequireRole>
+        ),
+      },
+      {
+        path: "users",
+        element: (
+          <RequireRole module="users">
+            <UsersPage />
           </RequireRole>
         ),
       },

@@ -11,6 +11,7 @@ import {
 import { LocationsService } from './locations.service';
 import { CreateLocationDto } from './dto/create-location.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
+import { GenerateLocationsDto } from './dto/generate-locations.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles/roles.guard';
 import { Roles } from '../auth/roles/roles.decorator';
@@ -38,6 +39,13 @@ export class LocationsController {
   @Roles('ADMIN', 'MANAGER')
   create(@Body() dto: CreateLocationDto) {
     return this.service.create(dto);
+  }
+
+  /** Genera la estructura de una zona en lote (pasillos × racks × niveles × posiciones). */
+  @Post('generate')
+  @Roles('ADMIN', 'MANAGER')
+  generate(@Body() dto: GenerateLocationsDto) {
+    return this.service.generate(dto);
   }
 
   @Patch(':id')

@@ -1,8 +1,36 @@
 import { api } from "./client";
 
+export type LocationZone =
+  | "RECEPCION"
+  | "ALMACENAMIENTO"
+  | "PICKING"
+  | "DESPACHO"
+  | "CUARENTENA"
+  | "DEVOLUCIONES";
+
+export const LOCATION_ZONES: { value: LocationZone; label: string; icon: string }[] = [
+  { value: "RECEPCION",      label: "Recepción",      icon: "📥" },
+  { value: "ALMACENAMIENTO", label: "Almacenamiento", icon: "📦" },
+  { value: "PICKING",        label: "Picking",        icon: "🛒" },
+  { value: "DESPACHO",       label: "Despacho",       icon: "🚚" },
+  { value: "CUARENTENA",     label: "Cuarentena",     icon: "⛔" },
+  { value: "DEVOLUCIONES",   label: "Devoluciones",   icon: "↩️" },
+];
+
+export function zoneMeta(zone?: string | null) {
+  return LOCATION_ZONES.find((z) => z.value === zone) ?? null;
+}
+
 export type Location = {
   id: string;
   code: string;
+  type?: string;
+  zone?: string | null;
+  aisle?: string | null;
+  rack?: string | null;
+  level?: number | null;
+  position?: number | null;
+  capacityPallets?: number | null;
   warehouseId?: string;
   warehouse?: { id: string; name: string };
   active?: boolean;
@@ -16,8 +44,40 @@ export async function listLocations() {
 export async function createLocation(payload: {
   code: string;
   warehouseId: string;
+  type?: string;
+  zone?: LocationZone;
+  aisle?: string;
+  rack?: string;
+  level?: number;
+  position?: number;
+  capacityPallets?: number;
 }) {
   const { data } = await api.post<Location>("/locations", payload);
+  return data;
+}
+
+export async function updateLocation(id: string, payload: Partial<{
+  code: string;
+  zone: LocationZone;
+  capacityPallets: number;
+  active: boolean;
+}>) {
+  const { data } = await api.patch<Location>(`/locations/${id}`, payload);
+  return data;
+}
+
+/** Genera la estructura de una zona en lote (pasillos × racks × niveles × posiciones). */
+export async function generateLocations(payload: {
+  warehouseId: string;
+  zone: LocationZone;
+  codePrefix?: string;
+  aisles?: string[];
+  racks?: number;
+  levels?: number;
+  positions: number;
+  capacityPallets?: number;
+}): Promise<{ requested: number; created: number; skipped: number }> {
+  const { data } = await api.post("/locations/generate", payload);
   return data;
 }
 

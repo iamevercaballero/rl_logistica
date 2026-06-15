@@ -81,7 +81,7 @@ export class UploadsController {
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
   getAllEvents(
     @Query() query: {
-      entityType?: string; eventType?: string;
+      entityType?: string; eventType?: string; excludeEventTypes?: string;
       from?: string; to?: string;
       search?: string; page?: string; limit?: string;
     },

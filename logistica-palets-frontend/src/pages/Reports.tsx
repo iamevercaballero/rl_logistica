@@ -8,6 +8,9 @@ import {
   getMovementsReport,
   getStockReport,
   getTraceReport,
+  getOccupancy,
+  getRotation,
+  getDwellTime,
   type StockItemRow,
 } from "../api/reports";
 import { getMovements, regularizeMovement } from "../api/movements";
@@ -80,7 +83,7 @@ const MOVE_BADGE: Record<string, string> = {
   ADJUSTMENT_OUT: "badge badge--adj-out",
 };
 
-type Tab = "stock" | "movimientos" | "lotes" | "entradas" | "diario" | "salidas" | "trazabilidad" | "frescura";
+type Tab = "stock" | "movimientos" | "lotes" | "entradas" | "diario" | "salidas" | "trazabilidad" | "frescura" | "almacen";
 
 type MovementFilters = {
   warehouseId: string;
@@ -265,6 +268,26 @@ export default function ReportsPage() {
     staleTime: 60_000,
   });
 
+  // ── KPIs de almacén (ocupación / rotación / dwell-time) ───────────────────
+  const occupancyQ = useQuery({
+    queryKey: ["occupancy"],
+    queryFn:  getOccupancy,
+    enabled:  activeTab === "almacen",
+    staleTime: 30_000,
+  });
+  const rotationQ = useQuery({
+    queryKey: ["rotation"],
+    queryFn:  () => getRotation(),
+    enabled:  activeTab === "almacen",
+    staleTime: 60_000,
+  });
+  const dwellQ = useQuery({
+    queryKey: ["dwell-time"],
+    queryFn:  getDwellTime,
+    enabled:  activeTab === "almacen",
+    staleTime: 60_000,
+  });
+
   // ── Mutations ─────────────────────────────────────────────────────────────
 
   const regularizeMut = useMutation({
@@ -325,6 +348,7 @@ export default function ReportsPage() {
     { key: "salidas",      label: "Salidas"          },
     { key: "trazabilidad", label: "Trazabilidad"     },
     { key: "frescura",     label: "Control Frescura" },
+    { key: "almacen",      label: "KPIs Almacén"     },
   ];
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -578,27 +602,26 @@ export default function ReportsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {movSort.sortedData.map((m) => (
-                    <tr key={`${m.id}-${m.date}`}>
-                      <td style={{ color: "var(--muted)", fontSize: 12 }}>{fmtDateTime(m.date)}</td>
-                      <td><span className={MOVE_BADGE[m.type] ?? "badge"}>{MOVE_LABEL[m.type] ?? m.type}</span></td>
-                      <td><strong>{m.material.code}</strong> · {m.material.description}</td>
-                      <td>{m.quantity.toLocaleString("es-PY")}</td>
-                      <td style={{ fontSize: 12 }}>
-                        {m.type === "TRANSFER"
-                          ? `${m.from?.locationCode ?? "-"} → ${m.to?.locationCode ?? "-"}`
-                          : `${m.warehouse?.name ?? "-"} / ${m.location?.code ?? "-"}`}
-                      </td>
-                      <td style={{ color: "var(--muted)", fontSize: 12 }} title={m.lotCode ?? ""}>
-                        {m.lotCode
-                          ? ((m.lotCount ?? 1) > 1
-                              ? <span><strong>{m.lotCount}</strong> lotes <span style={{ color: "var(--primary)" }}>· ver</span></span>
-                              : m.lotCode)
-                          : "-"}
-                      </td>
-                      <td style={{ color: "var(--muted)", fontSize: 12, textAlign: "right" }}>{m.pallets != null ? m.pallets : "-"}</td>
-                    </tr>
-                  ))}
+                  {movSort.sortedData.flatMap((m) => {
+                    const rows = (m.lotsDetail && m.lotsDetail.length > 0)
+                      ? m.lotsDetail.map((ld) => ({ lot: ld.lotCode, pallets: ld.pallets, quantity: ld.quantity }))
+                      : [{ lot: m.lotCode ?? null, pallets: m.pallets ?? null, quantity: m.quantity }];
+                    return rows.map((r, i) => (
+                      <tr key={`${m.id}-${m.date}-${i}`}>
+                        <td style={{ color: "var(--muted)", fontSize: 12 }}>{fmtDateTime(m.date)}</td>
+                        <td><span className={MOVE_BADGE[m.type] ?? "badge"}>{MOVE_LABEL[m.type] ?? m.type}</span></td>
+                        <td><strong>{m.material.code}</strong> · {m.material.description}</td>
+                        <td>{r.quantity.toLocaleString("es-PY")}</td>
+                        <td style={{ fontSize: 12 }}>
+                          {m.type === "TRANSFER"
+                            ? `${m.from?.locationCode ?? "-"} → ${m.to?.locationCode ?? "-"}`
+                            : `${m.warehouse?.name ?? "-"} / ${m.location?.code ?? "-"}`}
+                        </td>
+                        <td style={{ color: "var(--muted)", fontSize: 12 }}>{r.lot ?? "-"}</td>
+                        <td style={{ color: "var(--muted)", fontSize: 12, textAlign: "right" }}>{r.pallets != null ? r.pallets : "-"}</td>
+                      </tr>
+                    ));
+                  })}
                 </tbody>
               </table>
               <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
@@ -807,7 +830,7 @@ export default function ReportsPage() {
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("material.code")}>Material{sortArrow(entradasSort.sortConfig, "material.code")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("lotCode")}>Lote{sortArrow(entradasSort.sortConfig, "lotCode")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("sapLot")}>Lote SAP{sortArrow(entradasSort.sortConfig, "sapLot")}</th>
-                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("documentNumber")}>N° Documento{sortArrow(entradasSort.sortConfig, "documentNumber")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("documentNumber")}>MIC/Factura/Remito{sortArrow(entradasSort.sortConfig, "documentNumber")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("quantity")}>Cantidad{sortArrow(entradasSort.sortConfig, "quantity")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("pallets")}>Pallets{sortArrow(entradasSort.sortConfig, "pallets")}</th>
                       <th scope="col">Depósito / Ubic.</th>
@@ -820,29 +843,21 @@ export default function ReportsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {entradasSort.sortedData.map((m) => (
-                      <tr key={m.id} style={m.status === "PENDING_REGULARIZATION" ? { background: "var(--badge-adjout-bg)" } : {}}>
+                    {entradasSort.sortedData.flatMap((m) => {
+                      const rows = (m.lotsDetail && m.lotsDetail.length > 0)
+                        ? m.lotsDetail.map((ld) => ({ lot: ld.lotCode, sapLot: ld.sapLot ?? null, pallets: ld.pallets, quantity: ld.quantity }))
+                        : [{ lot: m.lotCode ?? null, sapLot: m.sapLot ?? null, pallets: m.pallets ?? null, quantity: m.quantity }];
+                      return rows.map((r, i) => (
+                      <tr key={`${m.id}-${i}`} style={m.status === "PENDING_REGULARIZATION" ? { background: "var(--badge-adjout-bg)" } : {}}>
                         <td style={{ color: "var(--muted)", fontSize: 12, whiteSpace: "nowrap" }}>
                           {fmtDateTime(m.date)}
                         </td>
                         <td><strong>{m.material.code}</strong><span style={{ color: "var(--muted)", marginLeft: 4 }}>· {m.material.description}</span></td>
-                        <td style={{ fontSize: 12 }} title={m.lotCode ?? ""}>
-                          {m.lotCode
-                            ? ((m.lotCount ?? 1) > 1
-                                ? <span><strong>{m.lotCount}</strong> lotes</span>
-                                : m.lotCode)
-                            : "—"}
-                        </td>
-                        <td style={{ fontFamily: "monospace", fontSize: 12 }} title={m.sapLot ?? ""}>
-                          {m.sapLot
-                            ? ((m.lotCount ?? 1) > 1
-                                ? <span style={{ color: "var(--muted)" }}>multiple</span>
-                                : m.sapLot)
-                            : "—"}
-                        </td>
+                        <td style={{ fontSize: 12 }}>{r.lot ?? "—"}</td>
+                        <td style={{ fontFamily: "monospace", fontSize: 12 }}>{r.sapLot ?? "—"}</td>
                         <td style={{ fontSize: 12, color: "var(--muted)" }}>{m.documentNumber ?? "—"}</td>
-                        <td style={{ fontWeight: 600 }}>{m.quantity.toLocaleString("es-PY")} {m.material.unitOfMeasure ?? ""}</td>
-                        <td style={{ textAlign: "center" }}>{m.pallets != null ? m.pallets : "—"}</td>
+                        <td style={{ fontWeight: 600 }}>{r.quantity.toLocaleString("es-PY")} {m.material.unitOfMeasure ?? ""}</td>
+                        <td style={{ textAlign: "center" }}>{r.pallets != null ? r.pallets : "—"}</td>
                         <td style={{ fontSize: 12 }}>
                           {m.warehouse?.name ?? "—"}{m.location?.code ? ` / ${m.location.code}` : ""}
                         </td>
@@ -873,7 +888,8 @@ export default function ReportsPage() {
                           )}
                         </td>
                       </tr>
-                    ))}
+                      ));
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1108,28 +1124,20 @@ export default function ReportsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {salidasSort.sortedData.map((m) => (
-                      <tr key={m.id}>
+                    {salidasSort.sortedData.flatMap((m) => {
+                      const rows = (m.lotsDetail && m.lotsDetail.length > 0)
+                        ? m.lotsDetail.map((ld) => ({ lot: ld.lotCode, sapLot: ld.sapLot ?? null, pallets: ld.pallets, quantity: ld.quantity }))
+                        : [{ lot: m.lotCode ?? null, sapLot: m.sapLot ?? null, pallets: m.pallets ?? null, quantity: m.quantity }];
+                      return rows.map((r, i) => (
+                      <tr key={`${m.id}-${i}`}>
                         <td style={{ color: "var(--muted)", fontSize: 12, whiteSpace: "nowrap" }}>
                           {fmtDateTime(m.date)}
                         </td>
                         <td><strong>{m.material.code}</strong><span style={{ color: "var(--muted)", marginLeft: 4 }}>· {m.material.description}</span></td>
-                        <td style={{ fontSize: 12 }} title={m.lotCode ?? ""}>
-                          {m.lotCode
-                            ? ((m.lotCount ?? 1) > 1
-                                ? <span><strong>{m.lotCount}</strong> lotes</span>
-                                : m.lotCode)
-                            : "—"}
-                        </td>
-                        <td style={{ fontFamily: "monospace", fontSize: 12 }} title={m.sapLot ?? ""}>
-                          {m.sapLot
-                            ? ((m.lotCount ?? 1) > 1
-                                ? <span style={{ color: "var(--muted)" }}>multiple</span>
-                                : m.sapLot)
-                            : "—"}
-                        </td>
-                        <td style={{ fontWeight: 600 }}>{m.quantity.toLocaleString("es-PY")} {m.material.unitOfMeasure ?? ""}</td>
-                        <td style={{ textAlign: "center" }}>{m.pallets != null ? m.pallets : "—"}</td>
+                        <td style={{ fontSize: 12 }}>{r.lot ?? "—"}</td>
+                        <td style={{ fontFamily: "monospace", fontSize: 12 }}>{r.sapLot ?? "—"}</td>
+                        <td style={{ fontWeight: 600 }}>{r.quantity.toLocaleString("es-PY")} {m.material.unitOfMeasure ?? ""}</td>
+                        <td style={{ textAlign: "center" }}>{r.pallets != null ? r.pallets : "—"}</td>
                         <td style={{ fontSize: 12 }}>
                           {m.warehouse?.name ?? m.from?.warehouseName ?? "—"}{(m.location?.code ?? m.from?.locationCode) ? ` / ${m.location?.code ?? m.from?.locationCode}` : ""}
                         </td>
@@ -1140,7 +1148,8 @@ export default function ReportsPage() {
                           {m.notes ?? "—"}
                         </td>
                       </tr>
-                    ))}
+                      ));
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1230,7 +1239,7 @@ export default function ReportsPage() {
                   </div>
                   <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12, color: "var(--muted)" }}>
                     {event.documentNumber && (
-                      <span>Doc: <strong style={{ color: "var(--text)" }}>{event.documentNumber}</strong></span>
+                      <span>MIC/Fac/Rem.: <strong style={{ color: "var(--text)" }}>{event.documentNumber}</strong></span>
                     )}
                     <span>Origen: {event.fromWarehouseName || event.warehouseName || "-"} / {event.fromLocationCode || "-"}</span>
                     <span>Destino: {event.toWarehouseName || event.destination || event.warehouseName || "-"} / {event.toLocationCode || event.locationCode || "-"}</span>
@@ -1420,7 +1429,7 @@ export default function ReportsPage() {
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 {(
                   [
-                    ["documentNumber",  "Nro. documento",   "text"],
+                    ["documentNumber",  "N° MIC/Factura/Remito",   "text"],
                     ["supplier",        "Proveedor",        "text"],
                     ["carrier",         "Transportista",    "text"],
                     ["driver",          "Conductor",        "text"],
@@ -1501,6 +1510,194 @@ export default function ReportsPage() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Tab: KPIs de Almacén (ocupación / rotación / dwell-time) ── */}
+      {activeTab === "almacen" && (
+        <div style={{ display: "grid", gap: 22 }}>
+
+          {/* ── Ocupación ── */}
+          <section>
+            <h3 style={{ fontSize: 15, fontWeight: 800, margin: "0 0 10px" }}>Ocupación</h3>
+            {occupancyQ.isLoading ? (
+              <p style={{ color: "var(--muted)", fontSize: 13 }}>Cargando ocupación…</p>
+            ) : !occupancyQ.data ? (
+              <p className="form-error">No se pudo cargar.</p>
+            ) : (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 12 }}>
+                  {[
+                    { label: "Ocupación (ubic.)", value: `${occupancyQ.data.totals.locationOccupancyPct}%` },
+                    { label: "Ocupadas", value: occupancyQ.data.totals.occupiedLocations.toLocaleString("es-PY") },
+                    { label: "Libres", value: occupancyQ.data.totals.freeLocations.toLocaleString("es-PY") },
+                    { label: "Pallets almacenados", value: occupancyQ.data.totals.palletsStored.toLocaleString("es-PY") },
+                    { label: "Ocupación (capacidad)", value: occupancyQ.data.totals.capacityOccupancyPct != null ? `${occupancyQ.data.totals.capacityOccupancyPct}%` : "—" },
+                  ].map((k) => (
+                    <div key={k.label} style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, padding: "10px 14px" }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>{k.label}</div>
+                      <div style={{ fontSize: 22, fontWeight: 900, marginTop: 2 }}>{k.value}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Depósito</th><th style={{ textAlign: "right" }}>Ubicaciones</th>
+                        <th style={{ textAlign: "right" }}>Ocupadas</th><th style={{ textAlign: "right" }}>Libres</th>
+                        <th style={{ textAlign: "right" }}>Pallets</th><th style={{ textAlign: "right" }}>Capacidad</th>
+                        <th style={{ minWidth: 160 }}>Ocupación</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {occupancyQ.data.warehouses.map((w) => (
+                        <tr key={w.warehouseId}>
+                          <td style={{ fontWeight: 600 }}>{w.warehouseName}</td>
+                          <td style={{ textAlign: "right" }}>{w.totalLocations.toLocaleString("es-PY")}</td>
+                          <td style={{ textAlign: "right" }}>{w.occupiedLocations.toLocaleString("es-PY")}</td>
+                          <td style={{ textAlign: "right" }}>{w.freeLocations.toLocaleString("es-PY")}</td>
+                          <td style={{ textAlign: "right" }}>{w.palletsStored.toLocaleString("es-PY")}</td>
+                          <td style={{ textAlign: "right" }}>{w.capacityPallets > 0 ? w.capacityPallets.toLocaleString("es-PY") : "—"}</td>
+                          <td>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <div style={{ flex: 1, height: 8, borderRadius: 99, background: "var(--panel-hi)", overflow: "hidden" }}>
+                                <div style={{ width: `${w.locationOccupancyPct}%`, height: "100%", background: w.locationOccupancyPct >= 90 ? "var(--warning)" : "var(--primary)" }} />
+                              </div>
+                              <span style={{ fontSize: 12, fontWeight: 700, minWidth: 34, textAlign: "right" }}>{w.locationOccupancyPct}%</span>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </section>
+
+          {/* ── Rotación ── */}
+          <section>
+            <h3 style={{ fontSize: 15, fontWeight: 800, margin: "0 0 4px" }}>Rotación</h3>
+            <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 10px" }}>
+              Últimos 30 días · salidas vs stock actual (turnover = veces que rotó respecto a lo que hay hoy).
+            </p>
+            {rotationQ.isLoading ? (
+              <p style={{ color: "var(--muted)", fontSize: 13 }}>Cargando rotación…</p>
+            ) : !rotationQ.data ? (
+              <p className="form-error">No se pudo cargar.</p>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14 }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 6 }}>
+                    Mayor rotación (top movers)
+                  </div>
+                  {rotationQ.data.topMovers.length === 0 ? (
+                    <p style={{ fontSize: 13, color: "var(--muted)" }}>Sin salidas en el período.</p>
+                  ) : (
+                    <table className="table">
+                      <thead><tr><th>Material</th><th style={{ textAlign: "right" }}>Salidas</th><th style={{ textAlign: "right" }}>Stock</th><th style={{ textAlign: "right" }}>Turnover</th></tr></thead>
+                      <tbody>
+                        {rotationQ.data.topMovers.map((r) => (
+                          <tr key={r.productId}>
+                            <td><strong>{r.productCode}</strong><span style={{ color: "var(--muted)", marginLeft: 6, fontSize: 12 }}>{r.productDescription}</span></td>
+                            <td style={{ textAlign: "right", fontWeight: 700 }}>{r.exitUnits.toLocaleString("es-PY")}</td>
+                            <td style={{ textAlign: "right" }}>{r.currentStock.toLocaleString("es-PY")}</td>
+                            <td style={{ textAlign: "right", fontWeight: 700 }} title={r.turnover === null ? "Stock agotado en el período" : undefined}>{r.turnover === null ? "∞" : r.turnover}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--badge-adjout-text)", textTransform: "uppercase", marginBottom: 6 }}>
+                    Stock estancado (sin salidas)
+                  </div>
+                  {rotationQ.data.deadStock.length === 0 ? (
+                    <p style={{ fontSize: 13, color: "var(--muted)" }}>Sin mercadería estancada. 👌</p>
+                  ) : (
+                    <table className="table">
+                      <thead><tr><th>Material</th><th style={{ textAlign: "right" }}>Stock parado</th></tr></thead>
+                      <tbody>
+                        {rotationQ.data.deadStock.map((r) => (
+                          <tr key={r.productId}>
+                            <td><strong>{r.productCode}</strong><span style={{ color: "var(--muted)", marginLeft: 6, fontSize: 12 }}>{r.productDescription}</span></td>
+                            <td style={{ textAlign: "right", fontWeight: 700, color: "var(--badge-adjout-text)" }}>{r.currentStock.toLocaleString("es-PY")}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* ── Dwell-time / antigüedad ── */}
+          <section>
+            <h3 style={{ fontSize: 15, fontWeight: 800, margin: "0 0 4px" }}>Antigüedad de pallets (dwell-time)</h3>
+            <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 10px" }}>
+              Cuánto llevan los pallets en stock. Los pallet-días acumulados son la base para facturar almacenaje.
+            </p>
+            {dwellQ.isLoading ? (
+              <p style={{ color: "var(--muted)", fontSize: 13 }}>Cargando antigüedad…</p>
+            ) : !dwellQ.data ? (
+              <p className="form-error">No se pudo cargar.</p>
+            ) : (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 12 }}>
+                  {[
+                    { label: "Pallets en stock", value: dwellQ.data.summary.totalPallets.toLocaleString("es-PY") },
+                    { label: "Antigüedad prom.", value: `${dwellQ.data.summary.avgAgeDays} d` },
+                    { label: "Pallet-días acum.", value: dwellQ.data.summary.totalPalletDays.toLocaleString("es-PY") },
+                  ].map((k) => (
+                    <div key={k.label} style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, padding: "10px 14px" }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>{k.label}</div>
+                      <div style={{ fontSize: 22, fontWeight: 900, marginTop: 2 }}>{k.value}</div>
+                    </div>
+                  ))}
+                </div>
+                {/* Buckets de antigüedad */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 14 }}>
+                  {[
+                    { label: "0–7 días", value: dwellQ.data.summary.buckets.d0_7, color: "var(--success)" },
+                    { label: "8–30 días", value: dwellQ.data.summary.buckets.d8_30, color: "var(--primary)" },
+                    { label: "31–90 días", value: dwellQ.data.summary.buckets.d31_90, color: "var(--warning)" },
+                    { label: "90+ días", value: dwellQ.data.summary.buckets.d90plus, color: "var(--danger)" },
+                  ].map((b) => (
+                    <div key={b.label} style={{ border: `1px solid var(--border)`, borderLeft: `3px solid ${b.color}`, borderRadius: 8, padding: "8px 12px" }}>
+                      <div style={{ fontSize: 11, color: "var(--muted)" }}>{b.label}</div>
+                      <div style={{ fontSize: 18, fontWeight: 900, color: b.color }}>{b.value.toLocaleString("es-PY")}</div>
+                    </div>
+                  ))}
+                </div>
+                {dwellQ.data.oldest.length > 0 && (
+                  <div style={{ overflowX: "auto" }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 6 }}>Pallets más antiguos</div>
+                    <table className="table">
+                      <thead>
+                        <tr><th>Pallet</th><th>Material</th><th>Lote</th><th>Ubicación</th><th style={{ textAlign: "right" }}>Cant.</th><th style={{ textAlign: "right" }}>Días</th></tr>
+                      </thead>
+                      <tbody>
+                        {dwellQ.data.oldest.map((p) => (
+                          <tr key={p.id}>
+                            <td style={{ fontFamily: "monospace", fontWeight: 600 }}>{p.code}</td>
+                            <td>{p.productCode}<span style={{ color: "var(--muted)", marginLeft: 6, fontSize: 12 }}>{p.productDescription}</span></td>
+                            <td style={{ fontFamily: "monospace", fontSize: 12 }}>{p.lotCode}</td>
+                            <td style={{ fontSize: 12, color: "var(--muted)" }}>{p.warehouseName ?? "—"}{p.locationCode ? ` / ${p.locationCode}` : ""}</td>
+                            <td style={{ textAlign: "right" }}>{p.quantity.toLocaleString("es-PY")}</td>
+                            <td style={{ textAlign: "right", fontWeight: 700, color: p.ageDays > 90 ? "var(--danger)" : p.ageDays > 30 ? "var(--warning)" : "var(--text)" }}>{p.ageDays}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+
         </div>
       )}
     </div>

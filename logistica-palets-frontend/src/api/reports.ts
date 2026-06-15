@@ -49,6 +49,7 @@ export type ReportMovementRow = {
   lotCode?: string | null;       // single code, OR comma-separated when multi-lot palletItems
   sapLot?: string | null;        // same
   lotCount?: number;             // 0, 1, or N (N>1 = multi-lot)
+  lotsDetail?: Array<{ lotCode: string; sapLot?: string | null; pallets: number; quantity: number }> | null;
   status?: 'NORMAL' | 'PENDING_REGULARIZATION';
   adjustmentReason?: string | null;
   documentNumber?: string | null;
@@ -186,5 +187,111 @@ export type FreshnessRow = {
 
 export async function getFreshnessReport(productId?: string) {
   const { data } = await api.get<FreshnessRow[]>("/reports/freshness", { params: { productId } });
+  return data;
+}
+
+/* ── Salud del inventario (invariante Stock = Lote = Pallet) ──────────────── */
+export type InventoryHealthRow = {
+  productId: string;
+  productCode: string;
+  productDescription: string;
+  stockSum: number;
+  lotSum: number;
+  palletSum: number;
+  stockVsLot: number;
+  lotVsPallet: number;
+};
+
+export type InventoryHealth = {
+  ok: boolean;
+  divergentCount: number;
+  checkedAt: string;
+  divergent: InventoryHealthRow[];
+};
+
+export async function getInventoryHealth(): Promise<InventoryHealth> {
+  const { data } = await api.get<InventoryHealth>("/reports/inventory-health");
+  return data;
+}
+
+/* ── KPIs de almacén: ocupación / rotación / dwell-time ───────────────────── */
+export type WarehouseOccupancy = {
+  warehouseId: string;
+  warehouseName: string;
+  totalLocations: number;
+  capacityPallets: number;
+  occupiedLocations: number;
+  palletsStored: number;
+  freeLocations: number;
+  locationOccupancyPct: number;
+  capacityOccupancyPct: number | null;
+};
+
+export type OccupancyReport = {
+  warehouses: WarehouseOccupancy[];
+  totals: {
+    totalLocations: number;
+    occupiedLocations: number;
+    freeLocations: number;
+    palletsStored: number;
+    capacityPallets: number;
+    locationOccupancyPct: number;
+    capacityOccupancyPct: number | null;
+  };
+};
+
+export async function getOccupancy(): Promise<OccupancyReport> {
+  const { data } = await api.get<OccupancyReport>("/reports/occupancy");
+  return data;
+}
+
+export type RotationRow = {
+  productId: string;
+  productCode: string;
+  productDescription: string;
+  exitUnits: number;
+  currentStock: number;
+  turnover: number | null;
+  deadStock: boolean;
+};
+
+export type RotationReport = {
+  from: string;
+  to: string;
+  topMovers: RotationRow[];
+  deadStock: RotationRow[];
+  totals: { products: number; exitUnits: number; currentStock: number };
+};
+
+export async function getRotation(params: { from?: string; to?: string } = {}): Promise<RotationReport> {
+  const { data } = await api.get<RotationReport>("/reports/rotation", { params });
+  return data;
+}
+
+export type DwellPallet = {
+  id: string;
+  code: string;
+  quantity: number;
+  createdAt: string;
+  ageDays: number;
+  productCode: string;
+  productDescription: string;
+  lotCode: string;
+  locationCode: string | null;
+  warehouseName: string | null;
+};
+
+export type DwellTimeReport = {
+  summary: {
+    totalPallets: number;
+    avgAgeDays: number;
+    totalPalletDays: number;
+    buckets: { d0_7: number; d8_30: number; d31_90: number; d90plus: number };
+  };
+  oldest: DwellPallet[];
+};
+
+export async function getDwellTime(): Promise<DwellTimeReport> {
+  const { data } = await api.get<DwellTimeReport>("/reports/dwell-time");
   return data;
 }

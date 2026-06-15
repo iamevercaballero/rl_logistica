@@ -149,7 +149,7 @@ export default function AdjustmentInForm({ onTypeChange }: Props) {
           <input
             className="input"
             style={{ flex: 1, minWidth: 200 }}
-            placeholder="Buscar por producto, código, lote o N° remito..."
+            placeholder="Buscar por producto, código, lote o N° MIC/Factura/Remito..."
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             aria-label="Buscar entradas"
@@ -244,7 +244,7 @@ function MovementRow({ movement: m, onEdit, onVoid, onLog, voiding }: {
         <div style={{ display: "flex", gap: 12, marginTop: 4, flexWrap: "wrap", fontSize: 12, color: "var(--muted)" }}>
           <span>{new Date(m.date).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" })}</span>
           {m.warehouse && <span>{m.warehouse.name}{m.location ? ` / ${m.location.code}` : ""}</span>}
-          {m.documentNumber && <span>Rem. {m.documentNumber}</span>}
+          {m.documentNumber && <span>MIC/Fac/Rem. {m.documentNumber}</span>}
           {m.supplier && <span>{m.supplier}</span>}
         </div>
       </div>

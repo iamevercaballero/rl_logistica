@@ -1,10 +1,10 @@
 import { api } from "./client";
 
 export type AttachmentCategory = "CAMION" | "PALLET" | "REMITO" | "OTRO";
-export type AttachmentEntityType = "MOVEMENT" | "DOCUMENT" | "ADJUSTMENT";
+export type AttachmentEntityType = "MOVEMENT" | "DOCUMENT" | "ADJUSTMENT" | "VEHICLE";
 
 export const ATTACHMENT_CATEGORIES: { value: AttachmentCategory; label: string; icon: string }[] = [
-  { value: "REMITO",  label: "Remito / Documento", icon: "📄" },
+  { value: "REMITO",  label: "MIC/Factura/Remito", icon: "📄" },
   { value: "CAMION",  label: "Camión / Transporte", icon: "🚛" },
   { value: "PALLET",  label: "Pallet / Mercadería",  icon: "📦" },
   { value: "OTRO",    label: "Otro",                icon: "📎" },
@@ -84,6 +84,7 @@ export async function deleteAttachment(id: string): Promise<void> {
 export async function getAllEvents(params: {
   entityType?: string;
   eventType?: string;
+  excludeEventTypes?: string;
   from?: string;
   to?: string;
   search?: string;
@@ -94,8 +95,37 @@ export async function getAllEvents(params: {
   return data;
 }
 
+/** Descarga un archivo adjunto autenticado y devuelve una blob URL temporal. */
+export async function openAttachmentBlob(id: string): Promise<void> {
+  const { data, headers } = await api.get<Blob>(`/attachments/${id}/file`, {
+    responseType: "blob",
+  });
+  const mimeType = (headers["content-type"] as string | undefined) ?? "application/octet-stream";
+  const blob = new Blob([data], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, "_blank");
+  // Revoca el blob URL después de que el navegador lo haya cargado
+  if (win) {
+    win.addEventListener("load", () => URL.revokeObjectURL(url), { once: true });
+  } else {
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }
+}
+
 /** URL para ver/descargar un archivo adjunto */
 export function attachmentFileUrl(id: string): string {
   const base = (import.meta.env.VITE_API_URL as string | undefined) ?? "/api";
   return `${base}/attachments/${id}/file`;
+}
+
+/**
+ * Descarga un adjunto autenticado y devuelve una blob URL para usar en <img>.
+ * El llamador es responsable de revocarla (URL.revokeObjectURL) al desmontar.
+ */
+export async function fetchAttachmentObjectUrl(id: string): Promise<string> {
+  const { data, headers } = await api.get<Blob>(`/attachments/${id}/file`, {
+    responseType: "blob",
+  });
+  const mimeType = (headers["content-type"] as string | undefined) ?? "application/octet-stream";
+  return URL.createObjectURL(new Blob([data], { type: mimeType }));
 }

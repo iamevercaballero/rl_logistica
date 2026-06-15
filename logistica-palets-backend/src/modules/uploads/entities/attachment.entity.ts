@@ -1,7 +1,7 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
 /** A qué tipo de entidad pertenece el adjunto. */
-export const attachmentEntityTypes = ['MOVEMENT', 'DOCUMENT', 'ADJUSTMENT'] as const;
+export const attachmentEntityTypes = ['MOVEMENT', 'DOCUMENT', 'ADJUSTMENT', 'VEHICLE'] as const;
 export type AttachmentEntityType = (typeof attachmentEntityTypes)[number];
 
 /** Categoría visual del adjunto (para filtrar y mostrar íconos). */

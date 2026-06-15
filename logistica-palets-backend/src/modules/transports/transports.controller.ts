@@ -1,9 +1,10 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/roles/roles.decorator';
 import { RolesGuard } from '../auth/roles/roles.guard';
 import { CreateTransportDto } from './dto/create-transport.dto';
-import { UpdateTransportDto } from './dto/update-transport.dto';
+import { RegisterInspectionDto, UpdateTransportDto } from './dto/update-transport.dto';
 import { TransportsService } from './transports.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -15,6 +16,13 @@ export class TransportsController {
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
   findAll() {
     return this.service.findAll();
+  }
+
+  /** Historial de remitos (entradas/salidas) vinculados a la patente del vehículo. */
+  @Get(':id/history')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  history(@Param('id') id: string) {
+    return this.service.history(id);
   }
 
   @Get(':id')
@@ -29,10 +37,25 @@ export class TransportsController {
     return this.service.create(dto);
   }
 
+  /** Registra una inspección en la bitácora del vehículo. */
+  @Post(':id/inspection')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
+  inspect(
+    @Param('id') id: string,
+    @Body() dto: RegisterInspectionDto,
+    @Req() req: Request & { user: { userId: string } },
+  ) {
+    return this.service.inspect(id, dto, req.user.userId);
+  }
+
   @Patch(':id')
   @Roles('ADMIN', 'MANAGER')
-  update(@Param('id') id: string, @Body() dto: UpdateTransportDto) {
-    return this.service.update(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateTransportDto,
+    @Req() req: Request & { user: { userId: string } },
+  ) {
+    return this.service.update(id, dto, req.user.userId);
   }
 
   @Delete(':id')

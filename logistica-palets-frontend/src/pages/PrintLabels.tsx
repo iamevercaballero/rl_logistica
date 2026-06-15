@@ -9,6 +9,15 @@ function fmt(date?: string | null): string {
   return new Date(date).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
+function fmtDash(date?: string | null): string {
+  if (!date) return "—";
+  const d = new Date(date);
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const yyyy = d.getUTCFullYear();
+  return `${dd}-${mm}-${yyyy}`;
+}
+
 const WEIGHT_UNITS = new Set(["kg", "kgs", "kilo", "kilos", "kilogramo", "kilogramos", "gr", "gramos", "ton", "tn"]);
 function isWeightUnit(u?: string | null): boolean {
   return !!u && WEIGHT_UNITS.has(u.toLowerCase().trim());
@@ -34,99 +43,114 @@ type LabelData = {
 
 function PalletLabel({ label }: { label: LabelData }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const unit = (label.unitOfMeasure ?? "UN").toUpperCase();
   const isWeight = isWeightUnit(label.unitOfMeasure);
 
   useEffect(() => {
     if (canvasRef.current) {
       QRCode.toCanvas(canvasRef.current, label.qrValue, {
-        width: 88,
+        width: 160,
         margin: 1,
-        color: { dark: "#1a1a2e", light: "#ffffff" },
+        color: { dark: "#000000", light: "#ffffff" },
       }).catch(() => {});
     }
   }, [label.qrValue]);
 
   return (
     <div className="label">
-      {/* Cabecera: empresa + código remito */}
-      <div className="label-header">
-        <span className="label-company">RL LOGÍSTICA</span>
-        <span className="label-doccode">{label.docCode}</span>
-      </div>
 
-      {/* Fecha + N° remito externo */}
-      <div className="label-meta-row">
-        <span className="label-date">{label.docDate}</span>
-        {label.docNumber && (
-          <span className="label-meta-chip">Rem: {label.docNumber}</span>
-        )}
-      </div>
+      {/* ── TÍTULO PRINCIPAL ── */}
+      <div className="lbl-main-title">CARTEL DE FRESCURA DE INSUMOS</div>
 
-      {/* Proveedor */}
-      {label.supplier && (
-        <div className="label-supplier">Prov: {label.supplier}</div>
-      )}
+      {/* ── SECCIÓN 1 ── */}
+      <div className="lbl-section-bar">DESCRIPCION SAP DEL INSUMO</div>
 
-      <div className="label-divider" />
+      {/* Nombre del producto */}
+      <div className="lbl-product-name">{label.productDesc}</div>
 
-      {/* Producto */}
-      <div className="label-product-code">{label.productCode}</div>
-      <div className="label-product-desc">{label.productDesc}</div>
-
-      <div className="label-divider" />
-
-      {/* Lote + SAP */}
-      <div className="label-lot-row">
-        <div className="label-row">
-          <span className="label-field-name">Lote:</span>
-          <span className="label-field-val">{label.lotCode}</span>
+      {/* Código SAP + Fecha de Recepción */}
+      <div className="lbl-code-reception-row">
+        <div className="lbl-sap-block">
+          <div className="lbl-small-label">Codigo SAP del Insumo</div>
+          <div className="lbl-sap-code-box">{label.productCode}</div>
         </div>
-        {label.sapLot && (
-          <div className="label-row">
-            <span className="label-field-name">SAP:</span>
-            <span className="label-field-val label-sap">{label.sapLot}</span>
-          </div>
-        )}
+        <div className="lbl-reception-block">
+          <div className="lbl-small-label" style={{ textAlign: "right" }}>Fecha de Recepción</div>
+          <div className="lbl-reception-date">{label.docDate}</div>
+        </div>
       </div>
 
-      {/* Fechas de fabricación y vencimiento */}
-      {(label.lotFabricacion || label.lotExpiry) && (
-        <div className="label-dates-row">
-          {label.lotFabricacion && (
-            <div className="label-row">
-              <span className="label-field-name">Fab:</span>
-              <span className="label-field-val">{fmt(label.lotFabricacion)}</span>
-            </div>
+      {/* ── SECCIÓN 2 ── */}
+      <div className="lbl-section-bar">GESTION DE FRESCURA DE INSUMOS</div>
+
+      {/* Lote SAP grande */}
+      <div className="lbl-big-lot-box">
+        {label.sapLot ?? label.lotCode}
+      </div>
+
+      {/* Tabla de datos */}
+      <table className="lbl-table">
+        <tbody>
+          <tr>
+            <td className="lbl-td-key">Lote</td>
+            <td className="lbl-td-val">{label.lotCode}</td>
+            <td className="lbl-td-key" style={{ borderLeft: "2px solid #000" }}>Fecha de Recepción</td>
+            <td className="lbl-td-val">{label.docDate}</td>
+          </tr>
+          <tr>
+            <td className="lbl-td-key">Fecha de Fabricación:</td>
+            <td className="lbl-td-val" colSpan={3}>{fmtDash(label.lotFabricacion)}</td>
+          </tr>
+          <tr>
+            <td className="lbl-td-key">Vence:</td>
+            <td className="lbl-td-val lbl-expiry" colSpan={3}>{fmtDash(label.lotExpiry)}</td>
+          </tr>
+          <tr className="lbl-qty-row">
+            <td colSpan={3} className="lbl-td-qty-cell">
+              <span className="lbl-qty-num">{label.quantity.toLocaleString("es-PY")}</span>
+              <span className={isWeight ? "lbl-unit-badge-weight" : "lbl-unit-badge"}>{unit}</span>
+            </td>
+            <td className="lbl-td-qty-cell" style={{ textAlign: "right", verticalAlign: "bottom", paddingBottom: 6 }}>
+              <span className="lbl-small-label">Pallet</span><br />
+              <span className="lbl-pallet-code">{label.palletCode}</span>
+            </td>
+          </tr>
+          <tr>
+            <td className="lbl-td-key">Lote prov:</td>
+            <td className="lbl-td-val">{label.sapLot ?? "—"}</td>
+            <td className="lbl-td-key" style={{ borderLeft: "2px solid #000" }}>Peso Paleta (kg):</td>
+            <td className="lbl-td-val">—</td>
+          </tr>
+          <tr>
+            <td className="lbl-td-key">Cantidad:</td>
+            <td className="lbl-td-val" colSpan={3}>
+              {label.quantity.toLocaleString("es-PY")} {unit}
+            </td>
+          </tr>
+          {label.supplier && (
+            <tr>
+              <td className="lbl-td-key">Proveedor:</td>
+              <td className="lbl-td-val" colSpan={3}>{label.supplier}</td>
+            </tr>
           )}
-          {label.lotExpiry && (
-            <div className="label-row">
-              <span className="label-field-name">Vence:</span>
-              <span className="label-field-val label-expiry">{fmt(label.lotExpiry)}</span>
-            </div>
+          {label.docNumber && (
+            <tr>
+              <td className="lbl-td-key">MIC/Fac/Rem.:</td>
+              <td className="lbl-td-val" colSpan={3}>{label.docNumber}</td>
+            </tr>
           )}
-        </div>
-      )}
+        </tbody>
+      </table>
 
-      {/* Cantidad + unidad */}
-      <div className="label-qty-row">
-        <span className="label-qty">{label.quantity.toLocaleString("es-PY")}</span>
-        {isWeight ? (
-          <span className="label-qty-unit label-qty-unit--weight">{(label.unitOfMeasure ?? "kg").toUpperCase()}</span>
-        ) : (
-          <span className="label-qty-unit">{label.unitOfMeasure ?? "unid."}</span>
-        )}
+      {/* ── FOOTER: empresa + QR ── */}
+      <div className="lbl-footer">
+        <div className="lbl-footer-left">
+          <div className="lbl-footer-company">RL LOGÍSTICA</div>
+          <div className="lbl-footer-doc">{label.docCode}</div>
+        </div>
+        <canvas ref={canvasRef} style={{ imageRendering: "pixelated", display: "block" }} />
       </div>
 
-      <div className="label-divider" />
-
-      {/* Pallet + QR */}
-      <div className="label-pallet-row">
-        <div>
-          <div className="label-field-name">Pallet:</div>
-          <div className="label-pallet-code">{label.palletCode}</div>
-        </div>
-        <canvas ref={canvasRef} style={{ imageRendering: "pixelated" }} />
-      </div>
     </div>
   );
 }
@@ -158,7 +182,6 @@ export default function PrintLabelsPage() {
         const lotId = detail.lotId ?? pallet.lotId;
         const lot = lotId ? (lotMap[lotId] ?? null) : null;
 
-        // URL interna: al escanear abre el documento en la app (misma red WiFi)
         const qrValue = `${window.location.origin}/print/document/${data.document.id}`;
 
         return {
@@ -198,7 +221,7 @@ export default function PrintLabelsPage() {
       <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", height: "100vh", fontFamily: "sans-serif", gap: 12 }}>
         <div style={{ fontSize: 18, fontWeight: 700 }}>Sin pallets registrados</div>
         <div style={{ color: "#666" }}>Este documento no tiene pallets con etiquetas para imprimir.</div>
-        <button onClick={() => window.close()} style={{ padding: "8px 20px", background: "#4f46e5", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 700 }}>Cerrar</button>
+        <button onClick={() => window.close()} style={{ padding: "8px 20px", background: "#1a1a2e", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 700 }}>Cerrar</button>
       </div>
     );
   }
@@ -207,97 +230,245 @@ export default function PrintLabelsPage() {
     <>
       <style>{`
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: Arial, Helvetica, sans-serif; background: #f0f0f0; }
+        body { font-family: Arial, Helvetica, sans-serif; background: #d0d0d0; }
 
+        /* ── Barra de controles (solo en pantalla) ── */
         .print-controls {
           display: flex; align-items: center; gap: 12px;
-          padding: 12px 24px; background: #1a1a2e; color: #fff;
+          padding: 10px 24px; background: #1a1a2e; color: #fff;
           position: sticky; top: 0; z-index: 10;
+          font-family: Arial, Helvetica, sans-serif;
         }
         .print-controls button {
-          padding: 8px 20px; border: none; border-radius: 6px; cursor: pointer;
-          font-size: 14px; font-weight: 700;
+          padding: 7px 18px; border: none; border-radius: 6px;
+          cursor: pointer; font-size: 14px; font-weight: 700;
         }
         .btn-print { background: #4f46e5; color: #fff; }
         .btn-close { background: transparent; color: #ccc; border: 1px solid #555 !important; }
         .ctrl-info { font-size: 13px; color: #aaa; }
 
-        .labels-page {
-          width: 210mm; margin: 20px auto;
-          display: grid; grid-template-columns: 1fr 1fr;
-          gap: 5mm; padding: 8mm;
-          background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,0.15);
-        }
-
+        /* ── Una etiqueta = una hoja A4 ── */
         .label {
-          border: 1.5px solid #1a1a2e; border-radius: 6px;
-          padding: 7px 9px; display: flex; flex-direction: column; gap: 3px;
-          break-inside: avoid;
+          width: 210mm;
+          min-height: 297mm;
+          margin: 16px auto;
+          background: #fff;
+          box-shadow: 0 4px 24px rgba(0,0,0,0.25);
+          display: flex;
+          flex-direction: column;
+          border: 2.5px solid #000;
+          overflow: hidden;
         }
 
-        /* Cabecera */
-        .label-header { display: flex; justify-content: space-between; align-items: center; }
-        .label-company { font-size: 11px; font-weight: 900; color: #1a1a2e; letter-spacing: -0.3px; }
-        .label-doccode { font-size: 9px; font-family: monospace; font-weight: 700; color: #4f46e5; background: #ede9fe; padding: 1px 5px; border-radius: 3px; }
+        /* Título principal */
+        .lbl-main-title {
+          background: #000;
+          color: #fff;
+          text-align: center;
+          font-size: 28px;
+          font-weight: 900;
+          letter-spacing: 2px;
+          padding: 14px 16px;
+          text-transform: uppercase;
+        }
 
-        /* Meta row (fecha + N° remito) */
-        .label-meta-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-        .label-date { font-size: 9px; color: #6b7280; }
-        .label-meta-chip { font-size: 9px; font-family: monospace; color: #374151; background: #f3f4f6; padding: 0px 5px; border-radius: 3px; font-weight: 600; }
+        /* Barra de sección */
+        .lbl-section-bar {
+          background: #000;
+          color: #fff;
+          text-align: center;
+          font-size: 14px;
+          font-weight: 700;
+          letter-spacing: 1.5px;
+          padding: 6px 16px;
+          margin-top: 0;
+          text-transform: uppercase;
+        }
 
-        /* Proveedor */
-        .label-supplier { font-size: 9px; color: #374151; font-weight: 600; }
-
-        .label-divider { border-top: 1px solid #e5e7eb; margin: 2px 0; }
-
-        /* Producto */
-        .label-product-code { font-size: 13px; font-weight: 900; color: #1a1a2e; font-family: monospace; }
-        .label-product-desc { font-size: 10px; color: #374151; font-weight: 600; line-height: 1.3; }
-
-        /* Lote */
-        .label-lot-row { display: flex; flex-direction: column; gap: 1px; }
-        .label-row { display: flex; gap: 5px; align-items: baseline; font-size: 10px; }
-        .label-field-name { font-weight: 700; color: #6b7280; min-width: 36px; }
-        .label-field-val { font-family: monospace; font-weight: 700; color: #111; }
-        .label-sap { color: #4f46e5; }
-        .label-expiry { color: #b45309; }
-
-        /* Fechas fab/vto */
-        .label-dates-row { display: flex; flex-direction: column; gap: 1px; }
-
-        /* Cantidad */
-        .label-qty-row { display: flex; align-items: baseline; gap: 5px; margin-top: 2px; }
-        .label-qty { font-size: 20px; font-weight: 900; color: #1a1a2e; }
-        .label-qty-unit { font-size: 11px; color: #6b7280; }
-        .label-qty-unit--weight {
-          font-size: 14px; font-weight: 900; color: #fff;
-          background: #1a1a2e; padding: 0px 6px; border-radius: 4px;
+        /* Nombre del producto */
+        .lbl-product-name {
+          text-align: center;
+          font-size: 32px;
+          font-weight: 900;
+          color: #000;
+          padding: 16px 20px 10px;
           letter-spacing: 0.5px;
+          border-bottom: 2px solid #000;
+          line-height: 1.2;
         }
 
-        /* Pallet + QR */
-        .label-pallet-row { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 1px; }
-        .label-pallet-code { font-size: 11px; font-family: monospace; font-weight: 700; color: #1a1a2e; margin-top: 2px; }
+        /* Fila código SAP + fecha recepción */
+        .lbl-code-reception-row {
+          display: flex;
+          align-items: stretch;
+          border-bottom: 2px solid #000;
+        }
+        .lbl-sap-block {
+          flex: 1;
+          padding: 10px 16px;
+          border-right: 2px solid #000;
+        }
+        .lbl-reception-block {
+          padding: 10px 16px;
+          min-width: 180px;
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          justify-content: center;
+        }
+        .lbl-small-label {
+          font-size: 11px;
+          font-weight: 700;
+          color: #555;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          margin-bottom: 4px;
+        }
+        .lbl-sap-code-box {
+          background: #000;
+          color: #fff;
+          font-size: 36px;
+          font-weight: 900;
+          font-family: monospace;
+          padding: 6px 14px;
+          display: inline-block;
+          letter-spacing: 1px;
+        }
+        .lbl-reception-date {
+          font-size: 22px;
+          font-weight: 900;
+          color: #000;
+        }
 
+        /* Lote SAP grande */
+        .lbl-big-lot-box {
+          background: #000;
+          color: #fff;
+          text-align: center;
+          font-size: 42px;
+          font-weight: 900;
+          font-family: monospace;
+          letter-spacing: 3px;
+          padding: 14px 16px;
+          margin: 0;
+        }
+
+        /* Tabla de datos */
+        .lbl-table {
+          width: 100%;
+          border-collapse: collapse;
+          flex: 1;
+        }
+        .lbl-table td {
+          border: 1.5px solid #000;
+          padding: 10px 14px;
+          vertical-align: middle;
+        }
+        .lbl-td-key {
+          font-size: 13px;
+          font-weight: 800;
+          color: #000;
+          background: #f5f5f5;
+          white-space: nowrap;
+          width: 1%;
+          text-transform: uppercase;
+          letter-spacing: 0.3px;
+        }
+        .lbl-td-val {
+          font-size: 18px;
+          font-weight: 700;
+          font-family: monospace;
+          color: #000;
+        }
+        .lbl-expiry {
+          color: #b45309;
+          font-size: 20px;
+        }
+
+        /* Fila cantidad */
+        .lbl-qty-row td { border: 1.5px solid #000; }
+        .lbl-td-qty-cell { padding: 8px 14px; vertical-align: middle; }
+        .lbl-qty-num {
+          font-size: 56px;
+          font-weight: 900;
+          color: #000;
+          line-height: 1;
+          margin-right: 10px;
+        }
+        .lbl-unit-badge {
+          font-size: 22px;
+          font-weight: 900;
+          color: #000;
+          vertical-align: middle;
+        }
+        .lbl-unit-badge-weight {
+          font-size: 26px;
+          font-weight: 900;
+          color: #fff;
+          background: #000;
+          padding: 2px 12px;
+          border-radius: 4px;
+          vertical-align: middle;
+          letter-spacing: 1px;
+        }
+        .lbl-pallet-code {
+          font-size: 16px;
+          font-weight: 900;
+          font-family: monospace;
+          color: #000;
+        }
+
+        /* Footer */
+        .lbl-footer {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-end;
+          padding: 12px 16px;
+          border-top: 2.5px solid #000;
+          margin-top: auto;
+        }
+        .lbl-footer-company {
+          font-size: 20px;
+          font-weight: 900;
+          color: #000;
+          letter-spacing: 1px;
+        }
+        .lbl-footer-doc {
+          font-size: 13px;
+          font-family: monospace;
+          color: #555;
+          margin-top: 4px;
+        }
+
+        /* ── Impresión ── */
         @media print {
           body { background: #fff; }
           .print-controls { display: none !important; }
-          .labels-page { margin: 0; padding: 8mm; box-shadow: none; width: 100%; }
+          .label {
+            width: 210mm;
+            min-height: 0;
+            height: 297mm;
+            max-height: 297mm;
+            margin: 0;
+            box-shadow: none;
+            border: none;
+            overflow: hidden;
+            break-after: page;
+            page-break-after: always;
+          }
           @page { size: A4 portrait; margin: 0; }
         }
       `}</style>
 
       <div className="print-controls">
-        <button className="btn-print" onClick={() => window.print()}>Imprimir etiquetas</button>
+        <button className="btn-print" onClick={() => window.print()}>🖨 Imprimir etiquetas</button>
         <button className="btn-close" onClick={() => window.close()}>Cerrar</button>
         <span className="ctrl-info">{data.document.code} — {labels.length} etiqueta(s)</span>
       </div>
 
-      <div className="labels-page">
-        {labels.map((label, idx) => (
-          <PalletLabel key={`${label.palletId}-${idx}`} label={label} />
-        ))}
-      </div>
+      {labels.map((label, idx) => (
+        <PalletLabel key={`${label.palletId}-${idx}`} label={label} />
+      ))}
     </>
   );
 }

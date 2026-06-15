@@ -1,15 +1,5 @@
 import { fmtDate, fmtGeneratedAt } from "../utils/dateFormat";
 
-/**
- * PDF export utilities using jsPDF + jspdf-autotable.
- *
- * All exported functions are fire-and-forget:
- *   exportStockPDF(stockData, "stock-2026-05-20")
- *
- * Branding:
- *   - Primary color #2563eb used for table headers
- *   - Footer with generation timestamp
- */
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import type { StockItemRow, ReportMovementRow, DailyStockRow, ReportTraceEvent } from "../api/reports";
@@ -19,71 +9,85 @@ import type { Lot } from "../api/lots";
 
 /* ── Constants ────────────────────────────────────────────────────────────── */
 
-const PRIMARY_RGB: [number, number, number] = [37, 99, 235]; // #2563eb
+const PRIMARY_RGB: [number, number, number] = [37, 99, 235];
 const HEADER_TEXT: [number, number, number] = [255, 255, 255];
-const ALT_ROW: [number, number, number] = [243, 244, 246]; // gray-100
+const ALT_ROW: [number, number, number]     = [243, 244, 246];
+const TABLE_BORDER: [number, number, number] = [203, 213, 225];
 const BRAND_NAME = "RL Logística";
 
-/* ── Helpers ──────────────────────────────────────────────────────────────── */
+const MOVE_LABEL_MAP: Record<string, string> = {
+  ENTRY: "Entrada", EXIT: "Salida", TRANSFER: "Transferencia",
+  ADJUSTMENT_IN: "Ajuste +", ADJUSTMENT_OUT: "Ajuste -",
+};
 
-function addDocHeader(doc: jsPDF, title: string) {
+/* ── Header / footer helpers ──────────────────────────────────────────────── */
+
+function addDocHeader(doc: jsPDF, title: string): number {
+  const pageW = doc.internal.pageSize.width;
+
   doc.setFontSize(18);
   doc.setTextColor(...PRIMARY_RGB);
   doc.setFont("helvetica", "bold");
   doc.text(BRAND_NAME, 14, 14);
 
   doc.setFontSize(11);
-  doc.setTextColor(80, 80, 80);
+  doc.setTextColor(60, 60, 60);
   doc.setFont("helvetica", "normal");
-  doc.text(title, 14, 21);
+  doc.text(title, 14, 22);
 
-  doc.setFontSize(9);
-  doc.setTextColor(150, 150, 150);
-  doc.text(
-    fmtGeneratedAt(),
-    doc.internal.pageSize.width - 14,
-    14,
-    { align: "right" },
-  );
+  doc.setFontSize(8);
+  doc.setTextColor(160, 160, 160);
+  doc.text(fmtGeneratedAt(), pageW - 14, 14, { align: "right" });
 
-  return 28; // startY for table
+  // Divider line
+  doc.setDrawColor(...TABLE_BORDER);
+  doc.setLineWidth(0.3);
+  doc.line(14, 26, pageW - 14, 26);
+
+  return 30; // startY for table
 }
 
-function addPageNumbers(doc: jsPDF) {
+function addPageNumbers(doc: jsPDF): void {
   const pages = doc.getNumberOfPages();
   const w = doc.internal.pageSize.width;
   const h = doc.internal.pageSize.height;
   doc.setFontSize(8);
-  doc.setTextColor(150, 150, 150);
+  doc.setTextColor(160, 160, 160);
   for (let i = 1; i <= pages; i++) {
     doc.setPage(i);
     doc.text(`Página ${i} / ${pages}`, w / 2, h - 6, { align: "center" });
   }
 }
 
-const tableStyles = {
+/* ── Shared table styles ──────────────────────────────────────────────────── */
+
+const baseStyles = {
   headStyles: {
     fillColor: PRIMARY_RGB,
     textColor: HEADER_TEXT,
     fontStyle: "bold" as const,
     fontSize: 9,
+    cellPadding: { top: 3, bottom: 3, left: 3, right: 3 },
   },
   alternateRowStyles: { fillColor: ALT_ROW },
-  bodyStyles: { fontSize: 8 },
+  bodyStyles: {
+    fontSize: 8,
+    overflow: "linebreak" as const,
+    cellPadding: { top: 2, bottom: 2, left: 3, right: 3 },
+  },
+  tableLineColor: TABLE_BORDER,
+  tableLineWidth: 0.15,
   margin: { left: 14, right: 14 },
 };
 
 /* ── Stock report ─────────────────────────────────────────────────────────── */
 
-export function exportStockPDF(
-  data: StockItemRow[],
-  filename = "stock-report",
-) {
+export function exportStockPDF(data: StockItemRow[], filename = "stock-report"): void {
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const startY = addDocHeader(doc, "Reporte de Stock Actual");
 
   autoTable(doc, {
-    ...tableStyles,
+    ...baseStyles,
     startY,
     head: [["Código", "Material", "Depósito", "Ubicación", "Cantidad", "Actualizado"]],
     body: data.map((r) => [
@@ -96,7 +100,9 @@ export function exportStockPDF(
     ]),
     columnStyles: {
       0: { cellWidth: 28 },
-      4: { halign: "right" },
+      2: { cellWidth: 36 },
+      3: { cellWidth: 22 },
+      4: { halign: "right", cellWidth: 26 },
       5: { halign: "center", cellWidth: 28 },
     },
   });
@@ -107,36 +113,29 @@ export function exportStockPDF(
 
 /* ── Movement history report ─────────────────────────────────────────────── */
 
-export function exportMovementsPDF(
-  data: ReportMovementRow[],
-  filename = "movimientos",
-) {
+export function exportMovementsPDF(data: ReportMovementRow[], filename = "movimientos"): void {
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const startY = addDocHeader(doc, "Historial de Movimientos");
 
-  const MOVE_LABEL: Record<string, string> = {
-    ENTRY: "Entrada",
-    EXIT: "Salida",
-    TRANSFER: "Transferencia",
-    ADJUSTMENT_IN: "Ajuste +",
-    ADJUSTMENT_OUT: "Ajuste -",
-  };
-
   autoTable(doc, {
-    ...tableStyles,
+    ...baseStyles,
     startY,
-    head: [["Fecha", "Tipo", "Material", "Cantidad", "Depósito", "Documento", "Proveedor/Transportista"]],
+    head: [["Fecha", "Tipo", "Material", "Cantidad", "Depósito", "MIC/Fac/Rem.", "Prov. / Transportista"]],
     body: data.map((r) => [
       fmtDate(r.date),
-      MOVE_LABEL[r.type] ?? r.type,
-      r.material?.code ?? "-",
+      MOVE_LABEL_MAP[r.type] ?? r.type,
+      r.material?.code ? `${r.material.code} - ${r.material.description}` : "-",
       r.quantity.toLocaleString("es-PY"),
       r.warehouse?.name ?? "-",
       r.documentNumber ?? "-",
       r.supplier ?? r.carrier ?? "-",
     ]),
     columnStyles: {
-      3: { halign: "right" },
+      0: { cellWidth: 26 },
+      1: { cellWidth: 30 },
+      3: { halign: "right", cellWidth: 24 },
+      4: { cellWidth: 36 },
+      5: { cellWidth: 30 },
     },
   });
 
@@ -150,12 +149,12 @@ export function exportDailyStockPDF(
   data: DailyStockRow[],
   dateLabel: string,
   filename = "control-diario",
-) {
+): void {
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const startY = addDocHeader(doc, `Control diario de stock — ${dateLabel}`);
 
   autoTable(doc, {
-    ...tableStyles,
+    ...baseStyles,
     startY,
     head: [["Material", "UM", "Stock inicial", "Entradas", "Salidas", "Stock final"]],
     body: data.map((r) => [
@@ -167,11 +166,11 @@ export function exportDailyStockPDF(
       r.stockFinal.toLocaleString("es-PY"),
     ]),
     columnStyles: {
-      1: { halign: "center", cellWidth: 14 },
-      2: { halign: "right", cellWidth: 24 },
-      3: { halign: "right", cellWidth: 24 },
-      4: { halign: "right", cellWidth: 24 },
-      5: { halign: "right", cellWidth: 24 },
+      1: { halign: "center", cellWidth: 16 },
+      2: { halign: "right", cellWidth: 28 },
+      3: { halign: "right", cellWidth: 28 },
+      4: { halign: "right", cellWidth: 28 },
+      5: { halign: "right", cellWidth: 28, fontStyle: "bold" },
     },
   });
 
@@ -179,67 +178,115 @@ export function exportDailyStockPDF(
   doc.save(`${filename}.pdf`);
 }
 
-/* ── Entradas report ─────────────────────────────────────────────────────── */
+/* ── Entradas report (expands lotsDetail) ────────────────────────────────── */
 
-const MOVE_LABEL_MAP: Record<string, string> = {
-  ENTRY: "Entrada", EXIT: "Salida", TRANSFER: "Transferencia",
-  ADJUSTMENT_IN: "Ajuste +", ADJUSTMENT_OUT: "Ajuste -",
-};
-
-export function exportEntradasPDF(data: Movement[], filename = "entradas") {
+export function exportEntradasPDF(data: Movement[], filename = "entradas"): void {
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const startY = addDocHeader(doc, "Reporte de Entradas");
 
+  // Expand lotsDetail so each lot is its own row (mirrors UI table)
+  const body: (string | number)[][] = [];
+  for (const m of data) {
+    const lots = (m.lotsDetail && m.lotsDetail.length > 0)
+      ? m.lotsDetail
+      : [{ lotCode: m.lotCode ?? null, sapLot: m.sapLot ?? null, pallets: m.pallets ?? null, quantity: m.quantity }];
+
+    for (const ld of lots) {
+      body.push([
+        fmtDate(m.date),
+        `${m.material.code} · ${m.material.description}`,
+        ld.lotCode ?? "-",
+        ld.sapLot ?? "-",
+        m.documentNumber ?? "-",
+        `${ld.quantity.toLocaleString("es-PY")} ${m.material.unitOfMeasure ?? ""}`.trim(),
+        ld.pallets != null ? String(ld.pallets) : "-",
+        `${m.warehouse?.name ?? "-"}${m.location?.code ? ` / ${m.location.code}` : ""}`,
+        m.supplier ?? "-",
+        m.carrier ?? "-",
+        m.driver ?? "-",
+        m.notes ?? "-",
+        m.status === "PENDING_REGULARIZATION" ? "Pendiente" : "Normal",
+      ]);
+    }
+  }
+
   autoTable(doc, {
-    ...tableStyles,
+    ...baseStyles,
     startY,
-    head: [["Fecha", "Material", "Lote", "Lote SAP", "N° Doc.", "Cantidad", "Pallets", "Depósito/Ubic.", "Proveedor", "Transportista", "Chofer", "Notas", "Estado"]],
-    body: data.map((r) => [
-      fmtDate(r.date),
-      `${r.material.code} · ${r.material.description}`,
-      r.lotCode ?? "-",
-      r.sapLot ?? "-",
-      r.documentNumber ?? "-",
-      `${r.quantity.toLocaleString("es-PY")} ${r.material.unitOfMeasure ?? ""}`.trim(),
-      r.pallets != null ? String(r.pallets) : "-",
-      `${r.warehouse?.name ?? "-"}${r.location?.code ? ` / ${r.location.code}` : ""}`,
-      r.supplier ?? "-",
-      r.carrier ?? "-",
-      r.driver ?? "-",
-      r.notes ?? "-",
-      r.status === "PENDING_REGULARIZATION" ? "Pendiente" : "Normal",
-    ]),
-    columnStyles: { 5: { halign: "right" }, 6: { halign: "center" } },
+    margin: { left: 8, right: 8 },
+    bodyStyles: { ...baseStyles.bodyStyles, fontSize: 7.5 },
+    headStyles: { ...baseStyles.headStyles, fontSize: 8 },
+    head: [["Fecha", "Material", "Lote", "Lote SAP", "MIC/Fac/Rem.", "Cantidad", "Pal.", "Depósito / Ubic.", "Proveedor", "Transportista", "Chofer", "Notas", "Estado"]],
+    body,
+    columnStyles: {
+      0: { cellWidth: 20 },
+      1: { cellWidth: 44 },
+      2: { cellWidth: 18 },
+      3: { cellWidth: 18 },
+      4: { cellWidth: 18 },
+      5: { halign: "right", cellWidth: 18 },
+      6: { halign: "center", cellWidth: 10 },
+      7: { cellWidth: 27 },
+      8: { cellWidth: 20 },
+      9: { cellWidth: 20 },
+      10: { cellWidth: 18 },
+      11: { cellWidth: 24 },
+      12: { cellWidth: 14 },
+    },
   });
 
   addPageNumbers(doc);
   doc.save(`${filename}.pdf`);
 }
 
-/* ── Salidas report ──────────────────────────────────────────────────────── */
+/* ── Salidas report (expands lotsDetail) ─────────────────────────────────── */
 
-export function exportSalidasPDF(data: Movement[], filename = "salidas") {
+export function exportSalidasPDF(data: Movement[], filename = "salidas"): void {
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const startY = addDocHeader(doc, "Reporte de Salidas");
 
+  const body: (string | number)[][] = [];
+  for (const m of data) {
+    const lots = (m.lotsDetail && m.lotsDetail.length > 0)
+      ? m.lotsDetail
+      : [{ lotCode: m.lotCode ?? null, sapLot: m.sapLot ?? null, pallets: m.pallets ?? null, quantity: m.quantity }];
+
+    for (const ld of lots) {
+      body.push([
+        fmtDate(m.date),
+        `${m.material.code} · ${m.material.description}`,
+        ld.lotCode ?? "-",
+        ld.sapLot ?? "-",
+        `${ld.quantity.toLocaleString("es-PY")} ${m.material.unitOfMeasure ?? ""}`.trim(),
+        ld.pallets != null ? String(ld.pallets) : "-",
+        `${m.warehouse?.name ?? m.from?.warehouseName ?? "-"}${(m.location?.code ?? m.from?.locationCode) ? ` / ${m.location?.code ?? m.from?.locationCode}` : ""}`,
+        m.destination ?? "-",
+        m.carrier ?? "-",
+        m.driver ?? "-",
+        m.notes ?? "-",
+      ]);
+    }
+  }
+
   autoTable(doc, {
-    ...tableStyles,
+    ...baseStyles,
     startY,
-    head: [["Fecha", "Material", "Lote", "Lote SAP", "Cantidad", "Pallets", "Desde", "Destino", "Transportista", "Chofer", "Notas"]],
-    body: data.map((r) => [
-      fmtDate(r.date),
-      `${r.material.code} · ${r.material.description}`,
-      r.lotCode ?? "-",
-      r.sapLot ?? "-",
-      `${r.quantity.toLocaleString("es-PY")} ${r.material.unitOfMeasure ?? ""}`.trim(),
-      r.pallets != null ? String(r.pallets) : "-",
-      `${r.warehouse?.name ?? r.from?.warehouseName ?? "-"}${(r.location?.code ?? r.from?.locationCode) ? ` / ${r.location?.code ?? r.from?.locationCode}` : ""}`,
-      r.destination ?? "-",
-      r.carrier ?? "-",
-      r.driver ?? "-",
-      r.notes ?? "-",
-    ]),
-    columnStyles: { 4: { halign: "right" }, 5: { halign: "center" } },
+    margin: { left: 10, right: 10 },
+    head: [["Fecha", "Material", "Lote", "Lote SAP", "Cantidad", "Pal.", "Desde", "Destino", "Transportista", "Chofer", "Notas"]],
+    body,
+    columnStyles: {
+      0: { cellWidth: 22 },
+      1: { cellWidth: 48 },
+      2: { cellWidth: 18 },
+      3: { cellWidth: 18 },
+      4: { halign: "right", cellWidth: 18 },
+      5: { halign: "center", cellWidth: 10 },
+      6: { cellWidth: 30 },
+      7: { cellWidth: 28 },
+      8: { cellWidth: 24 },
+      9: { cellWidth: 20 },
+      10: { cellWidth: 25 },
+    },
   });
 
   addPageNumbers(doc);
@@ -248,12 +295,12 @@ export function exportSalidasPDF(data: Movement[], filename = "salidas") {
 
 /* ── Lotes & SAP report ──────────────────────────────────────────────────── */
 
-export function exportLotesPDF(data: Lot[], filename = "lotes") {
+export function exportLotesPDF(data: Lot[], filename = "lotes"): void {
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const startY = addDocHeader(doc, "Reporte de Lotes & SAP");
 
   autoTable(doc, {
-    ...tableStyles,
+    ...baseStyles,
     startY,
     head: [["Código lote", "Lote SAP", "Material", "Vencimiento", "Fabricación", "Proveedor", "Stock", "Estado"]],
     body: data.map((r) => [
@@ -266,7 +313,14 @@ export function exportLotesPDF(data: Lot[], filename = "lotes") {
       r.stockActual.toLocaleString("es-PY"),
       r.status === "PENDING_REGULARIZATION" ? "Pendiente" : "Normal",
     ]),
-    columnStyles: { 6: { halign: "right" } },
+    columnStyles: {
+      0: { cellWidth: 30 },
+      1: { cellWidth: 24 },
+      3: { halign: "center", cellWidth: 24 },
+      4: { halign: "center", cellWidth: 24 },
+      6: { halign: "right", cellWidth: 20 },
+      7: { cellWidth: 20 },
+    },
   });
 
   addPageNumbers(doc);
@@ -279,14 +333,14 @@ export function exportTrazabilidadPDF(
   materialCode: string,
   history: ReportTraceEvent[],
   filename = "trazabilidad",
-) {
+): void {
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const startY = addDocHeader(doc, `Trazabilidad — ${materialCode}`);
 
   autoTable(doc, {
-    ...tableStyles,
+    ...baseStyles,
     startY,
-    head: [["Fecha", "Tipo", "Cantidad", "Desde", "Destino", "Documento", "Notas"]],
+    head: [["Fecha", "Tipo", "Cantidad", "Desde", "Destino", "MIC/Fac/Rem.", "Notas"]],
     body: history.map((e) => [
       fmtDate(e.at),
       MOVE_LABEL_MAP[e.type] ?? e.type,
@@ -296,42 +350,46 @@ export function exportTrazabilidadPDF(
       e.documentNumber ?? "-",
       e.notes ?? "-",
     ]),
-    columnStyles: { 2: { halign: "right" } },
+    columnStyles: {
+      0: { cellWidth: 26 },
+      1: { cellWidth: 30 },
+      2: { halign: "right", cellWidth: 22 },
+      3: { cellWidth: 55 },
+      4: { cellWidth: 55 },
+      5: { cellWidth: 30 },
+    },
   });
 
   addPageNumbers(doc);
   doc.save(`${filename}.pdf`);
 }
 
-/* ── Pallet history (trazabilidad) ───────────────────────────────────────── */
+/* ── Pallet history (trazabilidad de palet) ──────────────────────────────── */
 
 export function exportPalletHistoryPDF(
   palletCode: string,
   productCode: string,
   events: PalletHistoryEvent[],
   filename?: string,
-) {
+): void {
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const startY = addDocHeader(
     doc,
     `Trazabilidad — Palet ${palletCode} · Material ${productCode}`,
   );
 
-  const MOVE_LABEL: Record<string, string> = {
-    ENTRY: "Entrada",
-    EXIT: "Salida",
-    TRANSFER: "Transferencia",
-    ADJUSTMENT_IN: "Ajuste +",
-    ADJUSTMENT_OUT: "Ajuste -",
+  const PALLET_LABEL: Record<string, string> = {
+    ENTRY: "Entrada", EXIT: "Salida", TRANSFER: "Transferencia",
+    ADJUSTMENT_IN: "Ajuste +", ADJUSTMENT_OUT: "Ajuste -",
   };
 
   autoTable(doc, {
-    ...tableStyles,
+    ...baseStyles,
     startY,
-    head: [["Fecha", "Tipo", "Cantidad", "Desde", "Hacia", "Documento", "Notas"]],
+    head: [["Fecha", "Tipo", "Cantidad", "Desde", "Hacia", "MIC/Fac/Rem.", "Notas"]],
     body: events.map((e) => [
       fmtDate(e.date),
-      MOVE_LABEL[e.type] ?? e.type,
+      PALLET_LABEL[e.type] ?? e.type,
       e.quantity.toLocaleString("es-PY"),
       e.from ? `${e.from.locationCode} (${e.from.warehouseName ?? ""})` : "-",
       e.to ? `${e.to.locationCode} (${e.to.warehouseName ?? ""})` : "-",
@@ -339,7 +397,12 @@ export function exportPalletHistoryPDF(
       e.notes ?? "-",
     ]),
     columnStyles: {
-      2: { halign: "right" },
+      0: { cellWidth: 26 },
+      1: { cellWidth: 30 },
+      2: { halign: "right", cellWidth: 22 },
+      3: { cellWidth: 55 },
+      4: { cellWidth: 55 },
+      5: { cellWidth: 30 },
     },
   });
 

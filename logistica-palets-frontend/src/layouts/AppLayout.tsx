@@ -62,6 +62,15 @@ const Icons: Record<string, React.ReactElement> = {
       <path d="M17 8v12m0 0l4-4m-4 4l-4-4" />
     </svg>
   ),
+  bitacora: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="3"  width="20" height="5" rx="1" />
+      <rect x="2" y="10" width="20" height="5" rx="1" />
+      <rect x="2" y="17" width="20" height="4" rx="1" />
+      <line x1="6" y1="5.5"  x2="9" y2="5.5" />
+      <line x1="6" y1="12.5" x2="9" y2="12.5" />
+    </svg>
+  ),
   transports: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="1" y="3" width="15" height="13" />
@@ -89,6 +98,14 @@ const Icons: Record<string, React.ReactElement> = {
       <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
     </svg>
   ),
+  users: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  ),
 };
 
 const modules = [
@@ -99,7 +116,7 @@ const modules = [
   { key: "lots" as const, label: "Lotes", path: "/lots" },
   { key: "pallets" as const, label: "Palets", path: "/pallets" },
   { key: "movements" as const, label: "Movimientos", path: "/movements" },
-  { key: "bitacora" as const, label: "Bitácora", path: "/bitacora" },
+  { key: "bitacora" as const, label: "Registros", path: "/bitacora" },
   { key: "transports" as const, label: "Transportes", path: "/transports" },
   { key: "reports" as const, label: "Reportes", path: "/reports" },
   { key: "billing" as const, label: "Facturación", path: "/billing" },
@@ -240,16 +257,28 @@ export default function AppLayout() {
             </NavLink>
           ))}
           {user.role === "ADMIN" && (
-            <NavLink
-              to="/seed"
-              className={({ isActive }) =>
-                `sidebar-link${isActive ? " sidebar-link--active" : ""}`
-              }
-              style={{ opacity: 0.7, borderTop: "1px solid rgba(255,255,255,.08)", marginTop: 8, paddingTop: 12 }}
-            >
-              {Icons["seed"]}
-              Carga masiva
-            </NavLink>
+            <>
+              <NavLink
+                to="/users"
+                className={({ isActive }) =>
+                  `sidebar-link${isActive ? " sidebar-link--active" : ""}`
+                }
+                style={{ borderTop: "1px solid rgba(255,255,255,.08)", marginTop: 8, paddingTop: 12 }}
+              >
+                {Icons["users"]}
+                Usuarios
+              </NavLink>
+              <NavLink
+                to="/seed"
+                className={({ isActive }) =>
+                  `sidebar-link${isActive ? " sidebar-link--active" : ""}`
+                }
+                style={{ opacity: 0.7 }}
+              >
+                {Icons["seed"]}
+                Carga masiva
+              </NavLink>
+            </>
           )}
         </nav>
 

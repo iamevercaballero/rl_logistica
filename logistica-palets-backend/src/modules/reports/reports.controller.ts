@@ -63,4 +63,32 @@ export class ReportsController {
   freshness(@Query('productId') productId?: string) {
     return this.service.freshness(productId);
   }
+
+  /** Salud del inventario: detecta divergencias del invariante Stock=Lote=Pallet por producto. */
+  @Get('inventory-health')
+  @Roles('ADMIN', 'MANAGER', 'AUDITOR')
+  inventoryHealth() {
+    return this.service.inventoryHealth();
+  }
+
+  /** Ocupación: ubicaciones ocupadas vs totales y pallets vs capacidad, por depósito. */
+  @Get('occupancy')
+  @Roles('ADMIN', 'MANAGER', 'AUDITOR')
+  occupancy() {
+    return this.service.occupancy();
+  }
+
+  /** Rotación por producto en un período: salidas vs stock, top movers y dead stock. */
+  @Get('rotation')
+  @Roles('ADMIN', 'MANAGER', 'AUDITOR')
+  rotation(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.service.rotation(from, to);
+  }
+
+  /** Dwell-time: antigüedad de los pallets en stock (base de facturación de almacenaje). */
+  @Get('dwell-time')
+  @Roles('ADMIN', 'MANAGER', 'AUDITOR')
+  dwellTime() {
+    return this.service.dwellTime();
+  }
 }

@@ -5,11 +5,11 @@ import AdjustmentInForm from "./AdjustmentInForm";
 import AdjustmentOutForm from "./AdjustmentOutForm";
 import InventoryAdjustmentPage from "./InventoryAdjustment";
 import {
-  createMovement,
   createDocument,
   getMovements,
   getDocuments,
   regularizeMovement,
+  transferBatch,
   type Movement,
   type MovementType,
   type PalletItem,
@@ -17,7 +17,10 @@ import {
   type LogisticsDocument,
 } from "../api/movements";
 import { fefoLots, generateSapLot, type Lot } from "../api/lots";
-import type { LotPallet } from "../api/pallets";
+import { uploadAttachment, ATTACHMENT_CATEGORIES, type AttachmentCategory } from "../api/attachments";
+import AttachmentUploader from "../components/AttachmentUploader";
+import { listPallets, type LotPallet } from "../api/pallets";
+import { listTransports } from "../api/transports";
 import { listWarehouses } from "../api/warehouses";
 import { listLocations } from "../api/locations";
 import { listActiveUsers } from "../api/users";
@@ -41,6 +44,10 @@ type CartLine = {
   locationId?: string;
 };
 let _cartKey = 0;
+
+// ── Adjunto pendiente: elegido en el formulario, se sube al confirmar el remito
+type PendingFile = { id: number; file: File; name: string; category: AttachmentCategory };
+let _pfId = 0;
 
 // ── Tipo formulario entrada simplificado (una cantidad total por lote)
 type LotGroup = {
@@ -148,6 +155,10 @@ export default function MovementsPage() {
   const users = usersQ.data ?? [];
   const pending = pendingQ.data ?? [];
 
+  // Flota registrada — para elegir vehículo (patente) en el remito
+  const transportsQ = useQuery({ queryKey: ["transports"], queryFn: listTransports, staleTime: 60_000 });
+  const transports = transportsQ.data ?? [];
+
   const [formError, setFormError] = useState("");
 
   // Formulario común
@@ -156,6 +167,15 @@ export default function MovementsPage() {
   const [showInventoryAdj, setShowInventoryAdj] = useState(false);
   // UI-only: historial de remitos (RLNE/RLNS) con botones de impresión
   const [showDocHistory, setShowDocHistory] = useState(false);
+
+  // UI-only: último documento confirmado (panel post-confirmación)
+  const [lastCreatedDoc, setLastCreatedDoc] = useState<{
+    id: string; code: string; type: "ENTRY" | "EXIT"; totalProducts: number; attachments: number;
+  } | null>(null);
+
+  // Adjuntos del remito elegidos antes de confirmar (se suben al crear el documento)
+  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
+  const [showAttachModal, setShowAttachModal] = useState(false);
 
   const isDocType = movType === "ENTRY" || movType === "EXIT";
   const docsQ = useQuery({
@@ -174,6 +194,7 @@ export default function MovementsPage() {
   const [supplier, setSupplier] = useState("");
   const [carrier, setCarrier] = useState("");
   const [driver, setDriver] = useState("");
+  const [vehiclePlate, setVehiclePlate] = useState("");
   const [destination, setDestination] = useState("");
   const [notes, setNotes] = useState("");
   const [encargadoId, setEncargadoId] = useState("");
@@ -183,8 +204,12 @@ export default function MovementsPage() {
   const [entrySapLot, setEntrySapLot] = useState(() => generateSapLot());
   const [lotGroups, setLotGroups] = useState<LotGroup[]>([newLotGroup()]);
 
-  // TRANSFERENCIA (sigue usando selección de palets por FEFO)
+  // SALIDA: selección de palets por FEFO
   const [fefoRows, setFefoRows] = useState<FefoRow[]>([]);
+
+  // TRANSFERENCIA — flujo origen-primero: selección multi-producto de pallets
+  const [transferSel, setTransferSel] = useState<Set<string>>(new Set());
+  const [transferFilter, setTransferFilter] = useState("");
 
   // CARRITO de remito (entrada/salida multi-producto): productos ya cargados.
   const [cart, setCart] = useState<CartLine[]>([]);
@@ -204,26 +229,40 @@ export default function MovementsPage() {
   const isEntry = movType === "ENTRY";
   const isTransfer = movType === "TRANSFER";
 
+  // ── TRANSFERENCIA: contenido de la ubicación origen (todos los productos) ──
+  const originPalletsQ = useQuery({
+    queryKey: ["pallets", "by-location", fromLocationId],
+    queryFn: () => listPallets({ locationId: fromLocationId }),
+    enabled: isTransfer && !!fromLocationId,
+    staleTime: 10_000,
+  });
+  // Ocupación del destino (informativa)
+  const destPalletsQ = useQuery({
+    queryKey: ["pallets", "by-location", toLocationId],
+    queryFn: () => listPallets({ locationId: toLocationId }),
+    enabled: isTransfer && !!toLocationId,
+    staleTime: 10_000,
+  });
+
+  /** Pallets transferibles del origen (excluye despachados, vacíos y sin producto resoluble). */
+  const originPallets = useMemo(
+    () => (originPalletsQ.data ?? []).filter((p) => p.status !== "EXITED" && p.status !== "EMPTY" && !!p.productId),
+    [originPalletsQ.data],
+  );
+  const originPalletsRef = useRef<LotPallet[]>([]);
+  useEffect(() => { originPalletsRef.current = originPallets; }, [originPallets]);
+
   // ── Barcode scanner (TRANSFERENCIA only — EXIT ahora usa cantidad directa) ──
   const scanVideoRef = useRef<HTMLVideoElement>(null);
 
   const scanPalletByCode = useCallback(
     (rawCode: string) => {
       const code = rawCode.trim().toLowerCase();
-      let found = false;
-      setFefoRows((rows) =>
-        rows.map((row) => {
-          const pallet = row.lot.pallets.find((p) => p.code.trim().toLowerCase() === code);
-          if (!pallet || row.lot.status === "PENDING_REGULARIZATION") return row;
-          found = true;
-          const ids = new Set(row.selectedIds);
-          ids.add(pallet.id);
-          return { ...row, selectedIds: ids, expanded: true };
-        }),
-      );
+      const pallet = originPalletsRef.current.find((p) => p.code.trim().toLowerCase() === code);
+      if (pallet) setTransferSel((s) => new Set(s).add(pallet.id));
       setTimeout(() => {
-        if (found) toast.success(`Palet ${rawCode.trim()} seleccionado`);
-        else toast.error(`Palet "${rawCode.trim()}" no encontrado en los lotes cargados`);
+        if (pallet) toast.success(`Palet ${pallet.code} seleccionado`);
+        else toast.error(`Palet "${rawCode.trim()}" no está en la ubicación origen`);
       }, 0);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -231,7 +270,7 @@ export default function MovementsPage() {
   );
 
   const { cameraActive, cameraSupported, startCamera, stopCamera } = useBarcodeScanner({
-    enabled: isTransfer && fefoRows.length > 0,
+    enabled: isTransfer && originPallets.length > 0,
     onScan: scanPalletByCode,
   });
 
@@ -250,13 +289,12 @@ export default function MovementsPage() {
   }, [locations]);
 
 
-  // FEFO via useQuery — TRANSFERENCIA (con filtro de ubicación) y SALIDA (sin filtro)
-  const fefoLocId = isTransfer ? fromLocationId || undefined : undefined;
-  const fefoEnabled = (isTransfer && !!product && !!fromLocationId) || (movType === "EXIT" && !!product);
+  // FEFO via useQuery — SALIDA (sin filtro de ubicación)
+  const fefoEnabled = movType === "EXIT" && !!product;
 
   const fefoQ = useQuery({
-    queryKey: ["lots", "fefo", { productId: product?.id, locationId: fefoLocId }],
-    queryFn: () => fefoLots(product?.id, undefined, fefoLocId),
+    queryKey: ["lots", "fefo", { productId: product?.id }],
+    queryFn: () => fefoLots(product?.id),
     enabled: fefoEnabled,
     staleTime: 15_000,
   });
@@ -275,13 +313,64 @@ export default function MovementsPage() {
 
   function resetForm() {
     setProduct(null); setWarehouseId(""); setLocationId(""); setFromLocationId(""); setToLocationId("");
-    setDocumentNumber(""); setSupplier(""); setCarrier(""); setDriver(""); setDestination(""); setNotes("");
+    setDocumentNumber(""); setSupplier(""); setCarrier(""); setDriver(""); setVehiclePlate(""); setDestination(""); setNotes("");
     setEncargadoId(""); setDate("");
     setEntrySapLot(generateSapLot()); setLotGroups([newLotGroup()]);
     setFefoRows([]);
+    setTransferSel(new Set()); setTransferFilter("");
     setCart([]);
+    setPendingFiles([]);
+    setShowAttachModal(false);
     setFormError("");
     setWizardStep(1);
+  }
+
+  // ── TRANSFERENCIA: agrupar contenido del origen por producto ──
+  const transferGroups = useMemo(() => {
+    const filter = transferFilter.trim().toLowerCase();
+    const visible = filter
+      ? originPallets.filter((p) =>
+          p.code.toLowerCase().includes(filter) ||
+          (p.productCode ?? "").toLowerCase().includes(filter) ||
+          (p.productDescription ?? "").toLowerCase().includes(filter) ||
+          (p.lotCode ?? "").toLowerCase().includes(filter))
+      : originPallets;
+    const byProduct = new Map<string, { productId: string; productCode: string; productDescription: string; pallets: LotPallet[] }>();
+    for (const p of visible) {
+      const key = p.productId ?? "—";
+      const g = byProduct.get(key) ?? {
+        productId: key,
+        productCode: p.productCode ?? "—",
+        productDescription: p.productDescription ?? "",
+        pallets: [],
+      };
+      g.pallets.push(p);
+      byProduct.set(key, g);
+    }
+    return [...byProduct.values()].sort((a, b) => a.productCode.localeCompare(b.productCode));
+  }, [originPallets, transferFilter]);
+
+  const selectedTransferPallets = useMemo(
+    () => originPallets.filter((p) => transferSel.has(p.id)),
+    [originPallets, transferSel],
+  );
+  const transferTotalQty = selectedTransferPallets.reduce((s, p) => s + p.quantity, 0);
+  const transferProductCount = new Set(selectedTransferPallets.map((p) => p.productId)).size;
+
+  function toggleTransferPallet(id: string) {
+    setTransferSel((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  /** Selecciona/deselecciona todos los pallets de un grupo de producto. */
+  function toggleTransferGroup(pallets: LotPallet[], checked: boolean) {
+    setTransferSel((s) => {
+      const next = new Set(s);
+      for (const p of pallets) { if (checked) next.add(p.id); else next.delete(p.id); }
+      return next;
+    });
   }
 
   // ── Helpers ENTRADA
@@ -320,15 +409,6 @@ export default function MovementsPage() {
       return { ...r, selectedIds: ids, exitQtyInput: selQty > 0 ? String(selQty) : "" };
     }));
   }
-  function toggleAllPallets(lotIdx: number, checked: boolean) {
-    setFefoRows((rows) => rows.map((r, i) => {
-      if (i !== lotIdx) return r;
-      const avail = r.lot.status !== "PENDING_REGULARIZATION" ? r.lot.pallets : [];
-      const ids = checked ? new Set(avail.map((p) => p.id)) : new Set<string>();
-      const selQty = checked ? avail.reduce((s, p) => s + p.quantity, 0) : 0;
-      return { ...r, selectedIds: ids, exitQtyInput: selQty > 0 ? String(selQty) : "" };
-    }));
-  }
   function toggleExpanded(lotIdx: number) {
     setFefoRows((rows) => rows.map((r, i) => i === lotIdx ? { ...r, expanded: !r.expanded } : r));
   }
@@ -344,11 +424,6 @@ export default function MovementsPage() {
       return { ...row, exitQtyInput: qtyStr, selectedIds };
     }));
   }
-
-  // TRANSFER: suma de pallets completos seleccionados
-  const totalTransferQty = fefoRows.reduce((sum, row) =>
-    sum + row.lot.pallets.filter((p) => row.selectedIds.has(p.id)).reduce((s, p) => s + p.quantity, 0), 0);
-  const totalTransferPallets = fefoRows.reduce((sum, row) => sum + row.selectedIds.size, 0);
 
   // EXIT: suma de cantidades exactas ingresadas (respeta parciales)
   const totalExitQty = fefoRows.reduce((sum, row) => {
@@ -375,12 +450,18 @@ export default function MovementsPage() {
     queryClient.invalidateQueries({ queryKey: ["pallets"] });
   }
 
-  const createMovementMut = useMutation({
-    mutationFn: createMovement,
-    onSuccess: () => {
+  const transferMut = useMutation({
+    mutationFn: transferBatch,
+    onSuccess: (res) => {
       invalidateAfterMovement();
-      toast.success("Movimiento registrado");
-      resetForm();
+      toast.success(
+        `Transferencia registrada: ${res.totalPallets} palet${res.totalPallets !== 1 ? "s" : ""} · ${res.totalQty.toLocaleString("es-PY")} unid. → ${locationMap[toLocationId] ?? "destino"}`,
+      );
+      // Mantiene origen/destino para encadenar transferencias; limpia la selección
+      setTransferSel(new Set());
+      setTransferFilter("");
+      setNotes("");
+      setFormError("");
     },
     onError: (err) => {
       const msg = getFriendlyApiError(err);
@@ -388,13 +469,39 @@ export default function MovementsPage() {
       toast.error(msg);
     },
   });
-  const saving = createMovementMut.isPending;
+  const saving = transferMut.isPending;
+
+  /** Sube los adjuntos elegidos en el formulario a la bitácora del documento recién creado. */
+  async function uploadPendingFiles(documentId: string, files: PendingFile[]) {
+    if (files.length === 0) return;
+    let failed = 0;
+    for (const pf of files) {
+      try {
+        await uploadAttachment(pf.file, pf.name, pf.category, "DOCUMENT", documentId);
+      } catch {
+        failed++;
+      }
+    }
+    if (failed > 0) {
+      toast.error(`${failed} adjunto(s) no se pudieron subir — reintentá desde la bitácora del remito`);
+    } else {
+      toast.success(`${files.length} archivo(s) adjuntado(s) al remito`);
+    }
+    void queryClient.invalidateQueries({ queryKey: ["dispatch-log", "DOCUMENT", documentId] });
+  }
 
   const createDocumentMut = useMutation({
     mutationFn: (payload: CreateDocumentPayload) => createDocument(payload),
-    onSuccess: (res) => {
+    onSuccess: (res, variables) => {
       invalidateAfterMovement();
-      toast.success(`Remito ${res.code} registrado (${res.movementIds.length} producto(s))`);
+      void uploadPendingFiles(res.documentId, pendingFiles);
+      setLastCreatedDoc({
+        id: res.documentId,
+        code: res.code,
+        type: variables.type as "ENTRY" | "EXIT",
+        totalProducts: res.movementIds.length,
+        attachments: pendingFiles.length,
+      });
       setCart([]);
       resetForm();
     },
@@ -526,6 +633,7 @@ export default function MovementsPage() {
       warehouseId: warehouseId || undefined,
       carrier: carrier || undefined,
       driver: driver || undefined,
+      vehiclePlate: vehiclePlate || undefined,
       notes: notes || undefined,
       encargadoId: encargadoId || undefined,
       lines: lines.map((l) => ({
@@ -542,16 +650,26 @@ export default function MovementsPage() {
     setFormError("");
 
     if (isTransfer) {
-      if (!product) { setFormError("Seleccioná un material."); return; }
-      const palletItems = fefoRows.flatMap((row) =>
-        row.lot.pallets.filter((p) => row.selectedIds.has(p.id)).map((p) => ({ palletId: p.id, quantity: p.quantity }))
-      );
-      if (palletItems.length === 0) { setFormError("Seleccioná al menos un palet para transferir."); return; }
+      if (!fromLocationId) { setFormError("Seleccioná la ubicación origen."); return; }
+      if (selectedTransferPallets.length === 0) { setFormError("Seleccioná al menos un palet para transferir."); return; }
       if (!toLocationId) { setFormError("Seleccioná la ubicación destino."); return; }
-      createMovementMut.mutate({
-        type: "TRANSFER", date: date || undefined, productId: product.id,
-        fromLocationId: fromLocationId || undefined, toLocationId,
-        notes: notes || undefined, palletItems,
+      if (fromLocationId === toLocationId) { setFormError("Origen y destino no pueden ser la misma ubicación."); return; }
+
+      // Una línea por producto (el backend crea un movimiento TRANSFER por línea, en una transacción)
+      const byProduct = new Map<string, { palletId: string; quantity: number }[]>();
+      for (const p of selectedTransferPallets) {
+        const key = p.productId ?? "";
+        if (!key) continue;
+        const items = byProduct.get(key) ?? [];
+        items.push({ palletId: p.id, quantity: p.quantity });
+        byProduct.set(key, items);
+      }
+      transferMut.mutate({
+        date: date || undefined,
+        fromLocationId,
+        toLocationId,
+        notes: notes || undefined,
+        lines: [...byProduct.entries()].map(([productId, palletItems]) => ({ productId, palletItems })),
       });
       return;
     }
@@ -601,76 +719,6 @@ export default function MovementsPage() {
     if (regForm.fechaFabricacion) payload.fechaFabricacion = regForm.fechaFabricacion;
     if (regForm.proveedor.trim()) payload.proveedor = regForm.proveedor.trim();
     regularizeMut.mutate({ id: regMovement.id, payload: payload as Parameters<typeof regularizeMovement>[1] });
-  }
-
-  // renderFefoRows — solo para TRANSFER (EXIT tiene su propia UI basada en cantidades)
-  function renderFefoRows() {
-    if (fefoLoading) return <p style={{ color: "var(--muted)", fontSize: 13, margin: 0 }}>Cargando lotes...</p>;
-    const noStock = fefoRows.length === 0 && !!product && !!fromLocationId;
-    if (noStock) {
-      return <div style={{ background: "var(--badge-adjout-bg)", border: "1px solid var(--badge-adjout-border)", color: "var(--badge-adjout-text)", borderRadius: 8, padding: "10px 14px", fontSize: 13 }}>Sin stock disponible{isTransfer ? " en esta ubicación" : ""}.</div>;
-    }
-    return (
-      <div style={{ display: "grid", gap: 8 }}>
-        {fefoRows.map((row, lotIdx) => {
-          const blocked = row.lot.status === "PENDING_REGULARIZATION";
-          const days = daysUntil(row.lot.fechaVencimiento);
-          const hasPallets = row.lot.pallets.length > 0;
-          const allSelected = hasPallets && !blocked && row.selectedIds.size === row.lot.pallets.length;
-          return (
-            <div key={row.lot.id} style={{ border: `1.5px solid ${blocked ? "var(--warning)" : row.selectedIds.size > 0 ? "var(--primary)" : "var(--border)"}`, borderRadius: 10, overflow: "hidden", opacity: blocked ? 0.75 : 1 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 10, padding: "9px 12px", alignItems: "center", background: blocked ? "var(--badge-adjout-bg)" : row.selectedIds.size > 0 ? "var(--primary-light)" : "var(--bg)", cursor: blocked ? "not-allowed" : "pointer" }}
-                onClick={() => !blocked && toggleExpanded(lotIdx)}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  {hasPallets && !blocked && (
-                    <input type="checkbox" checked={allSelected}
-                      onChange={(ev) => { ev.stopPropagation(); toggleAllPallets(lotIdx, ev.target.checked); }}
-                      onClick={(ev) => ev.stopPropagation()}
-                      style={{ width: 16, height: 16, cursor: "pointer" }} />
-                  )}
-                  <div>
-                    <span style={{ fontWeight: 800, fontSize: 14 }}>{row.lot.lotCode}</span>
-                    {row.lot.sapLot && <span style={{ fontSize: 11, color: "var(--primary)", fontWeight: 600, marginLeft: 8 }}>{row.lot.sapLot}</span>}
-                    {blocked && <span className="badge badge--adj-out" style={{ fontSize: 10, marginLeft: 8 }}>PROVISORIO</span>}
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 14, alignItems: "center", fontSize: 12, flexWrap: "wrap" }}>
-                  {row.lot.fechaVencimiento && <span style={{ color: "var(--muted)" }}>{row.lot.fechaVencimiento}{expiryBadge(days)}</span>}
-                  <span style={{ fontWeight: 700 }}>{row.lot.stockActual.toLocaleString("es-PY")} unid.</span>
-                  <span style={{ color: "var(--muted)" }}>{row.lot.pallets.length} palet{row.lot.pallets.length !== 1 ? "s" : ""}</span>
-                  {row.selectedIds.size > 0 && (
-                    <span style={{ color: "var(--primary)", fontWeight: 700 }}>
-                      ✓ {row.selectedIds.size} sel. · {row.lot.pallets.filter((p) => row.selectedIds.has(p.id)).reduce((s, p) => s + p.quantity, 0).toLocaleString("es-PY")} unid.
-                    </span>
-                  )}
-                </div>
-                <span style={{ fontSize: 11, color: "var(--muted)" }}>{row.expanded ? "▲" : "▼"}</span>
-              </div>
-              {row.expanded && (
-                <div style={{ padding: "4px 0", borderTop: "1px solid var(--border)" }}>
-                  {hasPallets ? row.lot.pallets.map((p, pIdx) => (
-                    <label key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 16px", cursor: blocked ? "not-allowed" : "pointer", background: row.selectedIds.has(p.id) ? "var(--primary-light)" : undefined, borderBottom: pIdx < row.lot.pallets.length - 1 ? "1px solid var(--border)" : undefined }}>
-                      <input type="checkbox" checked={row.selectedIds.has(p.id)} disabled={blocked}
-                        onChange={() => !blocked && togglePallet(lotIdx, p.id)}
-                        style={{ width: 15, height: 15 }} />
-                      <span style={{ fontWeight: 600, fontSize: 13, minWidth: 100 }}>{p.code}</span>
-                      <span style={{ fontSize: 13 }}>{p.quantity.toLocaleString("es-PY")} unid.</span>
-                      {p.currentLocationId && (
-                        <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: "auto", fontFamily: "monospace" }}>
-                          {locationMap[p.currentLocationId] ?? p.currentLocationId.slice(0, 8)}
-                        </span>
-                      )}
-                    </label>
-                  )) : (
-                    <p style={{ margin: "8px 16px", fontSize: 12, color: "var(--muted)" }}>Sin palets registrados.</p>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    );
   }
 
   return (
@@ -741,7 +789,7 @@ export default function MovementsPage() {
               </div>
               <div style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.4, paddingBottom: 2, borderBottom: "1px solid var(--border)" }}>Datos del movimiento</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                {[["N° remito", "documentNumber"], ["Proveedor", "supplier"], ["Transportadora", "carrier"], ["Conductor", "driver"]].map(([label, field]) => (
+                {[["N° MIC/Factura/Remito", "documentNumber"], ["Proveedor", "supplier"], ["Transportadora", "carrier"], ["Conductor", "driver"]].map(([label, field]) => (
                   <div key={field}>
                     <label style={{ display: "block", fontSize: 11, color: "var(--muted)", marginBottom: 2 }}>{label}</label>
                     <input className="input" value={regForm[field as keyof RegPayload]} onChange={(e) => setRegForm((p) => ({ ...p, [field]: e.target.value }))} />
@@ -780,6 +828,7 @@ export default function MovementsPage() {
       {!showInventoryAdj && movType === "ADJUSTMENT_IN" && (
         <AdjustmentInForm
           onTypeChange={(t) => {
+            setLastCreatedDoc(null);
             if (t === "INVENTORY_ADJUSTMENT") { setShowInventoryAdj(true); resetForm(); }
             else { setShowInventoryAdj(false); setMovType(t); resetForm(); }
           }}
@@ -790,14 +839,66 @@ export default function MovementsPage() {
       {!showInventoryAdj && movType === "ADJUSTMENT_OUT" && (
         <AdjustmentOutForm
           onTypeChange={(t) => {
+            setLastCreatedDoc(null);
             if (t === "INVENTORY_ADJUSTMENT") { setShowInventoryAdj(true); resetForm(); }
             else { setShowInventoryAdj(false); setMovType(t); resetForm(); }
           }}
         />
       )}
 
+      {/* ── Panel post-confirmación ── */}
+      {!showInventoryAdj && isDocType && lastCreatedDoc && (
+        <section className="card" style={{ textAlign: "center", padding: "36px 24px" }}>
+          <div style={{ fontSize: 52, lineHeight: 1, marginBottom: 12 }}>✅</div>
+          <h2 style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 900, color: "var(--text)" }}>
+            {lastCreatedDoc.type === "ENTRY" ? "Entrada confirmada" : "Salida confirmada"}
+          </h2>
+          <p style={{ color: "var(--muted)", margin: "0 0 20px", fontSize: 14 }}>
+            {lastCreatedDoc.totalProducts} producto(s) registrado(s)
+            {lastCreatedDoc.attachments > 0 && (
+              <> · 📎 {lastCreatedDoc.attachments} adjunto(s) guardado(s) en la bitácora</>
+            )}
+          </p>
+          <div style={{
+            display: "inline-block", background: "var(--panel-hi)", borderRadius: 8,
+            padding: "10px 28px", fontFamily: "monospace", fontWeight: 900, fontSize: 24,
+            color: "var(--primary)", marginBottom: 32, letterSpacing: 1,
+          }}>
+            {lastCreatedDoc.code}
+          </div>
+          <div style={{ display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
+            <button
+              type="button"
+              className="btn btn--primary"
+              style={{ fontSize: 15, padding: "10px 22px", gap: 8, display: "flex", alignItems: "center" }}
+              onClick={() => window.open(`/print/document/${lastCreatedDoc.id}`, "_blank")}
+            >
+              🖨 Nota de {lastCreatedDoc.type === "ENTRY" ? "entrada" : "salida"}
+            </button>
+            <button
+              type="button"
+              className="btn btn--primary"
+              style={{ fontSize: 15, padding: "10px 22px", gap: 8, display: "flex", alignItems: "center" }}
+              onClick={() => window.open(`/print/labels/${lastCreatedDoc.id}`, "_blank")}
+            >
+              🏷 Etiquetas de pallet
+            </button>
+          </div>
+          <div>
+            <button
+              type="button"
+              className="btn"
+              style={{ fontSize: 13, padding: "8px 20px" }}
+              onClick={() => setLastCreatedDoc(null)}
+            >
+              + Nueva {lastCreatedDoc.type === "ENTRY" ? "entrada" : "salida"}
+            </button>
+          </div>
+        </section>
+      )}
+
       {/* ── Toggle historial / nuevo remito (solo para ENTRY y EXIT) ── */}
-      {!showInventoryAdj && isDocType && (
+      {!showInventoryAdj && isDocType && !lastCreatedDoc && (
         <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
           <button
             type="button"
@@ -827,7 +928,7 @@ export default function MovementsPage() {
       )}
 
       {/* ── Historial de remitos (RLNE / RLNS) con botones de impresión ── */}
-      {!showInventoryAdj && isDocType && showDocHistory && (
+      {!showInventoryAdj && isDocType && showDocHistory && !lastCreatedDoc && (
         <section className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
             <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>
@@ -911,7 +1012,7 @@ export default function MovementsPage() {
       )}
 
       {/* ── Formulario (ENTRY, EXIT, TRANSFER) ── */}
-      {!showInventoryAdj && movType !== "ADJUSTMENT_IN" && movType !== "ADJUSTMENT_OUT" && !showDocHistory && <section className="card">
+      {!showInventoryAdj && movType !== "ADJUSTMENT_IN" && movType !== "ADJUSTMENT_OUT" && !showDocHistory && !lastCreatedDoc && <section className="card">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
           <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Registrar movimiento</h3>
           {/* Wizard step indicator — only for ENTRY */}
@@ -973,14 +1074,15 @@ export default function MovementsPage() {
 
           {/* Tipo y material — always visible (step 1 for ENTRY, always for others) */}
           {(movType !== "ENTRY" || wizardStep === 1) && (
-            <div className="form-section-title">Tipo y material</div>
+            <div className="form-section-title">{isTransfer ? "Tipo y fecha" : "Tipo y material"}</div>
           )}
           {(movType !== "ENTRY" || wizardStep === 1) && (
-          <div style={{ display: "grid", gridTemplateColumns: "200px 1fr auto", gap: 8, alignItems: "center" }}>
+          <div style={{ display: "grid", gridTemplateColumns: isTransfer ? "200px 150px" : "200px 1fr auto", gap: 8, alignItems: "center" }}>
             <select className="input"
               value={showInventoryAdj ? "INVENTORY_ADJUSTMENT" : movType}
               onChange={(e) => {
                 const val = e.target.value;
+                setLastCreatedDoc(null);
                 if (val === "INVENTORY_ADJUSTMENT") {
                   setShowInventoryAdj(true);
                   resetForm();
@@ -988,6 +1090,7 @@ export default function MovementsPage() {
                   setShowInventoryAdj(false);
                   setMovType(val as MovementType);
                   setProduct(null); setFefoRows([]); setLotGroups([newLotGroup()]);
+                  setTransferSel(new Set()); setTransferFilter("");
                   setWizardStep(1);
                 }
               }}
@@ -999,7 +1102,7 @@ export default function MovementsPage() {
               <option value="ADJUSTMENT_OUT">Ajuste salida</option>
               <option value="INVENTORY_ADJUSTMENT">Ajuste de inventario</option>
             </select>
-            <ProductSearch value={product} onChange={setProduct} />
+            {!isTransfer && <ProductSearch value={product} onChange={setProduct} />}
             <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} title="Fecha (vacío = hoy)" style={{ width: 150 }} />
           </div>
           )}
@@ -1021,14 +1124,15 @@ export default function MovementsPage() {
             </>
           )}
 
-          {/* Transferencia: origen → destino + selección palets */}
+          {/* Transferencia: origen → destino + contenido multi-producto de la ubicación */}
           {(movType !== "ENTRY" || wizardStep === 1) && isTransfer && (
             <>
               <div className="form-section-title">Origen → Destino</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div>
                   <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Ubicación origen</label>
-                  <select className="input" value={fromLocationId} onChange={(e) => { setFromLocationId(e.target.value); setFefoRows([]); }}>
+                  <select className="input" value={fromLocationId}
+                    onChange={(e) => { setFromLocationId(e.target.value); setTransferSel(new Set()); setTransferFilter(""); }}>
                     <option value="">Seleccionar origen</option>
                     {locations.map((l) => <option key={l.id} value={l.id}>{l.code} · {l.warehouse?.name}</option>)}
                   </select>
@@ -1039,58 +1143,179 @@ export default function MovementsPage() {
                     <option value="">Seleccionar destino</option>
                     {toLocations.map((l) => <option key={l.id} value={l.id}>{l.code} · {l.warehouse?.name}</option>)}
                   </select>
+                  {toLocationId && destPalletsQ.data && (
+                    <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--muted)" }}>
+                      El destino ya tiene {destPalletsQ.data.filter((p) => p.status !== "EXITED" && p.status !== "EMPTY").length} palet(s)
+                    </p>
+                  )}
                 </div>
               </div>
-              {product && fromLocationId ? (
+
+              {!fromLocationId ? (
+                <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>
+                  Seleccioná la ubicación origen para ver todo lo que contiene — sin necesidad de elegir producto.
+                </p>
+              ) : originPalletsQ.isLoading ? (
+                <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>Cargando contenido de la ubicación...</p>
+              ) : originPallets.length === 0 ? (
+                <div style={{ background: "var(--badge-adjout-bg)", border: "1px solid var(--badge-adjout-border)", color: "var(--badge-adjout-text)", borderRadius: 8, padding: "10px 14px", fontSize: 13 }}>
+                  Esta ubicación no tiene palets transferibles.
+                </div>
+              ) : (
                 <>
                   <div className="form-section-title">
-                    Palets a transferir{totalTransferPallets > 0 && <span style={{ color: "var(--primary)", marginLeft: 10, fontWeight: 700 }}>{totalTransferPallets} sel. · {totalTransferQty.toLocaleString("es-PY")} unid.</span>}
+                    Contenido de {locationMap[fromLocationId] ?? "la ubicación"}
+                    <span style={{ color: "var(--muted)", marginLeft: 10, fontWeight: 400, fontSize: 12 }}>
+                      {originPallets.length} palet{originPallets.length !== 1 ? "s" : ""} · {transferGroups.length} producto{transferGroups.length !== 1 ? "s" : ""} · {originPallets.reduce((s, p) => s + p.quantity, 0).toLocaleString("es-PY")} unid.
+                    </span>
                   </div>
-                  {/* Scan bar — shown once FEFO rows are loaded */}
-                  {fefoRows.length > 0 && (
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 12, color: "var(--muted)" }}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" style={{ verticalAlign: "middle", marginRight: 4 }}>
-                          <rect x="3" y="3" width="2" height="18"/><rect x="7" y="3" width="1" height="18"/><rect x="10" y="3" width="3" height="18"/><rect x="15" y="3" width="1" height="18"/><rect x="18" y="3" width="2" height="18"/>
+
+                  {/* Filtro + escáner */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <input
+                      className="input"
+                      placeholder="Filtrar por producto, lote o palet..."
+                      value={transferFilter}
+                      onChange={(e) => setTransferFilter(e.target.value)}
+                      style={{ flex: 1, minWidth: 180 }}
+                      aria-label="Filtrar contenido del origen"
+                    />
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" style={{ verticalAlign: "middle", marginRight: 4 }}>
+                        <rect x="3" y="3" width="2" height="18"/><rect x="7" y="3" width="1" height="18"/><rect x="10" y="3" width="3" height="18"/><rect x="15" y="3" width="1" height="18"/><rect x="18" y="3" width="2" height="18"/>
+                      </svg>
+                      Escáner USB activo · o
+                    </span>
+                    {cameraSupported && (
+                      <button
+                        type="button"
+                        className={`btn${cameraActive ? " btn--primary" : ""}`}
+                        onClick={() => {
+                          if (cameraActive) stopCamera();
+                          else if (scanVideoRef.current) void startCamera(scanVideoRef.current);
+                        }}
+                        style={{ fontSize: 12, padding: "4px 12px", display: "flex", alignItems: "center", gap: 5 }}
+                        aria-label={cameraActive ? "Detener cámara" : "Escanear palet con cámara"}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                          <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
+                          <circle cx="12" cy="13" r="4"/>
                         </svg>
-                        Escáner USB activo · o
+                        {cameraActive ? "Detener cámara" : "Escanear con cámara"}
+                      </button>
+                    )}
+                    {cameraActive && (
+                      <video
+                        ref={scanVideoRef}
+                        muted
+                        playsInline
+                        aria-hidden="true"
+                        style={{
+                          width: 220, height: 165, borderRadius: 8,
+                          border: "2px solid var(--primary)", objectFit: "cover",
+                        }}
+                      />
+                    )}
+                  </div>
+
+                  {/* Grupos por producto */}
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {transferGroups.length === 0 && (
+                      <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>Sin resultados para ese filtro.</p>
+                    )}
+                    {transferGroups.map((g) => {
+                      const selCount = g.pallets.filter((p) => transferSel.has(p.id)).length;
+                      const allSelected = selCount === g.pallets.length && g.pallets.length > 0;
+                      const groupQty = g.pallets.reduce((s, p) => s + p.quantity, 0);
+                      return (
+                        <div key={g.productId} style={{ border: `1.5px solid ${selCount > 0 ? "var(--primary)" : "var(--border)"}`, borderRadius: 10, overflow: "hidden" }}>
+                          {/* Encabezado del producto */}
+                          <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: selCount > 0 ? "var(--primary-light)" : "var(--bg)", cursor: "pointer" }}>
+                            <input
+                              type="checkbox"
+                              checked={allSelected}
+                              onChange={(e) => toggleTransferGroup(g.pallets, e.target.checked)}
+                              style={{ width: 16, height: 16, cursor: "pointer" }}
+                              aria-label={`Seleccionar todos los pallets de ${g.productCode}`}
+                            />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <span style={{ fontWeight: 800, fontSize: 14 }}>{g.productCode}</span>
+                              <span style={{ fontSize: 13, color: "var(--muted)", marginLeft: 8 }}>{g.productDescription}</span>
+                            </div>
+                            <span style={{ fontSize: 12, color: "var(--muted)", flexShrink: 0 }}>
+                              {g.pallets.length} palet{g.pallets.length !== 1 ? "s" : ""} · {groupQty.toLocaleString("es-PY")} unid.
+                            </span>
+                            {selCount > 0 && (
+                              <span style={{ fontSize: 12, color: "var(--primary)", fontWeight: 700, flexShrink: 0 }}>✓ {selCount} sel.</span>
+                            )}
+                          </label>
+                          {/* Pallets del producto */}
+                          <div style={{ borderTop: "1px solid var(--border-dim)" }}>
+                            {g.pallets.map((p, pIdx) => {
+                              const days = daysUntil(p.fechaVencimiento);
+                              const isSel = transferSel.has(p.id);
+                              return (
+                                <label
+                                  key={p.id}
+                                  style={{
+                                    display: "flex", alignItems: "center", gap: 10, padding: "6px 14px", cursor: "pointer",
+                                    background: isSel ? "var(--primary-light)" : undefined,
+                                    borderBottom: pIdx < g.pallets.length - 1 ? "1px solid var(--border-dim)" : undefined,
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isSel}
+                                    onChange={() => toggleTransferPallet(p.id)}
+                                    style={{ width: 15, height: 15 }}
+                                  />
+                                  <span style={{ fontWeight: 600, fontSize: 13, fontFamily: "monospace", minWidth: 120 }}>{p.code}</span>
+                                  {p.lotCode && (
+                                    <span style={{ fontSize: 11, fontFamily: "monospace", color: "var(--primary)", background: "var(--primary-light)", padding: "1px 6px", borderRadius: 4 }}>
+                                      {p.lotCode}
+                                    </span>
+                                  )}
+                                  <span style={{ fontSize: 13, fontWeight: 700 }}>{p.quantity.toLocaleString("es-PY")} unid.</span>
+                                  {p.fechaVencimiento && (
+                                    <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                                      Vence {new Date(p.fechaVencimiento).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" })}
+                                      {expiryBadge(days)}
+                                    </span>
+                                  )}
+                                  <span style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
+                                    {p.status === "PARTIAL" && <span className="badge badge--estado-pendiente" style={{ fontSize: 10 }}>PARCIAL</span>}
+                                    {p.status === "BLOCKED" && <span className="badge badge--adj-out" style={{ fontSize: 10 }}>BLOQUEADO</span>}
+                                    {p.status === "DAMAGED" && <span className="badge badge--estado-rechazado" style={{ fontSize: 10 }}>DAÑADO</span>}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Resumen de la selección */}
+                  {selectedTransferPallets.length > 0 && (
+                    <div style={{ background: "var(--primary-light)", border: "1.5px solid var(--primary)", borderRadius: 8, padding: "8px 12px", fontSize: 13, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
+                      <strong style={{ color: "var(--primary)" }}>
+                        ✓ {selectedTransferPallets.length} palet{selectedTransferPallets.length !== 1 ? "s" : ""} · {transferTotalQty.toLocaleString("es-PY")} unid. · {transferProductCount} producto{transferProductCount !== 1 ? "s" : ""}
+                      </strong>
+                      <span style={{ color: "var(--muted)" }}>
+                        {locationMap[fromLocationId] ?? "origen"} → {toLocationId ? (locationMap[toLocationId] ?? "destino") : "elegí destino"}
                       </span>
-                      {cameraSupported && (
-                        <button
-                          type="button"
-                          className={`btn${cameraActive ? " btn--primary" : ""}`}
-                          onClick={() => {
-                            if (cameraActive) stopCamera();
-                            else if (scanVideoRef.current) void startCamera(scanVideoRef.current);
-                          }}
-                          style={{ fontSize: 12, padding: "4px 12px", display: "flex", alignItems: "center", gap: 5 }}
-                          aria-label={cameraActive ? "Detener cámara" : "Escanear palet con cámara"}
-                        >
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                            <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
-                            <circle cx="12" cy="13" r="4"/>
-                          </svg>
-                          {cameraActive ? "Detener cámara" : "Escanear con cámara"}
-                        </button>
-                      )}
-                      {cameraActive && (
-                        <video
-                          ref={scanVideoRef}
-                          muted
-                          playsInline
-                          aria-hidden="true"
-                          style={{
-                            width: 220, height: 165, borderRadius: 8,
-                            border: "2px solid var(--primary)", objectFit: "cover",
-                          }}
-                        />
-                      )}
+                      <button
+                        type="button"
+                        className="btn"
+                        style={{ fontSize: 11, padding: "2px 10px", marginLeft: "auto" }}
+                        onClick={() => setTransferSel(new Set())}
+                      >
+                        Deseleccionar todo
+                      </button>
                     </div>
                   )}
-                  {renderFefoRows()}
                 </>
-              ) : (
-                <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>Seleccioná material y ubicación de origen para ver los palets disponibles.</p>
               )}
             </>
           )}
@@ -1442,8 +1667,30 @@ export default function MovementsPage() {
             <>
               <div className="form-section-title">Datos logísticos</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8 }}>
-                {!isTransfer && <input className="input" placeholder="N° remito / documento" value={documentNumber} onChange={(e) => setDocumentNumber(e.target.value)} />}
+                {!isTransfer && <input className="input" placeholder="N° MIC/Factura/Remito" value={documentNumber} onChange={(e) => setDocumentNumber(e.target.value)} />}
                 {isEntry && <input className="input" placeholder="Proveedor" value={supplier} onChange={(e) => setSupplier(e.target.value)} />}
+                {!isTransfer && (
+                  <select
+                    className="input"
+                    value={vehiclePlate}
+                    onChange={(e) => {
+                      const plate = e.target.value;
+                      setVehiclePlate(plate);
+                      // Autocompleta transportadora y conductor desde la ficha del vehículo
+                      const v = transports.find((t) => t.plate === plate);
+                      if (v) {
+                        if (v.description) setCarrier(v.description);
+                        if (v.drivers.length === 1) setDriver(v.drivers[0].name);
+                      }
+                    }}
+                    title="Vehículo de la flota — vincula el remito a su historial"
+                  >
+                    <option value="">Vehículo / patente</option>
+                    {transports.filter((t) => t.active).map((t) => (
+                      <option key={t.id} value={t.plate}>{t.plate} · {t.type}</option>
+                    ))}
+                  </select>
+                )}
                 {!isTransfer && <input className="input" placeholder="Transportadora" value={carrier} onChange={(e) => setCarrier(e.target.value)} />}
                 {!isTransfer && <input className="input" placeholder="Conductor" value={driver} onChange={(e) => setDriver(e.target.value)} />}
                 {movType === "EXIT" && <input className="input" placeholder="Destino" value={destination} onChange={(e) => setDestination(e.target.value)} />}
@@ -1504,8 +1751,16 @@ export default function MovementsPage() {
           {/* Navigation / acciones */}
           {isTransfer ? (
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <button className="btn btn--primary" type="submit" disabled={saving || !product}>
-                {saving ? "Guardando..." : "Registrar movimiento"}
+              <button
+                className="btn btn--primary"
+                type="submit"
+                disabled={saving || selectedTransferPallets.length === 0 || !toLocationId}
+              >
+                {saving
+                  ? "Transfiriendo..."
+                  : selectedTransferPallets.length > 0
+                  ? `⇄ Transferir ${selectedTransferPallets.length} palet${selectedTransferPallets.length !== 1 ? "s" : ""} (${transferTotalQty.toLocaleString("es-PY")} unid.)`
+                  : "⇄ Transferir"}
               </button>
               <button type="button" className="btn" onClick={resetForm}>Limpiar</button>
             </div>
@@ -1535,14 +1790,25 @@ export default function MovementsPage() {
                 </button>
               )}
               {(wizardStep === 2 || cart.length > 0) && (
-                <button
-                  className="btn btn--primary"
-                  type="submit"
-                  disabled={savingDoc}
-                  aria-label="Registrar remito de entrada"
-                >
-                  {savingDoc ? "Guardando..." : `✓ Registrar remito${cart.length ? ` (${cart.length + (product ? 1 : 0)} prod.)` : ""}`}
-                </button>
+                <>
+                  <button
+                    className="btn btn--primary"
+                    type="submit"
+                    disabled={savingDoc}
+                    aria-label="Confirmar entrada"
+                  >
+                    {savingDoc ? "Guardando..." : `✓ Confirmar entrada${cart.length ? ` (${cart.length + (product ? 1 : 0)} prod.)` : ""}`}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setShowAttachModal(true)}
+                    style={pendingFiles.length > 0 ? { borderColor: "var(--primary)", color: "var(--primary)", fontWeight: 700 } : undefined}
+                    aria-label="Adjuntar documentos al remito"
+                  >
+                    📎 Adjuntar{pendingFiles.length > 0 ? ` (${pendingFiles.length})` : " documentos"}
+                  </button>
+                </>
               )}
               <button type="button" className="btn" onClick={resetForm}>Limpiar</button>
             </div>
@@ -1554,11 +1820,89 @@ export default function MovementsPage() {
               <button className="btn btn--primary" type="submit" disabled={savingDoc}>
                 {savingDoc ? "Guardando..." : `Registrar remito${cart.length ? ` (${cart.length + (product ? 1 : 0)} prod.)` : ""}`}
               </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setShowAttachModal(true)}
+                style={pendingFiles.length > 0 ? { borderColor: "var(--primary)", color: "var(--primary)", fontWeight: 700 } : undefined}
+                aria-label="Adjuntar documentos al remito"
+              >
+                📎 Adjuntar{pendingFiles.length > 0 ? ` (${pendingFiles.length})` : " documentos"}
+              </button>
               <button type="button" className="btn" onClick={resetForm}>Limpiar</button>
             </div>
           )}
         </form>
       </section>}
+
+      {/* ── Modal: adjuntar documentos al remito (se suben al confirmar) ── */}
+      {showAttachModal && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => setShowAttachModal(false)}
+        >
+          <div
+            className="card"
+            style={{ width: "min(540px, 100%)", maxHeight: "85vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: 14 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>📎 Adjuntar documentos al remito</h3>
+                <p style={{ margin: "3px 0 0", fontSize: 12, color: "var(--muted)" }}>
+                  Se suben al confirmar la {isEntry ? "entrada" : "salida"} y quedan en la bitácora del remito.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAttachModal(false)}
+                style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "var(--muted)" }}
+                aria-label="Cerrar"
+              >
+                ×
+              </button>
+            </div>
+
+            {pendingFiles.length > 0 && (
+              <div style={{ display: "grid", gap: 6 }}>
+                {pendingFiles.map((pf) => {
+                  const cat = ATTACHMENT_CATEGORIES.find((c) => c.value === pf.category);
+                  return (
+                    <div key={pf.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)" }}>
+                      <span style={{ fontSize: 18 }}>{pf.file.type.startsWith("image/") ? "🖼️" : "📄"}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pf.name}</div>
+                        <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                          {cat?.icon} {cat?.label} · {pf.file.name} · {(pf.file.size / 1024).toFixed(0)} KB
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn"
+                        style={{ fontSize: 12, padding: "3px 8px", color: "var(--danger)", flexShrink: 0 }}
+                        onClick={() => setPendingFiles((p) => p.filter((x) => x.id !== pf.id))}
+                        aria-label={`Quitar ${pf.name}`}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <AttachmentUploader
+              onCollect={(file, name, category) =>
+                setPendingFiles((p) => [...p, { id: ++_pfId, file, name, category }])
+              }
+            />
+
+            <button type="button" className="btn" onClick={() => setShowAttachModal(false)} style={{ alignSelf: "end" }}>
+              Listo{pendingFiles.length > 0 ? ` (${pendingFiles.length} archivo${pendingFiles.length !== 1 ? "s" : ""})` : ""}
+            </button>
+          </div>
+        </div>
+      )}
 
     </div>
   );

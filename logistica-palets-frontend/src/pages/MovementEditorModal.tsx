@@ -1,6 +1,12 @@
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { editMovementMetadata, type Movement } from "../api/movements";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  editMovementMetadata,
+  getMovementLots,
+  requestQuantityEdit,
+  type Movement,
+  type MovementLotBreakdown,
+} from "../api/movements";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 
@@ -9,6 +15,20 @@ interface Props {
   onClose: () => void;
   onSuccess: () => void;
 }
+
+type LotEdit = {
+  lotCode: string;
+  sapLot: string;
+  fechaVencimiento: string;
+  fechaFabricacion: string;
+  proveedor: string;
+  /** palletId → nueva cantidad (solo reducir) */
+  pallets: Record<string, string>;
+  addQuantity: string;
+  addPalletCount: string;
+};
+type MetaPayload = Parameters<typeof editMovementMetadata>[1];
+type LotsPayload = Parameters<typeof requestQuantityEdit>[1];
 
 export default function MovementEditorModal({ movement, onClose, onSuccess }: Props) {
   const { toast } = useToast();
@@ -30,19 +50,70 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
   const [fechaFabricacion, setFechaFabricacion] = useState("");
   const [formError, setFormError] = useState("");
 
+  // Desglose por lote (cantidades y pallets) — solo entradas no anuladas
+  const canEditLots = isEntry && (movement.voidStatus ?? "NONE") === "NONE";
+  const lotsQ = useQuery({
+    queryKey: ["movement-lots", movement.id],
+    queryFn: () => getMovementLots(movement.id),
+    enabled: canEditLots,
+    staleTime: 15_000,
+  });
+  const lots = lotsQ.data?.lots ?? [];
+
+  // Ediciones por lote: datos del lote + nueva cantidad por pallet + agregado
+  const [lotEdits, setLotEdits] = useState<Record<string, LotEdit>>({});
+  const defaultEdit = (l: MovementLotBreakdown): LotEdit => ({
+    lotCode: l.lotCode,
+    sapLot: l.sapLot ?? "",
+    fechaVencimiento: l.fechaVencimiento ?? "",
+    fechaFabricacion: l.fechaFabricacion ?? "",
+    proveedor: l.proveedor ?? "",
+    pallets: Object.fromEntries(l.pallets.map((p) => [p.id, String(p.currentQuantity)])),
+    addQuantity: "",
+    addPalletCount: "1",
+  });
+  const getEdit = (l: MovementLotBreakdown): LotEdit => lotEdits[l.lotId] ?? defaultEdit(l);
+  function updateLotEdit(l: MovementLotBreakdown, field: Exclude<keyof LotEdit, "pallets">, val: string) {
+    setLotEdits((prev) => ({ ...prev, [l.lotId]: { ...(prev[l.lotId] ?? defaultEdit(l)), [field]: val } }));
+  }
+  function updateLotPallet(l: MovementLotBreakdown, palletId: string, val: string) {
+    setLotEdits((prev) => {
+      const cur = prev[l.lotId] ?? defaultEdit(l);
+      return { ...prev, [l.lotId]: { ...cur, pallets: { ...cur.pallets, [palletId]: val } } };
+    });
+  }
+
   const mut = useMutation({
-    mutationFn: (payload: Parameters<typeof editMovementMetadata>[1]) =>
-      editMovementMetadata(movement.id, payload),
-    onSuccess: (res) => {
+    mutationFn: async ({ metaPayload, lotsPayload }: { metaPayload?: MetaPayload; lotsPayload?: LotsPayload }) => {
+      const meta = metaPayload ? await editMovementMetadata(movement.id, metaPayload) : null;
+      const qty = lotsPayload ? await requestQuantityEdit(movement.id, lotsPayload) : null;
+      return { meta, qty };
+    },
+    onSuccess: ({ meta, qty }) => {
       queryClient.invalidateQueries({ queryKey: ["movements"] });
       queryClient.invalidateQueries({ queryKey: ["lots"] });
       queryClient.invalidateQueries({ queryKey: ["kpis"] });
       queryClient.invalidateQueries({ queryKey: ["stock"] });
-      toast.success(
-        res.changes > 0
-          ? `${res.changes} campo${res.changes !== 1 ? "s" : ""} actualizado${res.changes !== 1 ? "s" : ""}`
-          : "Sin cambios detectados",
-      );
+      queryClient.invalidateQueries({ queryKey: ["adjustments"] });
+      queryClient.invalidateQueries({ queryKey: ["movement-lots", movement.id] });
+
+      if (meta) {
+        toast.success(
+          meta.changes > 0
+            ? `${meta.changes} campo${meta.changes !== 1 ? "s" : ""} actualizado${meta.changes !== 1 ? "s" : ""}`
+            : "Sin cambios en los datos del movimiento",
+        );
+      }
+      if (qty) {
+        if (qty.renamed > 0) toast.success(`${qty.renamed} lote${qty.renamed !== 1 ? "s" : ""} renombrado${qty.renamed !== 1 ? "s" : ""}`);
+        if (qty.lotFieldChanges > 0) toast.success(`${qty.lotFieldChanges} dato${qty.lotFieldChanges !== 1 ? "s" : ""} de lote actualizado${qty.lotFieldChanges !== 1 ? "s" : ""}`);
+        for (const r of qty.requests) {
+          toast.success(
+            `Solicitud ${r.code} (${r.type === "ADJUSTMENT_IN" ? "+" : "−"}${r.totalQuantity.toLocaleString("es-PY")} unid.) enviada al MANAGER para aprobación`,
+          );
+        }
+        for (const w of qty.warnings) toast.warning(w);
+      }
       onSuccess();
     },
     onError: (err) => {
@@ -58,21 +129,86 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
       setFormError("El motivo debe tener al menos 5 caracteres.");
       return;
     }
+
+    // ── Cambios de metadatos (se aplican directo, auditados) ──
+    const metaPayload: MetaPayload = { reason: reason.trim() };
+    if (documentNumber.trim() !== (movement.documentNumber ?? "")) metaPayload.documentNumber = documentNumber.trim();
+    if (supplier.trim() !== (movement.supplier ?? "")) metaPayload.supplier = supplier.trim();
+    if (carrier.trim() !== (movement.carrier ?? "")) metaPayload.carrier = carrier.trim();
+    if (driver.trim() !== (movement.driver ?? "")) metaPayload.driver = driver.trim();
+    if (destination.trim() !== (movement.destination ?? "")) metaPayload.destination = destination.trim();
+    if (notes.trim() !== (movement.notes ?? "")) metaPayload.notes = notes.trim();
+    if (sapLot.trim() !== (movement.sapLot ?? "")) metaPayload.sapLot = sapLot.trim();
+    if (proveedor.trim()) metaPayload.proveedor = proveedor.trim();
+    if (fechaVencimiento) metaPayload.fechaVencimiento = fechaVencimiento;
+    if (fechaFabricacion) metaPayload.fechaFabricacion = fechaFabricacion;
+    const hasMetaChanges = Object.keys(metaPayload).length > 1;
+
+    // ── Cambios de lotes / pallets ──
+    const lotChanges: LotsPayload["lots"] = [];
+    for (const l of lots) {
+      const edit = getEdit(l);
+
+      const newCode = edit.lotCode.trim();
+      const codeChanged = !!newCode && newCode !== l.lotCode;
+      const sapChanged = edit.sapLot.trim() !== "" && edit.sapLot.trim() !== (l.sapLot ?? "");
+      const vencChanged = !!edit.fechaVencimiento && edit.fechaVencimiento !== (l.fechaVencimiento ?? "");
+      const fabChanged = !!edit.fechaFabricacion && edit.fechaFabricacion !== (l.fechaFabricacion ?? "");
+      const provChanged = edit.proveedor.trim() !== "" && edit.proveedor.trim() !== (l.proveedor ?? "");
+
+      // Reducciones por pallet (solo se puede bajar; para sumar está "Agregar unidades")
+      const palletEdits: { palletId: string; newQuantity: number }[] = [];
+      for (const p of l.pallets) {
+        if (p.status === "EXITED") continue;
+        const raw = edit.pallets[p.id];
+        if (raw === undefined) continue;
+        const newQty = Number(raw);
+        if (raw.trim() === "" || !Number.isInteger(newQty) || newQty < 0) {
+          setFormError(`Cantidad inválida en el pallet ${p.code}.`);
+          return;
+        }
+        if (newQty > p.currentQuantity) {
+          setFormError(
+            `El pallet ${p.code} tiene ${p.currentQuantity.toLocaleString("es-PY")} unid. — solo se puede reducir. Para sumar unidades usá "Agregar unidades" del lote.`,
+          );
+          return;
+        }
+        if (newQty !== p.currentQuantity) palletEdits.push({ palletId: p.id, newQuantity: newQty });
+      }
+
+      // Agregado de unidades → pallets nuevos al aprobar
+      const addQty = Number(edit.addQuantity);
+      const hasAdd = edit.addQuantity.trim() !== "" && Number.isInteger(addQty) && addQty > 0;
+      if (edit.addQuantity.trim() !== "" && (!Number.isInteger(addQty) || addQty < 0)) {
+        setFormError(`Cantidad a agregar inválida en el lote ${l.lotCode}.`);
+        return;
+      }
+
+      if (!codeChanged && !sapChanged && !vencChanged && !fabChanged && !provChanged && palletEdits.length === 0 && !hasAdd) continue;
+
+      lotChanges.push({
+        lotId: l.lotId,
+        newLotCode: codeChanged ? newCode : undefined,
+        sapLot: sapChanged ? edit.sapLot.trim() : undefined,
+        fechaVencimiento: vencChanged ? edit.fechaVencimiento : undefined,
+        fechaFabricacion: fabChanged ? edit.fechaFabricacion : undefined,
+        proveedor: provChanged ? edit.proveedor.trim() : undefined,
+        palletEdits: palletEdits.length > 0 ? palletEdits : undefined,
+        addQuantity: hasAdd ? addQty : undefined,
+        addPalletCount: hasAdd ? Math.max(1, Number(edit.addPalletCount) || 1) : undefined,
+      });
+    }
+
+    if (!hasMetaChanges && lotChanges.length === 0) {
+      setFormError("No hay cambios para guardar.");
+      return;
+    }
     setFormError("");
 
-    const payload: Parameters<typeof editMovementMetadata>[1] = { reason: reason.trim() };
-    if (documentNumber.trim() !== (movement.documentNumber ?? "")) payload.documentNumber = documentNumber.trim();
-    if (supplier.trim() !== (movement.supplier ?? "")) payload.supplier = supplier.trim();
-    if (carrier.trim() !== (movement.carrier ?? "")) payload.carrier = carrier.trim();
-    if (driver.trim() !== (movement.driver ?? "")) payload.driver = driver.trim();
-    if (destination.trim() !== (movement.destination ?? "")) payload.destination = destination.trim();
-    if (notes.trim() !== (movement.notes ?? "")) payload.notes = notes.trim();
-    if (sapLot.trim() !== (movement.sapLot ?? "")) payload.sapLot = sapLot.trim();
-    if (proveedor.trim()) payload.proveedor = proveedor.trim();
-    if (fechaVencimiento) payload.fechaVencimiento = fechaVencimiento;
-    if (fechaFabricacion) payload.fechaFabricacion = fechaFabricacion;
-
-    mut.mutate(payload);
+    mut.mutate({
+      metaPayload: hasMetaChanges ? metaPayload : undefined,
+      lotsPayload: lotChanges.length > 0 ? { reason: reason.trim(), lots: lotChanges } : undefined,
+    });
   }
 
   const labelStyle: React.CSSProperties = {
@@ -212,7 +348,7 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
               }}
             >
               <div>
-                <label style={labelStyle}>N° remito / documento</label>
+                <label style={labelStyle}>N° MIC/Factura/Remito</label>
                 <input
                   className="input"
                   value={documentNumber}
@@ -267,8 +403,246 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
             </div>
           </div>
 
-          {/* Datos de lotes — solo para entradas o cuando hay lote asociado */}
-          {(isEntry || movement.lotCode) && (
+          {/* Lotes y pallets — datos por lote + corrección a nivel pallet */}
+          {canEditLots && (
+            <div>
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: "var(--muted)",
+                  textTransform: "uppercase",
+                  letterSpacing: 0.4,
+                  paddingBottom: 6,
+                  borderBottom: "1px solid var(--border)",
+                  marginBottom: 8,
+                }}
+              >
+                Lotes y pallets
+                {lots.length > 0 && (
+                  <span style={{ fontSize: 10, fontWeight: 400, textTransform: "none", marginLeft: 6 }}>
+                    ({lots.length} lote{lots.length !== 1 ? "s" : ""} · cada lote con sus propios datos y pallets)
+                  </span>
+                )}
+              </div>
+
+              {lotsQ.isLoading ? (
+                <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>Cargando lotes...</p>
+              ) : lots.length === 0 ? (
+                <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>
+                  Esta entrada no tiene lotes asociados.
+                </p>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {lots.map((l) => {
+                    const edit = getEdit(l);
+                    const activePallets = l.pallets.filter((p) => p.status !== "EXITED");
+                    const exitedPallets = l.pallets.filter((p) => p.status === "EXITED");
+                    const currentTotal = activePallets.reduce((s, p) => s + p.currentQuantity, 0);
+                    const newTotal = activePallets.reduce((s, p) => {
+                      const raw = edit.pallets[p.id];
+                      const n = Number(raw);
+                      if (raw === undefined || raw.trim() === "" || !Number.isInteger(n) || n < 0) return s + p.currentQuantity;
+                      return s + Math.min(n, p.currentQuantity);
+                    }, 0);
+                    const addQtyNum = Number(edit.addQuantity);
+                    const addQty = edit.addQuantity.trim() !== "" && Number.isInteger(addQtyNum) && addQtyNum > 0 ? addQtyNum : 0;
+                    const addCount = Math.max(1, Number(edit.addPalletCount) || 1);
+                    const delta = newTotal + addQty - currentTotal;
+                    const codeChanged = edit.lotCode.trim() !== "" && edit.lotCode.trim() !== l.lotCode;
+
+                    const tinyLabel: React.CSSProperties = {
+                      display: "block", fontSize: 10, fontWeight: 700,
+                      color: "var(--muted)", textTransform: "uppercase", marginBottom: 3,
+                    };
+
+                    return (
+                      <div
+                        key={l.lotId}
+                        style={{
+                          border: `1.5px solid ${delta !== 0 || codeChanged ? "var(--primary)" : "var(--border)"}`,
+                          borderRadius: 10,
+                          overflow: "hidden",
+                        }}
+                      >
+                        {/* Datos del lote */}
+                        <div style={{ background: "var(--bg)", padding: "10px 12px", borderBottom: "1px solid var(--border)", display: "grid", gap: 8 }}>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                            <div>
+                              <label style={tinyLabel}>Código de lote</label>
+                              <input
+                                className="input"
+                                style={{ fontFamily: "monospace", fontWeight: 700 }}
+                                value={edit.lotCode}
+                                onChange={(e) => updateLotEdit(l, "lotCode", e.target.value)}
+                                aria-label={`Código del lote ${l.lotCode}`}
+                              />
+                            </div>
+                            <div>
+                              <label style={tinyLabel}>Lote SAP</label>
+                              <input
+                                className="input"
+                                style={{ fontFamily: "monospace" }}
+                                value={edit.sapLot}
+                                onChange={(e) => updateLotEdit(l, "sapLot", e.target.value)}
+                              />
+                            </div>
+                            <div>
+                              <label style={tinyLabel}>Proveedor del lote</label>
+                              <input
+                                className="input"
+                                value={edit.proveedor}
+                                onChange={(e) => updateLotEdit(l, "proveedor", e.target.value)}
+                                placeholder="(sin cambio)"
+                              />
+                            </div>
+                          </div>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                            <div>
+                              <label style={tinyLabel}>F. Vencimiento</label>
+                              <input
+                                className="input"
+                                type="date"
+                                value={edit.fechaVencimiento}
+                                onChange={(e) => updateLotEdit(l, "fechaVencimiento", e.target.value)}
+                              />
+                            </div>
+                            <div>
+                              <label style={tinyLabel}>F. Fabricación</label>
+                              <input
+                                className="input"
+                                type="date"
+                                value={edit.fechaFabricacion}
+                                onChange={(e) => updateLotEdit(l, "fechaFabricacion", e.target.value)}
+                              />
+                            </div>
+                            <div />
+                          </div>
+                        </div>
+
+                        {/* Pallets del lote */}
+                        <div style={{ padding: "8px 12px" }}>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 120px", gap: 8, padding: "2px 0 6px", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>
+                            <span>Pallet</span>
+                            <span style={{ textAlign: "right" }}>Actual</span>
+                            <span>Nueva cantidad</span>
+                          </div>
+                          <div style={{ display: "grid", gap: 4 }}>
+                            {activePallets.map((p) => {
+                              const raw = edit.pallets[p.id] ?? String(p.currentQuantity);
+                              const n = Number(raw);
+                              const valid = raw.trim() !== "" && Number.isInteger(n) && n >= 0 && n <= p.currentQuantity;
+                              const reduced = valid && n < p.currentQuantity;
+                              return (
+                                <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 120px", gap: 8, alignItems: "center" }}>
+                                  <span style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                    {p.code}
+                                    {p.status === "PARTIAL" && <span className="badge badge--estado-pendiente" style={{ fontSize: 9, marginLeft: 6 }}>PARCIAL</span>}
+                                  </span>
+                                  <span
+                                    style={{ textAlign: "right", fontSize: 12, color: "var(--muted)" }}
+                                    title={p.quantityInMovement !== p.currentQuantity ? `Ingresó con ${p.quantityInMovement.toLocaleString("es-PY")} unid.` : undefined}
+                                  >
+                                    {p.currentQuantity.toLocaleString("es-PY")}
+                                  </span>
+                                  <input
+                                    className="input"
+                                    type="number"
+                                    min={0}
+                                    max={p.currentQuantity}
+                                    value={raw}
+                                    onChange={(e) => updateLotPallet(l, p.id, e.target.value)}
+                                    style={{
+                                      fontWeight: 700, fontSize: 13, padding: "4px 8px",
+                                      borderColor: !valid ? "var(--danger)" : reduced ? "var(--warning)" : undefined,
+                                    }}
+                                    aria-label={`Nueva cantidad del pallet ${p.code}`}
+                                  />
+                                </div>
+                              );
+                            })}
+                            {exitedPallets.map((p) => (
+                              <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 120px", gap: 8, alignItems: "center", opacity: 0.55 }}>
+                                <span style={{ fontFamily: "monospace", fontSize: 12 }}>
+                                  {p.code}
+                                  <span className="badge" style={{ fontSize: 9, marginLeft: 6, background: "var(--muted)", color: "#fff" }}>DESPACHADO</span>
+                                </span>
+                                <span style={{ textAlign: "right", fontSize: 12, color: "var(--muted)" }} title={`Ingresó con ${p.quantityInMovement.toLocaleString("es-PY")} unid.`}>—</span>
+                                <span style={{ fontSize: 11, color: "var(--muted)" }}>No editable</span>
+                              </div>
+                            ))}
+                            {activePallets.length === 0 && exitedPallets.length === 0 && (
+                              <p style={{ fontSize: 12, color: "var(--muted)", margin: 0 }}>Este lote no tiene pallets registrados en el movimiento.</p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Agregar unidades → pallets nuevos */}
+                        <div style={{ borderTop: "1px dashed var(--border)", padding: "8px 12px", display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+                          <div>
+                            <label style={{ ...tinyLabel, color: "var(--success)" }}>➕ Agregar unidades</label>
+                            <input
+                              className="input"
+                              type="number"
+                              min={0}
+                              placeholder="0"
+                              value={edit.addQuantity}
+                              onChange={(e) => updateLotEdit(l, "addQuantity", e.target.value)}
+                              style={{ width: 130, fontWeight: 700 }}
+                              aria-label={`Unidades a agregar al lote ${l.lotCode}`}
+                            />
+                          </div>
+                          <div>
+                            <label style={tinyLabel}>En pallets nuevos</label>
+                            <input
+                              className="input"
+                              type="number"
+                              min={1}
+                              value={edit.addPalletCount}
+                              onChange={(e) => updateLotEdit(l, "addPalletCount", e.target.value)}
+                              style={{ width: 100 }}
+                              aria-label={`Cantidad de pallets nuevos para el lote ${l.lotCode}`}
+                            />
+                          </div>
+                          {addQty > 0 && (
+                            <span style={{ fontSize: 12, color: "var(--success)", fontWeight: 700, paddingBottom: 6 }}>
+                              +{addQty.toLocaleString("es-PY")} unid. en {addCount} pallet{addCount !== 1 ? "s" : ""} nuevo{addCount !== 1 ? "s" : ""}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Resumen del lote */}
+                        <div style={{ background: "var(--bg)", borderTop: "1px solid var(--border)", padding: "7px 12px", fontSize: 12, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                          <span style={{ color: "var(--muted)" }}>
+                            Total actual: <strong style={{ color: "var(--text)" }}>{currentTotal.toLocaleString("es-PY")} unid.</strong>
+                          </span>
+                          <span style={{ color: "var(--muted)" }}>→</span>
+                          <span style={{ color: "var(--muted)" }}>
+                            Nuevo total: <strong style={{ color: "var(--text)" }}>{(newTotal + addQty).toLocaleString("es-PY")} unid.</strong>
+                          </span>
+                          {delta !== 0 ? (
+                            <span style={{ fontWeight: 800, color: delta > 0 ? "var(--success)" : "var(--warning)" }}>
+                              {delta > 0 ? "+" : "−"}{Math.abs(delta).toLocaleString("es-PY")} unid. · requiere aprobación
+                            </span>
+                          ) : codeChanged ? (
+                            <span style={{ fontWeight: 700, color: "var(--primary)" }}>Renombra el lote (directo, auditado)</span>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  <p style={{ fontSize: 11, color: "var(--muted)", margin: 0 }}>
+                    Las reducciones por pallet y los agregados generan solicitudes de ajuste (RLAI/RLAO) pendientes de aprobación
+                    del MANAGER — el stock no cambia hasta aprobar. El código y los datos del lote se aplican al guardar y quedan auditados.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Datos de lotes (global) — solo cuando no está el editor por lote */}
+          {!canEditLots && (isEntry || movement.lotCode) && (
             <div>
               <div
                 style={{

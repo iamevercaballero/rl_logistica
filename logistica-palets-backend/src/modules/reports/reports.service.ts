@@ -23,6 +23,227 @@ export class ReportsService {
     return Number(value) || 0;
   }
 
+  /**
+   * Salud del inventario: verifica el invariante de la triple contabilidad
+   *   Σ Pallet.quantity (no despachados)  ==  Σ Lot.stockActual  ==  Σ Stock.currentQuantity
+   * por producto. Devuelve sólo los productos que divergen, con sus deltas.
+   * Pensado para un endpoint de salud y para un job de alerta periódica.
+   */
+  async inventoryHealth() {
+    const rows = await this.dataSource.query<Array<{
+      productId: string; productCode: string; productDescription: string;
+      stockSum: number; lotSum: number; palletSum: number;
+    }>>(`
+      SELECT
+        pr.id                         AS "productId",
+        pr.code                       AS "productCode",
+        pr.description                AS "productDescription",
+        COALESCE(s.total, 0)::int     AS "stockSum",
+        COALESCE(l.total, 0)::int     AS "lotSum",
+        COALESCE(p.total, 0)::int     AS "palletSum"
+      FROM products pr
+      LEFT JOIN (
+        SELECT "productId", SUM("currentQuantity") AS total FROM stocks GROUP BY "productId"
+      ) s ON s."productId" = pr.id
+      LEFT JOIN (
+        SELECT "productId", SUM("stockActual") AS total FROM lots GROUP BY "productId"
+      ) l ON l."productId" = pr.id
+      LEFT JOIN (
+        SELECT lot."productId", SUM(pa.quantity) AS total
+        FROM pallets pa
+        JOIN lots lot ON lot.id = pa."lotId"
+        WHERE pa.status <> 'EXITED'
+        GROUP BY lot."productId"
+      ) p ON p."productId" = pr.id
+      WHERE COALESCE(s.total, 0) <> COALESCE(l.total, 0)
+         OR COALESCE(l.total, 0) <> COALESCE(p.total, 0)
+      ORDER BY pr.code
+    `);
+
+    const divergent = rows.map((r) => ({
+      ...r,
+      stockVsLot: r.stockSum - r.lotSum,
+      lotVsPallet: r.lotSum - r.palletSum,
+    }));
+
+    return {
+      ok: divergent.length === 0,
+      divergentCount: divergent.length,
+      checkedAt: new Date().toISOString(),
+      divergent,
+    };
+  }
+
+  /**
+   * Ocupación del/los depósito(s): ubicaciones ocupadas vs totales y, si las
+   * ubicaciones tienen capacidad definida, pallets almacenados vs capacidad.
+   */
+  async occupancy() {
+    const rows = await this.dataSource.query<Array<{
+      warehouseId: string; warehouseName: string;
+      totalLocations: number; capacityPallets: number;
+      occupiedLocations: number; palletsStored: number;
+    }>>(`
+      SELECT
+        w.id   AS "warehouseId",
+        w.name AS "warehouseName",
+        COALESCE(loc.total, 0)::int    AS "totalLocations",
+        COALESCE(loc.capacity, 0)::int AS "capacityPallets",
+        COALESCE(pal.occupied, 0)::int AS "occupiedLocations",
+        COALESCE(pal.pallets, 0)::int  AS "palletsStored"
+      FROM warehouses w
+      LEFT JOIN (
+        SELECT "warehouseId",
+               COUNT(*) FILTER (WHERE active) AS total,
+               SUM("capacityPallets")         AS capacity
+        FROM locations GROUP BY "warehouseId"
+      ) loc ON loc."warehouseId" = w.id
+      LEFT JOIN (
+        SELECT l."warehouseId",
+               COUNT(DISTINCT p."currentLocationId") AS occupied,
+               COUNT(p.id)                           AS pallets
+        FROM pallets p
+        JOIN locations l ON l.id = p."currentLocationId"
+        WHERE p.status NOT IN ('EXITED', 'EMPTY')
+        GROUP BY l."warehouseId"
+      ) pal ON pal."warehouseId" = w.id
+      WHERE w.active
+      ORDER BY w.name
+    `);
+
+    const warehouses = rows.map((r) => ({
+      ...r,
+      freeLocations: Math.max(0, r.totalLocations - r.occupiedLocations),
+      locationOccupancyPct: r.totalLocations > 0 ? Math.round((r.occupiedLocations / r.totalLocations) * 100) : 0,
+      capacityOccupancyPct: r.capacityPallets > 0 ? Math.round((r.palletsStored / r.capacityPallets) * 100) : null,
+    }));
+
+    const sum = (k: 'totalLocations' | 'occupiedLocations' | 'palletsStored' | 'capacityPallets') =>
+      warehouses.reduce((s, w) => s + w[k], 0);
+    const totalLocations = sum('totalLocations');
+    const capacityPallets = sum('capacityPallets');
+
+    return {
+      warehouses,
+      totals: {
+        totalLocations,
+        occupiedLocations: sum('occupiedLocations'),
+        freeLocations: Math.max(0, totalLocations - sum('occupiedLocations')),
+        palletsStored: sum('palletsStored'),
+        capacityPallets,
+        locationOccupancyPct: totalLocations > 0 ? Math.round((sum('occupiedLocations') / totalLocations) * 100) : 0,
+        capacityOccupancyPct: capacityPallets > 0 ? Math.round((sum('palletsStored') / capacityPallets) * 100) : null,
+      },
+    };
+  }
+
+  /**
+   * Rotación por producto en un período: unidades despachadas (EXIT) vs stock
+   * actual. turnover = exitUnits / stockActual (veces que rotó respecto a lo que
+   * tiene hoy). Marca dead stock (con existencia y cero salidas). Default: 30 días.
+   */
+  async rotation(from?: string, to?: string) {
+    const end = to ? this.toEndDate(to) : new Date();
+    const start = from ? this.toStartDate(from) : new Date(Date.now() - 30 * 86_400_000);
+
+    const rows = await this.dataSource.query<Array<{
+      productId: string; productCode: string; productDescription: string;
+      exitUnits: number; currentStock: number;
+    }>>(`
+      SELECT
+        pr.id          AS "productId",
+        pr.code        AS "productCode",
+        pr.description AS "productDescription",
+        COALESCE(ex.units, 0)::int AS "exitUnits",
+        COALESCE(st.stock, 0)::int AS "currentStock"
+      FROM products pr
+      LEFT JOIN (
+        SELECT "productId", SUM(quantity) AS units
+        FROM movements
+        WHERE type = 'EXIT' AND date BETWEEN $1 AND $2
+        GROUP BY "productId"
+      ) ex ON ex."productId" = pr.id
+      LEFT JOIN (
+        SELECT "productId", SUM("currentQuantity") AS stock FROM stocks GROUP BY "productId"
+      ) st ON st."productId" = pr.id
+      WHERE pr.active AND (COALESCE(ex.units, 0) > 0 OR COALESCE(st.stock, 0) > 0)
+    `, [start, end]);
+
+    const products = rows.map((r) => ({
+      ...r,
+      turnover: r.currentStock > 0 ? Number((r.exitUnits / r.currentStock).toFixed(2)) : (r.exitUnits > 0 ? null : 0),
+      deadStock: r.exitUnits === 0 && r.currentStock > 0,
+    }));
+
+    return {
+      from: start.toISOString(),
+      to: end.toISOString(),
+      topMovers: products.filter((p) => p.exitUnits > 0).sort((a, b) => b.exitUnits - a.exitUnits).slice(0, 20),
+      deadStock: products.filter((p) => p.deadStock).sort((a, b) => b.currentStock - a.currentStock).slice(0, 20),
+      totals: {
+        products: products.length,
+        exitUnits: products.reduce((s, p) => s + p.exitUnits, 0),
+        currentStock: products.reduce((s, p) => s + p.currentStock, 0),
+      },
+    };
+  }
+
+  /**
+   * Dwell-time / antigüedad de palet: cuánto llevan los pallets en stock.
+   * Métrica base de facturación de almacenaje (pallet-días acumulados) y de
+   * detección de mercadería estancada. Buckets 0-7 / 8-30 / 31-90 / 90+ días.
+   */
+  async dwellTime() {
+    const rows = await this.dataSource.query<Array<{
+      id: string; code: string; quantity: number; createdAt: string; ageDays: string;
+      productCode: string; productDescription: string;
+      lotCode: string; locationCode: string | null; warehouseName: string | null;
+    }>>(`
+      SELECT
+        p.id, p.code, p.quantity, p."createdAt",
+        EXTRACT(EPOCH FROM (now() - p."createdAt")) / 86400 AS "ageDays",
+        pr.code        AS "productCode",
+        pr.description AS "productDescription",
+        l."lotCode",
+        loc.code AS "locationCode",
+        w.name   AS "warehouseName"
+      FROM pallets p
+      JOIN lots l       ON l.id  = p."lotId"
+      JOIN products pr  ON pr.id = l."productId"
+      LEFT JOIN locations  loc ON loc.id = p."currentLocationId"
+      LEFT JOIN warehouses w   ON w.id   = loc."warehouseId"
+      WHERE p.status NOT IN ('EXITED', 'EMPTY')
+      ORDER BY p."createdAt" ASC
+    `);
+
+    const pallets = rows.map((r) => ({
+      id: r.id, code: r.code, quantity: r.quantity, createdAt: r.createdAt,
+      ageDays: Math.floor(Number(r.ageDays) || 0),
+      productCode: r.productCode, productDescription: r.productDescription,
+      lotCode: r.lotCode, locationCode: r.locationCode, warehouseName: r.warehouseName,
+    }));
+
+    const buckets = { d0_7: 0, d8_30: 0, d31_90: 0, d90plus: 0 };
+    let totalPalletDays = 0;
+    for (const p of pallets) {
+      totalPalletDays += p.ageDays;
+      if (p.ageDays <= 7) buckets.d0_7++;
+      else if (p.ageDays <= 30) buckets.d8_30++;
+      else if (p.ageDays <= 90) buckets.d31_90++;
+      else buckets.d90plus++;
+    }
+
+    return {
+      summary: {
+        totalPallets: pallets.length,
+        avgAgeDays: pallets.length > 0 ? Math.round(totalPalletDays / pallets.length) : 0,
+        totalPalletDays, // pallet-días acumulados → base de facturación de almacenaje
+        buckets,
+      },
+      oldest: pallets.slice(0, 50), // ordenados ASC por createdAt → más antiguos primero
+    };
+  }
+
   private toStartDate(value: string) {
     if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
       return new Date(`${value}T00:00:00.000Z`);
@@ -186,6 +407,20 @@ export class ReportsService {
             .addSelect('STRING_AGG(DISTINCT dl."lotCode", \', \' ORDER BY dl."lotCode")', 'lotCodes')
             .addSelect('STRING_AGG(DISTINCT dl."sapLot", \', \' ORDER BY dl."sapLot")', 'sapLots')
             .addSelect('COUNT(DISTINCT dl.id)', 'lotCount')
+            .addSelect(`(
+              SELECT JSON_AGG(lot_row ORDER BY lot_row."lotCode")
+              FROM (
+                SELECT
+                  dl2."lotCode"                                                                 AS "lotCode",
+                  dl2."sapLot"                                                                  AS "sapLot",
+                  COUNT(DISTINCT md2."palletId") FILTER (WHERE md2."palletId" IS NOT NULL)::int AS "pallets",
+                  SUM(md2.quantity)::int                                                        AS "quantity"
+                FROM movement_details md2
+                INNER JOIN lots dl2 ON dl2.id = md2."lotId"
+                WHERE md2."movementId" = md."movementId"
+                GROUP BY dl2.id, dl2."lotCode", dl2."sapLot"
+              ) lot_row
+            )`, 'lotsDetail')
             .groupBy('md."movementId"'),
         'dl_agg',
         'dl_agg."movementId" = m.id',
@@ -271,6 +506,9 @@ export class ReportsService {
         lotCode: row.lotCode ?? null,
         sapLot: row.sapLot ?? null,
         lotCount: this.parseNumber(row.lotCount),
+        lotsDetail: row.lotsDetail
+          ? (Array.isArray(row.lotsDetail) ? row.lotsDetail : JSON.parse(row.lotsDetail as string))
+          : null,
         status: row.status ?? 'NORMAL',
         adjustmentReason: row.adjustmentReason ?? null,
         from: row.fromWarehouseName || row.fromLocationCode ? { warehouseName: row.fromWarehouseName, locationCode: row.fromLocationCode } : null,

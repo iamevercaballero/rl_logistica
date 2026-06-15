@@ -1,5 +1,21 @@
 import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
 
+/** Estado operativo del vehículo. */
+export const transportStatuses = [
+  'DISPONIBLE',
+  'EN_RUTA',
+  'MANTENIMIENTO',
+  'FUERA_DE_SERVICIO',
+] as const;
+export type TransportStatus = (typeof transportStatuses)[number];
+
+/** Chofer asociado al vehículo (serializado en driversJson). */
+export type TransportDriver = {
+  name: string;
+  document?: string | null;
+  phone?: string | null;
+};
+
 @Entity('transports')
 export class Transport {
   @PrimaryGeneratedColumn('uuid')
@@ -13,6 +29,25 @@ export class Transport {
 
   @Column({ nullable: true })
   description?: string;
+
+  /** Estado operativo (DISPONIBLE, EN_RUTA, MANTENIMIENTO, FUERA_DE_SERVICIO). */
+  @Column({ type: 'varchar', length: 20, default: 'DISPONIBLE' })
+  status: string;
+
+  /** Capacidad de carga en pallets. */
+  @Column({ type: 'int', nullable: true })
+  capacityPallets?: number | null;
+
+  /** Capacidad de carga en kilogramos. */
+  @Column({ type: 'int', nullable: true })
+  capacityKg?: number | null;
+
+  /** Choferes asociados: JSON de TransportDriver[]. */
+  @Column({ type: 'text', nullable: true })
+  driversJson?: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  notes?: string | null;
 
   @Column({ default: true })
   active: boolean;

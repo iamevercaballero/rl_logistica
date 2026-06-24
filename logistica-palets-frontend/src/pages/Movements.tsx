@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import ProductSearch from "../components/ProductSearch";
+import ProductCatalogModal from "../components/ProductCatalogModal";
+import LocationPicker from "../components/LocationPicker";
 import AdjustmentInForm from "./AdjustmentInForm";
 import AdjustmentOutForm from "./AdjustmentOutForm";
 import InventoryAdjustmentPage from "./InventoryAdjustment";
@@ -28,8 +30,14 @@ import type { Product } from "../api/products";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
+import { useAuth } from "../auth/AuthContext";
+import { canCreate } from "../auth/rbac";
+import SearchableSelect from "../design-system/SearchableSelect";
 
 type PalletLine = { qty: string };
+
+/** Fecha de hoy (YYYY-MM-DD) en zona horaria de Paraguay, para pre-cargar el campo fecha. */
+const todayISO = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Asuncion" });
 
 // ── Línea del carrito de remito: un producto ya cargado (con sus lotes/pallets)
 //    listo para agregarse al documento multi-producto.
@@ -161,12 +169,19 @@ export default function MovementsPage() {
 
   const [formError, setFormError] = useState("");
 
+  // Permisos: OPERATOR/MANAGER/ADMIN operan; AUDITOR es solo lectura (ve historial).
+  const { user } = useAuth();
+  const canOperate = user ? canCreate("movements", user.role) : false;
+
   // Formulario común
   const [movType, setMovType] = useState<MovementType>("ENTRY");
   // UI-only: cuando es true muestra el módulo de Ajuste de Inventario (RLAI/RLAO)
   const [showInventoryAdj, setShowInventoryAdj] = useState(false);
-  // UI-only: historial de remitos (RLNE/RLNS) con botones de impresión
-  const [showDocHistory, setShowDocHistory] = useState(false);
+  // UI-only: historial de remitos (RLNE/RLNS) con botones de impresión.
+  // AUDITOR (solo lectura) arranca directamente en el historial.
+  const [showDocHistory, setShowDocHistory] = useState(!canOperate);
+  // UI-only: ficha "Ver productos" (catálogo buscable con stock y atributos)
+  const [showProductCatalog, setShowProductCatalog] = useState(false);
 
   // UI-only: último documento confirmado (panel post-confirmación)
   const [lastCreatedDoc, setLastCreatedDoc] = useState<{
@@ -198,7 +213,7 @@ export default function MovementsPage() {
   const [destination, setDestination] = useState("");
   const [notes, setNotes] = useState("");
   const [encargadoId, setEncargadoId] = useState("");
-  const [date, setDate] = useState("");
+  const [date, setDate] = useState(todayISO);
 
   // ENTRADA
   const [entrySapLot, setEntrySapLot] = useState(() => generateSapLot());
@@ -210,6 +225,9 @@ export default function MovementsPage() {
   // TRANSFERENCIA — flujo origen-primero: selección multi-producto de pallets
   const [transferSel, setTransferSel] = useState<Set<string>>(new Set());
   const [transferFilter, setTransferFilter] = useState("");
+  // TRANSFERENCIA — modo producto-primero: el operador busca el producto y el
+  // sistema le muestra en qué ubicaciones está para elegir el origen.
+  const [transferProduct, setTransferProduct] = useState<Product | null>(null);
 
   // CARRITO de remito (entrada/salida multi-producto): productos ya cargados.
   const [cart, setCart] = useState<CartLine[]>([]);
@@ -243,6 +261,26 @@ export default function MovementsPage() {
     enabled: isTransfer && !!toLocationId,
     staleTime: 10_000,
   });
+  // TRANSFERENCIA producto-primero: pallets disponibles del producto buscado
+  const transferProductPalletsQ = useQuery({
+    queryKey: ["pallets", "by-product", transferProduct?.id],
+    queryFn: () => listPallets({ productId: transferProduct!.id, status: "AVAILABLE" }),
+    enabled: isTransfer && !!transferProduct,
+    staleTime: 10_000,
+  });
+  // Agrupa los pallets del producto por ubicación origen, para elegir desde dónde mover
+  const transferProductLocations = useMemo(() => {
+    const map = new Map<string, { locationId: string; code: string; warehouse: string; pallets: number; qty: number }>();
+    for (const p of transferProductPalletsQ.data ?? []) {
+      if (!p.currentLocationId) continue;
+      const cur = map.get(p.currentLocationId) ?? {
+        locationId: p.currentLocationId, code: p.locationCode ?? "—", warehouse: p.warehouseName ?? "", pallets: 0, qty: 0,
+      };
+      cur.pallets += 1; cur.qty += p.quantity;
+      map.set(p.currentLocationId, cur);
+    }
+    return Array.from(map.values()).sort((a, b) => b.qty - a.qty);
+  }, [transferProductPalletsQ.data]);
 
   /** Pallets transferibles del origen (excluye despachados, vacíos y sin producto resoluble). */
   const originPallets = useMemo(
@@ -274,13 +312,7 @@ export default function MovementsPage() {
     onScan: scanPalletByCode,
   });
 
-  const filteredLocations = useMemo(() => {
-    if (isTransfer) return locations;
-    if (!warehouseId) return locations;
-    return locations.filter((l) => l.warehouse?.id === warehouseId || l.warehouseId === warehouseId);
-  }, [isTransfer, warehouseId, locations]);
 
-  const toLocations = useMemo(() => locations.filter((l) => l.id !== fromLocationId), [locations, fromLocationId]);
 
   const locationMap = useMemo<Record<string, string>>(() => {
     const m: Record<string, string> = {};
@@ -314,10 +346,10 @@ export default function MovementsPage() {
   function resetForm() {
     setProduct(null); setWarehouseId(""); setLocationId(""); setFromLocationId(""); setToLocationId("");
     setDocumentNumber(""); setSupplier(""); setCarrier(""); setDriver(""); setVehiclePlate(""); setDestination(""); setNotes("");
-    setEncargadoId(""); setDate("");
+    setEncargadoId(""); setDate(todayISO());
     setEntrySapLot(generateSapLot()); setLotGroups([newLotGroup()]);
     setFefoRows([]);
-    setTransferSel(new Set()); setTransferFilter("");
+    setTransferSel(new Set()); setTransferFilter(""); setTransferProduct(null);
     setCart([]);
     setPendingFiles([]);
     setShowAttachModal(false);
@@ -523,6 +555,15 @@ export default function MovementsPage() {
     if (isEntry) {
       const validGroups = lotGroups.filter((g) => g.lotCode.trim() && Number(g.quantity) > 0);
       if (validGroups.length === 0) return { error: "Agregá al menos un lote con código y cantidad." };
+      // Validación WMS: la suma por pallet debe coincidir con el total del lote.
+      for (const g of validGroups) {
+        if (g.palletLines.length > 0) {
+          const sum = g.palletLines.reduce((s, l) => s + Number(l.qty || 0), 0);
+          if (sum !== Number(g.quantity)) {
+            return { error: `Lote ${g.lotCode.trim()}: la suma de los pallets (${sum}) no coincide con la cantidad total (${g.quantity}). Ajustá las cantidades.` };
+          }
+        }
+      }
       const palletItems: PalletItem[] = validGroups.flatMap((g) => {
         const base = {
           lotCode: g.lotCode.trim(),
@@ -822,7 +863,19 @@ export default function MovementsPage() {
       )}
 
       {/* ── Ajuste de Inventario (RLAI/RLAO) — componente dedicado ── */}
-      {showInventoryAdj && <InventoryAdjustmentPage />}
+      {showInventoryAdj && (
+        <InventoryAdjustmentPage
+          onTypeChange={(t) => {
+            setLastCreatedDoc(null);
+            if (t === "INVENTORY_ADJUSTMENT") return;
+            setShowInventoryAdj(false);
+            setMovType(t as MovementType);
+            setProduct(null); setFefoRows([]); setLotGroups([newLotGroup()]);
+            setTransferSel(new Set()); setTransferFilter(""); setTransferProduct(null);
+            setWizardStep(1);
+          }}
+        />
+      )}
 
       {/* ── Ajuste de Entrada — componente dedicado ── */}
       {!showInventoryAdj && movType === "ADJUSTMENT_IN" && (
@@ -897,21 +950,23 @@ export default function MovementsPage() {
         </section>
       )}
 
-      {/* ── Toggle historial / nuevo remito (solo para ENTRY y EXIT) ── */}
+      {/* ── Toggle historial reciente / nueva operación (solo para ENTRY y EXIT) ── */}
       {!showInventoryAdj && isDocType && !lastCreatedDoc && (
         <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
-          <button
-            type="button"
-            onClick={() => setShowDocHistory(false)}
-            style={{
-              padding: "6px 18px", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer",
-              background: !showDocHistory ? "var(--primary)" : "var(--panel-hi)",
-              color: !showDocHistory ? "#fff" : "var(--muted)",
-              border: !showDocHistory ? "none" : "1px solid var(--border)",
-            }}
-          >
-            Nuevo remito
-          </button>
+          {canOperate && (
+            <button
+              type="button"
+              onClick={() => setShowDocHistory(false)}
+              style={{
+                padding: "6px 18px", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer",
+                background: !showDocHistory ? "var(--primary)" : "var(--panel-hi)",
+                color: !showDocHistory ? "#fff" : "var(--muted)",
+                border: !showDocHistory ? "none" : "1px solid var(--border)",
+              }}
+            >
+              {movType === "EXIT" ? "Nueva salida" : "Nueva entrada"}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setShowDocHistory(true)}
@@ -922,7 +977,7 @@ export default function MovementsPage() {
               border: showDocHistory ? "none" : "1px solid var(--border)",
             }}
           >
-            Historial de remitos
+            Historial reciente
           </button>
         </div>
       )}
@@ -1012,7 +1067,7 @@ export default function MovementsPage() {
       )}
 
       {/* ── Formulario (ENTRY, EXIT, TRANSFER) ── */}
-      {!showInventoryAdj && movType !== "ADJUSTMENT_IN" && movType !== "ADJUSTMENT_OUT" && !showDocHistory && !lastCreatedDoc && <section className="card">
+      {canOperate && !showInventoryAdj && movType !== "ADJUSTMENT_IN" && movType !== "ADJUSTMENT_OUT" && !showDocHistory && !lastCreatedDoc && <section className="card">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
           <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Registrar movimiento</h3>
           {/* Wizard step indicator — only for ENTRY */}
@@ -1090,7 +1145,7 @@ export default function MovementsPage() {
                   setShowInventoryAdj(false);
                   setMovType(val as MovementType);
                   setProduct(null); setFefoRows([]); setLotGroups([newLotGroup()]);
-                  setTransferSel(new Set()); setTransferFilter("");
+                  setTransferSel(new Set()); setTransferFilter(""); setTransferProduct(null);
                   setWizardStep(1);
                 }
               }}
@@ -1102,8 +1157,16 @@ export default function MovementsPage() {
               <option value="ADJUSTMENT_OUT">Ajuste salida</option>
               <option value="INVENTORY_ADJUSTMENT">Ajuste de inventario</option>
             </select>
-            {!isTransfer && <ProductSearch value={product} onChange={setProduct} />}
-            <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} title="Fecha (vacío = hoy)" style={{ width: 150 }} />
+            {!isTransfer && (
+              <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>
+                <div style={{ flex: 1 }}><ProductSearch value={product} onChange={setProduct} /></div>
+                <button type="button" className="btn" onClick={() => setShowProductCatalog(true)}
+                  title="Ver catálogo de productos con stock y atributos" style={{ whiteSpace: "nowrap" }}>
+                  Ver productos
+                </button>
+              </div>
+            )}
+            <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} title="Fecha de la operación (por defecto hoy)" style={{ width: 150 }} />
           </div>
           )}
 
@@ -1111,38 +1174,66 @@ export default function MovementsPage() {
           {(movType !== "ENTRY" || wizardStep === 1) && !isTransfer && movType !== "EXIT" && (
             <>
               <div className="form-section-title">Depósito y ubicación</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <select className="input" value={warehouseId} onChange={(e) => { setWarehouseId(e.target.value); setLocationId(""); }}>
-                  <option value="">Depósito</option>
-                  {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-                </select>
-                <select className="input" value={locationId} onChange={(e) => setLocationId(e.target.value)}>
-                  <option value="">Ubicación (opcional)</option>
-                  {filteredLocations.map((l) => <option key={l.id} value={l.id}>{l.code} · {l.warehouse?.name}</option>)}
-                </select>
+              <div style={{ display: "grid", gap: 8 }}>
+                <SearchableSelect
+                  options={warehouses}
+                  value={warehouses.find((w) => w.id === warehouseId) ?? null}
+                  onChange={(w) => { setWarehouseId(w?.id ?? ""); setLocationId(""); }}
+                  getKey={(w) => w.id}
+                  getLabel={(w) => w.name}
+                  placeholder="Depósito"
+                />
+                <LocationPicker
+                  value={locationId}
+                  onChange={setLocationId}
+                  warehouseId={warehouseId || undefined}
+                  placeholder="Ubicación (opcional)"
+                />
               </div>
             </>
           )}
 
-          {/* Transferencia: origen → destino + contenido multi-producto de la ubicación */}
+          {/* Transferencia: producto-primero + origen → destino */}
           {(movType !== "ENTRY" || wizardStep === 1) && isTransfer && (
             <>
+              {/* Paso 1 — buscar producto y elegir desde qué ubicación moverlo */}
+              <div className="form-section-title">¿Qué producto querés mover?</div>
+              <div style={{ display: "grid", gap: 8, marginBottom: 6 }}>
+                <ProductSearch value={transferProduct} onChange={(p) => { setTransferProduct(p); setFromLocationId(""); setTransferSel(new Set()); }} placeholder="Buscar producto a transferir (opcional)…" />
+                {transferProduct && (
+                  transferProductLocations.length === 0 ? (
+                    <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>
+                      {transferProductPalletsQ.isLoading ? "Buscando ubicaciones…" : "Este producto no tiene pallets disponibles para transferir."}
+                    </p>
+                  ) : (
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>Está en estas ubicaciones — elegí el origen:</span>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {transferProductLocations.map((loc) => (
+                          <button key={loc.locationId} type="button"
+                            onClick={() => { setFromLocationId(loc.locationId); setTransferSel(new Set()); setTransferFilter(""); }}
+                            className="btn"
+                            style={{ fontSize: 12, fontWeight: 700,
+                              background: fromLocationId === loc.locationId ? "var(--primary)" : undefined,
+                              color: fromLocationId === loc.locationId ? "#fff" : undefined }}>
+                            {loc.code} · {loc.pallets} pal. · {loc.qty.toLocaleString("es-PY")} unid.
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                )}
+              </div>
+
               <div className="form-section-title">Origen → Destino</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div>
                   <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Ubicación origen</label>
-                  <select className="input" value={fromLocationId}
-                    onChange={(e) => { setFromLocationId(e.target.value); setTransferSel(new Set()); setTransferFilter(""); }}>
-                    <option value="">Seleccionar origen</option>
-                    {locations.map((l) => <option key={l.id} value={l.id}>{l.code} · {l.warehouse?.name}</option>)}
-                  </select>
+                  <LocationPicker value={fromLocationId} onChange={(id) => { setFromLocationId(id); setTransferSel(new Set()); setTransferFilter(""); }} placeholder="Seleccionar origen" />
                 </div>
                 <div>
                   <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Ubicación destino</label>
-                  <select className="input" value={toLocationId} onChange={(e) => setToLocationId(e.target.value)}>
-                    <option value="">Seleccionar destino</option>
-                    {toLocations.map((l) => <option key={l.id} value={l.id}>{l.code} · {l.warehouse?.name}</option>)}
-                  </select>
+                  <LocationPicker value={toLocationId} onChange={setToLocationId} placeholder="Seleccionar destino" excludeUnavailable />
                   {toLocationId && destPalletsQ.data && (
                     <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--muted)" }}>
                       El destino ya tiene {destPalletsQ.data.filter((p) => p.status !== "EXITED" && p.status !== "EMPTY").length} palet(s)
@@ -1670,35 +1761,36 @@ export default function MovementsPage() {
                 {!isTransfer && <input className="input" placeholder="N° MIC/Factura/Remito" value={documentNumber} onChange={(e) => setDocumentNumber(e.target.value)} />}
                 {isEntry && <input className="input" placeholder="Proveedor" value={supplier} onChange={(e) => setSupplier(e.target.value)} />}
                 {!isTransfer && (
-                  <select
-                    className="input"
-                    value={vehiclePlate}
-                    onChange={(e) => {
-                      const plate = e.target.value;
-                      setVehiclePlate(plate);
+                  <SearchableSelect
+                    options={transports.filter((t) => t.active)}
+                    value={transports.find((t) => t.plate === vehiclePlate) ?? null}
+                    onChange={(v) => {
+                      setVehiclePlate(v?.plate ?? "");
                       // Autocompleta transportadora y conductor desde la ficha del vehículo
-                      const v = transports.find((t) => t.plate === plate);
                       if (v) {
                         if (v.description) setCarrier(v.description);
                         if (v.drivers.length === 1) setDriver(v.drivers[0].name);
                       }
                     }}
-                    title="Vehículo de la flota — vincula el remito a su historial"
-                  >
-                    <option value="">Vehículo / patente</option>
-                    {transports.filter((t) => t.active).map((t) => (
-                      <option key={t.id} value={t.plate}>{t.plate} · {t.type}</option>
-                    ))}
-                  </select>
+                    getKey={(t) => t.id}
+                    getLabel={(t) => t.plate}
+                    getDescription={(t) => t.type}
+                    placeholder="Vehículo / patente"
+                  />
                 )}
                 {!isTransfer && <input className="input" placeholder="Transportadora" value={carrier} onChange={(e) => setCarrier(e.target.value)} />}
                 {!isTransfer && <input className="input" placeholder="Conductor" value={driver} onChange={(e) => setDriver(e.target.value)} />}
                 {movType === "EXIT" && <input className="input" placeholder="Destino" value={destination} onChange={(e) => setDestination(e.target.value)} />}
                 {!isTransfer && (
-                  <select className="input" value={encargadoId} onChange={(e) => setEncargadoId(e.target.value)}>
-                    <option value="">Encargado recepción</option>
-                    {users.map((u) => <option key={u.id} value={u.id}>{u.fullName || u.username} ({u.role})</option>)}
-                  </select>
+                  <SearchableSelect
+                    options={users}
+                    value={users.find((u) => u.id === encargadoId) ?? null}
+                    onChange={(u) => setEncargadoId(u?.id ?? "")}
+                    getKey={(u) => u.id}
+                    getLabel={(u) => u.fullName || u.username}
+                    getBadge={(u) => u.role}
+                    placeholder="Encargado recepción"
+                  />
                 )}
               </div>
               <textarea className="input"
@@ -1902,6 +1994,13 @@ export default function MovementsPage() {
             </button>
           </div>
         </div>
+      )}
+
+      {showProductCatalog && (
+        <ProductCatalogModal
+          onSelect={(p) => setProduct(p)}
+          onClose={() => setShowProductCatalog(false)}
+        />
       )}
 
     </div>

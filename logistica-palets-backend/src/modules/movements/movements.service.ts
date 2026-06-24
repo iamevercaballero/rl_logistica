@@ -19,6 +19,7 @@ import { Location } from '../locations/entities/location.entity';
 import { Warehouse } from '../warehouses/entities/warehouse.entity';
 import { Stock } from '../stocks/entities/stock.entity';
 import { Lot } from '../lots/entities/lot.entity';
+import { normalizeLotCode } from '../lots/lots.service';
 import { Pallet } from '../pallets/entities/pallet.entity';
 import { DeepPartial } from 'typeorm/common/DeepPartial';
 import { EventsGateway } from '../events/events.gateway';
@@ -817,7 +818,7 @@ export class MovementsService {
       }
 
       // ── Renombre de código de lote ──
-      const newCode = edit.newLotCode?.trim();
+      const newCode = edit.newLotCode ? normalizeLotCode(edit.newLotCode) : undefined;
       if (newCode && newCode !== lot.lotCode) {
         const collision = await this.dataSource
           .getRepository(Lot)
@@ -1390,6 +1391,7 @@ export class MovementsService {
     status = 'NORMAL',
   ): Promise<Lot> {
     const repo = manager.getRepository(Lot);
+    lotCode = normalizeLotCode(lotCode);
     let lot = await repo.findOne({ where: { productId, lotCode } });
     if (!lot) {
       lot = repo.create({

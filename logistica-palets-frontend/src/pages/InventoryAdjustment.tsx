@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import DispatchLogDrawer from "../components/DispatchLogDrawer";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import ProductSearch from "../components/ProductSearch";
+import ProductStockPanel from "../components/ProductStockPanel";
 import type { Product } from "../api/products";
 import { listWarehouses } from "../api/warehouses";
 import { listLocations } from "../api/locations";
@@ -22,6 +23,7 @@ import {
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { useAuth } from "../auth/AuthContext";
+import { canApprove } from "../auth/rbac";
 
 // ── Tipos locales ────────────────────────────────────────────────────────────
 type PalletLine = { qty: string };
@@ -64,11 +66,13 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 // ── Componente principal ─────────────────────────────────────────────────────
-export default function InventoryAdjustmentPage() {
+type MovementNav = "ENTRY" | "EXIT" | "TRANSFER" | "ADJUSTMENT_IN" | "ADJUSTMENT_OUT" | "INVENTORY_ADJUSTMENT";
+
+export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange?: (t: MovementNav) => void } = {}) {
   const { toast } = useToast();
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const canApprove = user?.role === "ADMIN" || user?.role === "MANAGER";
+  const userCanApprove = user ? canApprove(user.role) : false;
 
   const [adjType, setAdjType] = useState<AdjustmentType>("ADJUSTMENT_IN");
   const isIn = adjType === "ADJUSTMENT_IN";
@@ -190,6 +194,16 @@ export default function InventoryAdjustmentPage() {
     if (isIn) {
       const validGroups = lotGroups.filter((g) => g.lotCode.trim() && Number(g.quantity) > 0);
       if (validGroups.length === 0) return { error: "Agregá al menos un lote con código y cantidad." };
+      // Validación WMS: la suma de las cantidades por pallet debe coincidir con el
+      // total declarado del lote. Si no cuadra, no se permite continuar.
+      for (const g of validGroups) {
+        if (g.palletLines.length > 0) {
+          const sum = g.palletLines.reduce((s, l) => s + Number(l.qty || 0), 0);
+          if (sum !== Number(g.quantity)) {
+            return { error: `Lote ${g.lotCode.trim()}: la suma de los pallets (${sum}) no coincide con la cantidad total (${g.quantity}). Ajustá las cantidades.` };
+          }
+        }
+      }
       const palletItems = validGroups.flatMap((g) => {
         const base = { lotCode: g.lotCode.trim(), fechaVencimiento: g.fechaVencimiento || undefined, fechaFabricacion: g.fechaFabricacion || undefined, sapLot: entrySapLot.trim() || undefined };
         if (g.palletLines.length > 0) return g.palletLines.map((l) => ({ ...base, quantity: Number(l.qty) }));
@@ -310,11 +324,44 @@ export default function InventoryAdjustmentPage() {
             Gestioná diferencias de inventario, mermas, roturas y conteos físicos.
           </p>
         </div>
-        {canApprove && pendingCount > 0 && (
+        {userCanApprove && pendingCount > 0 && (
           <div style={{ background: "var(--warning)", color: "#000", fontWeight: 700, fontSize: 13, padding: "6px 14px", borderRadius: 8 }}>
             ⚠ {pendingCount} solicitud{pendingCount !== 1 ? "es" : ""} pendiente{pendingCount !== 1 ? "s" : ""} de aprobación
           </div>
         )}
+      </div>
+
+      {/* ══ Navegación entre tipos de movimiento ══════════════════ */}
+      {onTypeChange && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+          <button type="button" className="btn" onClick={() => onTypeChange("ENTRY")} style={{ fontWeight: 700 }}>
+            ← Volver a Movimientos
+          </button>
+          <div role="tablist" style={{ display: "inline-flex", gap: 4, flexWrap: "wrap" }}>
+            {([
+              ["ENTRY", "Entrada"], ["EXIT", "Salida"], ["TRANSFER", "Transferencia"],
+              ["ADJUSTMENT_IN", "Ajuste Entrada"], ["ADJUSTMENT_OUT", "Ajuste Salida"], ["INVENTORY_ADJUSTMENT", "Diferencia Inventario"],
+            ] as [MovementNav, string][]).map(([t, label]) => {
+              const activeTab = t === "INVENTORY_ADJUSTMENT";
+              return (
+                <button key={t} type="button" role="tab" aria-selected={activeTab}
+                  onClick={() => !activeTab && onTypeChange(t)}
+                  className="btn"
+                  style={{ fontSize: 12, fontWeight: 700, border: "none",
+                    background: activeTab ? "var(--primary)" : "var(--panel-hi)",
+                    color: activeTab ? "#fff" : "var(--muted)" }}>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Definición — diferencia vs ajuste de movimiento */}
+      <div style={{ background: "var(--panel-hi)", border: "1px solid var(--border)", borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: "var(--muted)" }}>
+        <strong style={{ color: "var(--text)" }}>Diferencia de inventario</strong> corrige el stock físico por producto, lote, pallet o ubicación, sin depender de una entrada o salida específica.
+        Para corregir un movimiento ya generado, usá <strong style={{ color: "var(--text)" }}>Ajuste de Entrada</strong> o <strong style={{ color: "var(--text)" }}>Ajuste de Salida</strong>.
       </div>
 
       {/* ══ FORMULARIO ══════════════════════════════════════════ */}
@@ -378,9 +425,12 @@ export default function InventoryAdjustmentPage() {
 
         {/* ENTRADA: igual que Movements.tsx */}
         {isIn && wizardStep === 1 && (
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <div style={{ flex: 1 }}><ProductSearch value={product} onChange={setProduct} /></div>
-            <input className="input" value={entrySapLot} onChange={(e) => setEntrySapLot(e.target.value)} placeholder="Lote SAP" style={{ width: 140, fontSize: 13 }} />
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <div style={{ flex: 1 }}><ProductSearch value={product} onChange={setProduct} /></div>
+              <input className="input" value={entrySapLot} onChange={(e) => setEntrySapLot(e.target.value)} placeholder="Lote SAP" style={{ width: 140, fontSize: 13 }} />
+            </div>
+            {product && <ProductStockPanel productId={product.id} />}
           </div>
         )}
 
@@ -425,6 +475,17 @@ export default function InventoryAdjustmentPage() {
                         </div>
                       ))}
                     </div>
+                    {(() => {
+                      const sum = group.palletLines.reduce((s, l) => s + Number(l.qty || 0), 0);
+                      const total = Number(group.quantity || 0);
+                      const ok = sum === total;
+                      return (
+                        <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: ok ? "var(--success)" : "var(--danger)" }}>
+                          {ok ? "✓" : "✗"} Suma pallets: {sum} / Total: {total}
+                          {!ok && <span style={{ fontWeight: 400 }}> — deben coincidir</span>}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>
@@ -436,8 +497,9 @@ export default function InventoryAdjustmentPage() {
         {/* SALIDA: FEFO igual que EXIT */}
         {!isIn && (
           <>
-            <div style={{ marginBottom: 8 }}>
+            <div style={{ marginBottom: 8, display: "grid", gap: 8 }}>
               <ProductSearch value={product} onChange={(p) => { setProduct(p); setFefoRows([]); }} />
+              {product && <ProductStockPanel productId={product.id} />}
             </div>
             {product && fefoRows.length === 0 && !fefoQ.isFetching && (
               <p style={{ fontSize: 13, color: "var(--muted)" }}>Sin stock disponible para este material.</p>
@@ -561,7 +623,7 @@ export default function InventoryAdjustmentPage() {
         ) : (
           <div style={{ display: "grid", gap: 8 }}>
             {adjustments.map((adj) => (
-              <RequestCard key={adj.id} adj={adj} canApprove={canApprove}
+              <RequestCard key={adj.id} adj={adj} canApprove={userCanApprove}
                 rejectingId={rejectingId} rejectReason={rejectReason}
                 onApprove={() => approveMut.mutate(adj.id)}
                 onStartReject={() => { setRejectingId(adj.id); setRejectReason(""); }}

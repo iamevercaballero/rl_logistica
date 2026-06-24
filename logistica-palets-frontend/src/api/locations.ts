@@ -41,6 +41,30 @@ export async function listLocations() {
   return data;
 }
 
+export type LocationAvailabilityStatus = "FREE" | "PARTIAL" | "FULL" | "BLOCKED";
+
+export type LocationAvailability = {
+  id: string;
+  code: string;
+  zone: string | null;
+  aisle: string | null;
+  rack: string | null;
+  level: number | null;
+  position: number | null;
+  warehouseId: string | null;
+  warehouseName: string | null;
+  active: boolean;
+  occupied: number;
+  capacity: number | null;
+  status: LocationAvailabilityStatus;
+};
+
+/** Disponibilidad por ubicación (ocupación vs capacidad) para el selector guiado. */
+export async function getLocationAvailability() {
+  const { data } = await api.get<LocationAvailability[]>("/locations/availability");
+  return data;
+}
+
 export async function createLocation(payload: {
   code: string;
   warehouseId: string;

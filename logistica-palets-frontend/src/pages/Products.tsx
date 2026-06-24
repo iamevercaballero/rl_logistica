@@ -1,8 +1,8 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createProduct, deleteProduct, listProducts, type Product } from "../api/products";
+import { createProduct, deleteProduct, listProducts, updateProduct, type Product } from "../api/products";
 import { useAuth } from "../auth/AuthContext";
-import { canCreate, canDelete } from "../auth/rbac";
+import { canCreate, canDelete, canUpdate } from "../auth/rbac";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 
@@ -33,6 +33,7 @@ export default function ProductsPage() {
   const { user } = useAuth();
   const role = user?.role;
   const allowCreate = role ? canCreate("products", role) : false;
+  const allowUpdate = role ? canUpdate("products", role) : false;
   const allowDelete = role ? canDelete("products", role) : false;
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -98,6 +99,19 @@ export default function ProductsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["products"] });
       toast.success("Material eliminado");
+    },
+    onError: (err) => toast.error(getFriendlyApiError(err)),
+  });
+
+  // Edición de material existente (modal)
+  const [editing, setEditing] = useState<Product | null>(null);
+  const updateMut = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: Parameters<typeof updateProduct>[1] }) =>
+      updateProduct(id, payload),
+    onSuccess: (updated) => {
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+      toast.success(`Material ${updated.code} actualizado`);
+      setEditing(null);
     },
     onError: (err) => toast.error(getFriendlyApiError(err)),
   });
@@ -285,7 +299,8 @@ export default function ProductsPage() {
                 <th scope="col">Código</th>
                 <th scope="col">Descripción</th>
                 <th scope="col">UM</th>
-                <th scope="col" style={{ textAlign: "center" }}>Apilable</th>
+                <th scope="col" style={{ textAlign: "center" }} title="Indica si este material puede colocarse sobre otro pallet.">Apilable</th>
+                <th scope="col" style={{ textAlign: "center" }} title="Indica si otro pallet puede colocarse encima de este material sin dañarlo.">Recibe peso</th>
                 <th scope="col">Estado</th>
                 <th scope="col" />
               </tr>
@@ -297,23 +312,37 @@ export default function ProductsPage() {
                   <td>{item.description}</td>
                   <td><span className="badge">{item.unitOfMeasure ?? "-"}</span></td>
                   <td style={{ textAlign: "center" }}>
-                    {item.stackable === false ? (
-                      <span title="No apilable" style={{ color: "var(--danger)" }} aria-label="No apilable">✗</span>
-                    ) : (
-                      <span title="Apilable" style={{ color: "var(--success)" }} aria-label="Apilable">✓</span>
+                    <span className={`badge ${item.stackable === false ? "" : "badge--entry"}`}
+                      title={item.stackable === false ? "No apilable" : "Apilable"}>
+                      {item.stackable === false ? "No" : "Sí"}
+                    </span>
+                    {item.stackable !== false && item.maxStackLevel != null && (
+                      <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: 4 }}>≤{item.maxStackLevel}</span>
                     )}
-                    {item.maxStackLevel != null && (
-                      <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: 4 }}>
-                        ≤{item.maxStackLevel}
-                      </span>
-                    )}
+                  </td>
+                  <td style={{ textAlign: "center" }}>
+                    <span className={`badge ${item.canReceiveWeightOnTop === false ? "" : "badge--entry"}`}
+                      title={item.canReceiveWeightOnTop === false ? "No recibe peso encima" : "Recibe peso encima"}>
+                      {item.canReceiveWeightOnTop === false ? "No" : "Sí"}
+                    </span>
                   </td>
                   <td>
                     <span className={item.active ? "badge badge--entry" : "badge"}>
                       {item.active ? "Activo" : "Inactivo"}
                     </span>
                   </td>
-                  <td style={{ textAlign: "right" }}>
+                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                    {allowUpdate ? (
+                      <button
+                        className="btn"
+                        onClick={() => setEditing(item)}
+                        disabled={saving}
+                        aria-label={`Editar material ${item.code}`}
+                        style={{ marginRight: allowDelete ? 6 : 0 }}
+                      >
+                        Editar
+                      </button>
+                    ) : null}
                     {allowDelete ? (
                       <button
                         className="btn btn--danger"
@@ -331,6 +360,133 @@ export default function ProductsPage() {
           </table>
         )
       ) : null}
+
+      {/* Leyenda explicativa de atributos logísticos */}
+      <div style={{ marginTop: 12, display: "flex", gap: 18, flexWrap: "wrap", fontSize: 12, color: "var(--muted)" }}>
+        <span><strong style={{ color: "var(--text)" }}>Apilable:</strong> el material puede colocarse sobre otro pallet.</span>
+        <span><strong style={{ color: "var(--text)" }}>Recibe peso encima:</strong> otro pallet puede colocarse encima sin dañarlo.</span>
+      </div>
+
+      {editing && (
+        <EditProductModal
+          product={editing}
+          units={UNITS_OF_MEASURE}
+          saving={updateMut.isPending}
+          onCancel={() => setEditing(null)}
+          onSave={(payload) => updateMut.mutate({ id: editing.id, payload })}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Modal de edición de material ───────────────────────────────────────────────
+type EditPayload = Parameters<typeof updateProduct>[1];
+
+function EditProductModal({
+  product, units, saving, onCancel, onSave,
+}: {
+  product: Product;
+  units: ReadonlyArray<{ value: string; label: string }>;
+  saving: boolean;
+  onCancel: () => void;
+  onSave: (payload: EditPayload) => void;
+}) {
+  const [code, setCode] = useState(product.code);
+  const [description, setDescription] = useState(product.description);
+  const [unitOfMeasure, setUnitOfMeasure] = useState(product.unitOfMeasure ?? "UN");
+  const [stackable, setStackable] = useState(product.stackable !== false);
+  const [maxStackLevel, setMaxStackLevel] = useState(product.maxStackLevel != null ? String(product.maxStackLevel) : "");
+  const [canReceiveWeightOnTop, setCanReceiveWeightOnTop] = useState(product.canReceiveWeightOnTop !== false);
+  const [active, setActive] = useState(product.active);
+
+  const codeError = code.trim().length < 2 || code.trim().length > 80;
+  const descError = description.trim().length < 2 || description.trim().length > 160;
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (codeError || descError) return;
+    onSave({
+      code: code.trim(),
+      description: description.trim(),
+      unitOfMeasure,
+      stackable,
+      maxStackLevel: stackable && maxStackLevel ? Number(maxStackLevel) : null,
+      canReceiveWeightOnTop,
+      active,
+    });
+  }
+
+  return (
+    <div
+      onMouseDown={onCancel}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 2000,
+        display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+      }}
+      role="dialog" aria-modal="true" aria-label={`Editar material ${product.code}`}
+    >
+      <form
+        onMouseDown={(e) => e.stopPropagation()}
+        onSubmit={submit}
+        className="card"
+        style={{ width: "100%", maxWidth: 460, display: "grid", gap: 12, maxHeight: "90vh", overflowY: "auto" }}
+      >
+        <h2 style={{ fontSize: 18, fontWeight: 800, margin: 0 }}>Editar material</h2>
+
+        <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 700, color: "var(--muted)" }}>
+          CÓDIGO
+          <input className="input" value={code} onChange={(e) => setCode(e.target.value)} aria-invalid={codeError} />
+        </label>
+        <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 700, color: "var(--muted)" }}>
+          DESCRIPCIÓN
+          <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} aria-invalid={descError} />
+        </label>
+        <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 700, color: "var(--muted)" }}>
+          UNIDAD DE MEDIDA
+          <select className="input" value={unitOfMeasure} onChange={(e) => setUnitOfMeasure(e.target.value)}>
+            {units.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+          </select>
+        </label>
+
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}
+            title="El material puede colocarse sobre otro pallet.">
+            <input type="checkbox" checked={stackable} onChange={(e) => setStackable(e.target.checked)} />
+            Apilable
+          </label>
+          {stackable && (
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+              <span style={{ color: "var(--muted)" }}>Niveles máx.:</span>
+              <input className="input" type="number" min={1} max={20} value={maxStackLevel}
+                onChange={(e) => setMaxStackLevel(e.target.value)} placeholder="Sin límite" style={{ width: 90 }} />
+            </label>
+          )}
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}
+            title="Otro pallet puede colocarse encima sin dañarlo.">
+            <input type="checkbox" checked={canReceiveWeightOnTop} onChange={(e) => setCanReceiveWeightOnTop(e.target.checked)} />
+            Recibe peso encima
+          </label>
+        </div>
+
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
+          <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
+          Activo
+        </label>
+
+        {(codeError || descError) && (
+          <p className="form-error" role="alert" style={{ marginBottom: 0 }}>
+            Revisá código (2-80) y descripción (2-160).
+          </p>
+        )}
+
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
+          <button type="button" className="btn" onClick={onCancel} disabled={saving}>Cancelar</button>
+          <button type="submit" className="btn btn--primary" disabled={saving || codeError || descError}>
+            {saving ? "Guardando..." : "Guardar cambios"}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

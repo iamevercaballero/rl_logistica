@@ -14,6 +14,9 @@ export type TransportDriver = {
   name: string;
   document?: string | null;
   phone?: string | null;
+  license?: string | null;
+  licenseExpiry?: string | null;
+  status?: string | null;
 };
 
 @Entity('transports')

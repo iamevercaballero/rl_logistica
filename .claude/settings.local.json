@@ -118,7 +118,16 @@
       "Bash(grep -n \"migration\\\\|scripts\" .gitignore)",
       "Bash(python3 -c \"import json; json.load\\(open\\('package.json'\\)\\); print\\('package.json OK'\\)\")",
       "Bash(chmod +x scripts/generate-baseline.sh)",
-      "Bash(bash -n scripts/generate-baseline.sh)"
+      "Bash(bash -n scripts/generate-baseline.sh)",
+      "Read(//private/tmp/wmsdocx/**)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(node_modules/.bin/tsc --noEmit -p tsconfig.json)",
+      "Bash(node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json)",
+      "Bash(command -v volta fnm)",
+      "Bash(find /usr/local /opt/homebrew /Users/ever -maxdepth 4 -name node -type f 2>/dev/null | grep -v node_modules | head; echo \"---nvm dir---\"; ls -la ~/.nvm 2>/dev/null | head)",
+      "Bash(grep -n \"showAttachModal\\\\|AttachmentUploader\\\\|^  \\);$\\\\|^}\" src/pages/Movements.tsx)",
+      "Bash(docker run *)",
+      "Bash(grep -n 'setTransferSel\\(new Set\\(\\)\\); setTransferFilter\\(\"\"\\);$' src/pages/Movements.tsx)"
     ]
   }
 }

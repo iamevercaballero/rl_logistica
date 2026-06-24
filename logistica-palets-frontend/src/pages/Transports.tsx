@@ -25,6 +25,7 @@ import { useAuth } from "../auth/AuthContext";
 import { canCreate, canDelete } from "../auth/rbac";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
+import { formatParaguayPhone, isValidParaguayPhone } from "../utils/phone";
 
 /* ── Helpers ───────────────────────────────────────────────────────────── */
 function fmtDate(s?: string | null): string {
@@ -436,41 +437,84 @@ function ChoferesTab({ vehicle, allowEdit, onChanged }: { vehicle: Transport; al
   function setRow(i: number, field: keyof TransportDriver, val: string) {
     setDrivers((d) => d.map((row, idx) => (idx === i ? { ...row, [field]: val } : row)));
   }
-  function addRow() { setDrivers((d) => [...d, { name: "", document: "", phone: "" }]); }
+  function addRow() { setDrivers((d) => [...d, { name: "", document: "", phone: "", license: "", licenseExpiry: "", status: "ACTIVO" }]); }
   function removeRow(i: number) { setDrivers((d) => d.filter((_, idx) => idx !== i)); }
+
+  // Validaciones: nombre y CI obligatorios; teléfono válido si se ingresó.
+  const invalidPhone = (d: TransportDriver) => !!d.phone?.trim() && !isValidParaguayPhone(d.phone);
+  const hasErrors = drivers.some((d) => !d.name.trim() || !d.document?.trim() || invalidPhone(d));
+
   function save() {
-    const clean = drivers.map((d) => ({ name: d.name.trim(), document: d.document?.trim() || undefined, phone: d.phone?.trim() || undefined })).filter((d) => d.name);
+    if (hasErrors) { toast.error("Revisá nombre, CI y formato de teléfono de los choferes."); return; }
+    const clean = drivers
+      .map((d) => ({
+        name: d.name.trim(),
+        document: d.document?.trim() || undefined,
+        phone: d.phone?.trim() || undefined,
+        license: d.license?.trim() || undefined,
+        licenseExpiry: d.licenseExpiry?.trim() || undefined,
+        status: d.status || "ACTIVO",
+      }))
+      .filter((d) => d.name);
     mut.mutate(clean);
   }
 
   const label: React.CSSProperties = { display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 };
 
   return (
-    <div style={{ display: "grid", gap: 10, maxWidth: 700 }}>
+    <div style={{ display: "grid", gap: 10, maxWidth: 760 }}>
       {drivers.length === 0 && <p style={{ color: "var(--muted)", fontSize: 13, margin: 0 }}>Sin choferes asociados.</p>}
       {drivers.map((d, i) => (
-        <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 140px 140px auto", gap: 8, alignItems: "end", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 10px" }}>
-          <div>
-            <label style={label}>Nombre *</label>
-            <input className="input" value={d.name} disabled={!allowEdit} onChange={(e) => setRow(i, "name", e.target.value)} />
+        <div key={i} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px", display: "grid", gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={label}>Nombre completo *</label>
+              <input className="input" value={d.name} disabled={!allowEdit} onChange={(e) => setRow(i, "name", e.target.value)}
+                aria-invalid={!d.name.trim()} />
+            </div>
+            <div>
+              <label style={label}>Número de CI *</label>
+              <input className="input" value={d.document ?? ""} disabled={!allowEdit} onChange={(e) => setRow(i, "document", e.target.value)}
+                aria-invalid={!d.document?.trim()} placeholder="Ej: 1234567" />
+            </div>
           </div>
-          <div>
-            <label style={label}>CI / Documento</label>
-            <input className="input" value={d.document ?? ""} disabled={!allowEdit} onChange={(e) => setRow(i, "document", e.target.value)} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={label}>Teléfono</label>
+              <input className="input" value={d.phone ?? ""} disabled={!allowEdit}
+                onChange={(e) => setRow(i, "phone", formatParaguayPhone(e.target.value))}
+                onFocus={(e) => { if (!e.target.value) setRow(i, "phone", "+595 "); }}
+                placeholder="+595 981 123456" inputMode="tel" aria-invalid={invalidPhone(d)} />
+              {invalidPhone(d) && <span style={{ fontSize: 11, color: "var(--danger)" }}>Formato: +595 981 123456</span>}
+            </div>
+            <div>
+              <label style={label}>Licencia</label>
+              <input className="input" value={d.license ?? ""} disabled={!allowEdit} onChange={(e) => setRow(i, "license", e.target.value)}
+                placeholder="N° de licencia" />
+            </div>
           </div>
-          <div>
-            <label style={label}>Teléfono</label>
-            <input className="input" value={d.phone ?? ""} disabled={!allowEdit} onChange={(e) => setRow(i, "phone", e.target.value)} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 10, alignItems: "end" }}>
+            <div>
+              <label style={label}>Vencimiento de licencia</label>
+              <input className="input" type="date" value={d.licenseExpiry ?? ""} disabled={!allowEdit} onChange={(e) => setRow(i, "licenseExpiry", e.target.value)} />
+            </div>
+            <div>
+              <label style={label}>Estado</label>
+              <select className="input" value={d.status ?? "ACTIVO"} disabled={!allowEdit} onChange={(e) => setRow(i, "status", e.target.value)}>
+                <option value="ACTIVO">Activo</option>
+                <option value="INACTIVO">Inactivo</option>
+              </select>
+            </div>
+            {allowEdit && (
+              <button type="button" className="btn" style={{ color: "var(--danger)", padding: "6px 12px" }} onClick={() => removeRow(i)} aria-label="Quitar chofer">Quitar</button>
+            )}
           </div>
-          {allowEdit && (
-            <button type="button" className="btn" style={{ color: "var(--danger)", padding: "6px 10px" }} onClick={() => removeRow(i)} aria-label="Quitar chofer">×</button>
-          )}
         </div>
       ))}
       {allowEdit && (
         <div style={{ display: "flex", gap: 10 }}>
           <button type="button" className="btn" onClick={addRow}>+ Agregar chofer</button>
-          <button type="button" className="btn btn--primary" onClick={save} disabled={mut.isPending}>
+          <button type="button" className="btn btn--primary" onClick={save} disabled={mut.isPending || hasErrors}>
             {mut.isPending ? "Guardando…" : "✓ Guardar choferes"}
           </button>
         </div>
@@ -510,8 +554,8 @@ function DocsTab({ vehicleId, attachments, photo, loading, allowEdit }: {
       {/* Subir documento */}
       {allowEdit && (
         <div>
-          <div style={{ fontSize: 11, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", marginBottom: 8 }}>Adjuntar documento o foto</div>
-          <AttachmentUploader entityType="VEHICLE" entityId={vehicleId} />
+          <div style={{ fontSize: 11, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", marginBottom: 8 }}>Adjuntar documento o foto del vehículo</div>
+          <AttachmentUploader entityType="VEHICLE" entityId={vehicleId} categories={["CAMION", "OTRO"]} defaultCategory="CAMION" />
         </div>
       )}
 

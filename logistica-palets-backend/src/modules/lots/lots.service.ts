@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Lot } from './entities/lot.entity';
@@ -6,6 +6,15 @@ import { Product } from '../products/entities/product.entity';
 import { Pallet } from '../pallets/entities/pallet.entity';
 import { CreateLotDto } from './dto/create-lot.dto';
 import { UpdateLotDto } from './dto/update-lot.dto';
+
+/**
+ * Normaliza el código de lote para evitar duplicados por diferencias de
+ * mayúsculas/minúsculas o espacios. Reglas WMS: trim + uppercase + colapsar
+ * espacios internos. Ej: " l2444 " → "L2444", "L 2444" → "L 2444".
+ */
+export function normalizeLotCode(code: string): string {
+  return (code ?? '').trim().replace(/\s+/g, ' ').toUpperCase();
+}
 
 @Injectable()
 export class LotsService {
@@ -22,8 +31,16 @@ export class LotsService {
     const product = await this.productRepo.findOne({ where: { id: dto.productId } });
     if (!product) throw new NotFoundException('Producto no encontrado');
 
+    const lotCode = normalizeLotCode(dto.lotCode);
+    if (!lotCode) throw new BadRequestException('El código de lote es obligatorio');
+
+    const existing = await this.lotRepo.findOne({ where: { productId: dto.productId, lotCode } });
+    if (existing) {
+      throw new BadRequestException(`Ya existe el lote "${lotCode}" para este producto`);
+    }
+
     const lot = this.lotRepo.create({
-      lotCode: dto.lotCode,
+      lotCode,
       productId: dto.productId,
       product,
       fechaVencimiento: dto.fechaVencimiento ?? null,
@@ -138,6 +155,7 @@ export class LotsService {
     fechaFabricacion?: string,
     sapLot?: string,
   ): Promise<Lot> {
+    lotCode = normalizeLotCode(lotCode);
     let lot = await this.lotRepo.findOne({ where: { productId, lotCode } });
     if (!lot) {
       lot = await this.lotRepo.save(this.lotRepo.create({
@@ -162,6 +180,17 @@ export class LotsService {
   async update(id: string, dto: UpdateLotDto) {
     const lot = await this.findOne(id);
     Object.assign(lot, dto);
+    if (dto.lotCode !== undefined) {
+      const lotCode = normalizeLotCode(dto.lotCode);
+      if (!lotCode) throw new BadRequestException('El código de lote es obligatorio');
+      if (lotCode !== lot.lotCode) {
+        const dup = await this.lotRepo.findOne({ where: { productId: lot.productId, lotCode } });
+        if (dup && dup.id !== id) {
+          throw new BadRequestException(`Ya existe el lote "${lotCode}" para este producto`);
+        }
+      }
+      lot.lotCode = lotCode;
+    }
     return this.lotRepo.save(lot);
   }
 

@@ -14,10 +14,15 @@ export function transportStatusMeta(status?: string | null) {
   return TRANSPORT_STATUSES.find((s) => s.value === status) ?? TRANSPORT_STATUSES[0];
 }
 
+export type DriverStatus = "ACTIVO" | "INACTIVO";
+
 export type TransportDriver = {
   name: string;
   document?: string | null;
   phone?: string | null;
+  license?: string | null;
+  licenseExpiry?: string | null;
+  status?: DriverStatus | string | null;
 };
 
 export type Transport = {

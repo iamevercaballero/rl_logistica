@@ -15,18 +15,26 @@ interface Props {
   onUploaded?: () => void;
   /** Modo diferido: en vez de subir, entrega el archivo al padre (p.ej. remito aún no confirmado). */
   onCollect?: (file: File, name: string, category: AttachmentCategory) => void;
+  /** Restringe las categorías disponibles (ej: en Transporte no aplican REMITO/PALLET). */
+  categories?: AttachmentCategory[];
+  /** Categoría seleccionada por defecto. */
+  defaultCategory?: AttachmentCategory;
 }
 
 const ACCEPTED = ".pdf,.jpg,.jpeg,.png,.webp,.heic,.doc,.docx,.xls,.xlsx";
 
-export default function AttachmentUploader({ entityType, entityId, onUploaded, onCollect }: Props) {
+export default function AttachmentUploader({ entityType, entityId, onUploaded, onCollect, categories, defaultCategory }: Props) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const availableCategories = categories
+    ? ATTACHMENT_CATEGORIES.filter((c) => categories.includes(c.value))
+    : ATTACHMENT_CATEGORIES;
+
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState("");
-  const [category, setCategory] = useState<AttachmentCategory>("REMITO");
+  const [category, setCategory] = useState<AttachmentCategory>(defaultCategory ?? availableCategories[0]?.value ?? "OTRO");
   const [error, setError] = useState("");
 
   const mut = useMutation({
@@ -101,8 +109,8 @@ export default function AttachmentUploader({ entityType, entityId, onUploaded, o
       </div>
 
       {/* Categoría */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
-        {ATTACHMENT_CATEGORIES.map((c) => (
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(availableCategories.length, 4)}, 1fr)`, gap: 6 }}>
+        {availableCategories.map((c) => (
           <button
             key={c.value}
             type="button"

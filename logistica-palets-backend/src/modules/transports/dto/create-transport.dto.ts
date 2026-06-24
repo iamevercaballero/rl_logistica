@@ -11,6 +11,8 @@ import {
 } from 'class-validator';
 import { transportStatuses } from '../entities/transport.entity';
 
+export const driverStatuses = ['ACTIVO', 'INACTIVO'] as const;
+
 export class TransportDriverDto {
   @IsString()
   @MaxLength(120)
@@ -25,6 +27,23 @@ export class TransportDriverDto {
   @IsString()
   @MaxLength(40)
   phone?: string;
+
+  /** Número de licencia de conducir. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  license?: string;
+
+  /** Vencimiento de la licencia (YYYY-MM-DD). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  licenseExpiry?: string;
+
+  /** Estado del chofer (ACTIVO / INACTIVO). */
+  @IsOptional()
+  @IsIn(driverStatuses)
+  status?: string;
 }
 
 export class CreateTransportDto {

@@ -17,6 +17,8 @@ type ModulePermissions = {
   create: Role[];
   update: Role[];
   remove: Role[];
+  /** Aprobar/rechazar (circuito de aprobación). Opcional: solo módulos con flujo de aprobación. */
+  approve?: Role[];
 };
 
 export const PERMS: Record<ModuleKey, ModulePermissions> = {
@@ -51,10 +53,14 @@ export const PERMS: Record<ModuleKey, ModulePermissions> = {
     remove: ["ADMIN", "MANAGER"],
   },
   movements: {
-    read: ["ADMIN", "MANAGER", "AUDITOR"],
+    // OPERATOR debe poder operar movimientos (crear entrada/salida/transferencia
+    // y ver su historial). Antes estaba excluido del read y RequireRole le bloqueaba
+    // la página entera pese a tener permiso de crear en el backend.
+    read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
     create: ["ADMIN", "MANAGER", "OPERATOR"],
     update: ["ADMIN", "MANAGER"],
     remove: [],
+    approve: ["ADMIN", "MANAGER"],
   },
   bitacora: {
     read:   ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
@@ -106,4 +112,12 @@ export function canDelete(module: ModuleKey, role: Role) {
 
 export function canWrite(module: ModuleKey, role: Role) {
   return canCreate(module, role) || canUpdate(module, role) || canDelete(module, role);
+}
+
+/**
+ * Quién puede aprobar/rechazar en un circuito de aprobación.
+ * Regla WMS: solo MANAGER y ADMIN. OPERATOR crea y envía a aprobación; AUDITOR es solo lectura.
+ */
+export function canApprove(role: Role) {
+  return role === "ADMIN" || role === "MANAGER";
 }

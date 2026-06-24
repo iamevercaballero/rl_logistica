@@ -4,9 +4,10 @@ import { LocationsService } from './locations.service';
 import { LocationsController } from './locations.controller';
 import { Location } from './entities/location.entity';
 import { Warehouse } from '../warehouses/entities/warehouse.entity';
+import { Pallet } from '../pallets/entities/pallet.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Location, Warehouse])],
+  imports: [TypeOrmModule.forFeature([Location, Warehouse, Pallet])],
   controllers: [LocationsController],
   providers: [LocationsService],
 })

@@ -28,6 +28,13 @@ export class LocationsController {
     return this.service.findAll();
   }
 
+  /** Disponibilidad por ubicación (ocupación vs capacidad) para el selector guiado. */
+  @Get('availability')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  availability() {
+    return this.service.availability();
+  }
+
   @Get(':id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
   findOne(@Param('id') id: string) {

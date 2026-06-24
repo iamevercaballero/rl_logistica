@@ -3,9 +3,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Location } from './entities/location.entity';
 import { Warehouse } from '../warehouses/entities/warehouse.entity';
+import { Pallet } from '../pallets/entities/pallet.entity';
 import { CreateLocationDto } from './dto/create-location.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
 import { GenerateLocationsDto } from './dto/generate-locations.dto';
+
+/** Estado de disponibilidad de una ubicación para el selector guiado. */
+export type LocationAvailabilityStatus = 'FREE' | 'PARTIAL' | 'FULL' | 'BLOCKED';
 
 @Injectable()
 export class LocationsService {
@@ -14,6 +18,8 @@ export class LocationsService {
     private readonly locationRepo: Repository<Location>,
     @InjectRepository(Warehouse)
     private readonly warehouseRepo: Repository<Warehouse>,
+    @InjectRepository(Pallet)
+    private readonly palletRepo: Repository<Pallet>,
   ) {}
 
   async create(dto: CreateLocationDto) {
@@ -126,6 +132,52 @@ export class LocationsService {
 
   findAll() {
     return this.locationRepo.find({ relations: ['warehouse'] });
+  }
+
+  /**
+   * Disponibilidad por ubicación para el selector guiado de Entrada/Transferencia.
+   * Devuelve, por cada ubicación, los pallets ocupados vs capacidad y un estado:
+   * BLOCKED (inactiva), FULL (sin lugar), PARTIAL (con lugar pero ocupada), FREE.
+   */
+  async availability() {
+    const locations = await this.locationRepo.find({ relations: ['warehouse'] });
+
+    // Conteo de pallets vigentes (no despachados ni vacíos) por ubicación
+    const counts = await this.palletRepo
+      .createQueryBuilder('p')
+      .select('p."currentLocationId"', 'locationId')
+      .addSelect('COUNT(*)', 'occupied')
+      .where("p.status NOT IN ('EXITED', 'EMPTY')")
+      .andWhere('p."currentLocationId" IS NOT NULL')
+      .groupBy('p."currentLocationId"')
+      .getRawMany<{ locationId: string; occupied: string }>();
+
+    const occByLoc = new Map(counts.map((c) => [c.locationId, Number(c.occupied)]));
+
+    return locations.map((loc) => {
+      const occupied = occByLoc.get(loc.id) ?? 0;
+      const capacity = loc.capacityPallets ?? null;
+      let status: LocationAvailabilityStatus;
+      if (!loc.active) status = 'BLOCKED';
+      else if (capacity != null && occupied >= capacity) status = 'FULL';
+      else if (occupied > 0) status = 'PARTIAL';
+      else status = 'FREE';
+      return {
+        id: loc.id,
+        code: loc.code,
+        zone: loc.zone ?? null,
+        aisle: loc.aisle ?? null,
+        rack: loc.rack ?? null,
+        level: loc.level ?? null,
+        position: loc.position ?? null,
+        warehouseId: loc.warehouse?.id ?? null,
+        warehouseName: loc.warehouse?.name ?? null,
+        active: loc.active,
+        occupied,
+        capacity,
+        status,
+      };
+    });
   }
 
   async findOne(id: string) {

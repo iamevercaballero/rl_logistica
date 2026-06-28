@@ -127,7 +127,8 @@
       "Bash(find /usr/local /opt/homebrew /Users/ever -maxdepth 4 -name node -type f 2>/dev/null | grep -v node_modules | head; echo \"---nvm dir---\"; ls -la ~/.nvm 2>/dev/null | head)",
       "Bash(grep -n \"showAttachModal\\\\|AttachmentUploader\\\\|^  \\);$\\\\|^}\" src/pages/Movements.tsx)",
       "Bash(docker run *)",
-      "Bash(grep -n 'setTransferSel\\(new Set\\(\\)\\); setTransferFilter\\(\"\"\\);$' src/pages/Movements.tsx)"
+      "Bash(grep -n 'setTransferSel\\(new Set\\(\\)\\); setTransferFilter\\(\"\"\\);$' src/pages/Movements.tsx)",
+      "Bash(grep -vE '^\\\\s*#|^\\\\s*$' .env)"
     ]
   }
 }

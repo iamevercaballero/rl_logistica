@@ -29,5 +29,6 @@ export const databaseConfig: DataSourceOptions = {
       : ['error'],
 };
 
+// Un único export de DataSource: el CLI de TypeORM (migration:generate/run)
+// exige exactamente una instancia de DataSource exportada en este archivo.
 export const AppDataSource = new DataSource(databaseConfig);
-export default AppDataSource;

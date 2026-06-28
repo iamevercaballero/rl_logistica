@@ -6,6 +6,7 @@ import {
   Index,
 } from 'typeorm';
 import { Warehouse } from '../../warehouses/entities/warehouse.entity';
+import { numericTransformer } from '../../../common/numeric.transformer';
 
 /** Zonas operativas estándar de un depósito. */
 export const locationZones = [
@@ -17,6 +18,10 @@ export const locationZones = [
   'DEVOLUCIONES',
 ] as const;
 export type LocationZone = (typeof locationZones)[number];
+
+/** Zonas de temperatura para slotting (compartido con Product). */
+export const temperatureZones = ['AMBIENT', 'CHILLED', 'FROZEN'] as const;
+export type TemperatureZone = (typeof temperatureZones)[number];
 
 /**
  * Ubicación física del depósito. Es la unidad que referencian stock, pallets
@@ -59,6 +64,24 @@ export class Location {
   /** Capacidad en pallets (null = sin límite definido) */
   @Column({ type: 'int', nullable: true })
   capacityPallets?: number | null;
+
+  /* ── Restricciones para slotting (ubicación recomendada) ───────────────── */
+
+  /** Temperatura que ofrece la ubicación: AMBIENT | CHILLED | FROZEN. */
+  @Column({ type: 'varchar', length: 20, default: 'AMBIENT' })
+  temperatureZone: string;
+
+  /** Peso máximo soportado (kg). null = sin límite definido. */
+  @Column({ type: 'numeric', precision: 10, scale: 2, nullable: true, transformer: numericTransformer })
+  maxWeightKg?: number | null;
+
+  /** Altura máxima del hueco (cm). null = sin límite definido. */
+  @Column({ type: 'int', nullable: true })
+  maxHeightCm?: number | null;
+
+  /** Permite apilar más de un pallet (junto con capacityPallets). */
+  @Column({ default: true })
+  allowsStacking: boolean;
 
   @ManyToOne(() => Warehouse, (warehouse) => warehouse.locations, {
     eager: true,

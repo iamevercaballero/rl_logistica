@@ -128,7 +128,24 @@
       "Bash(grep -n \"showAttachModal\\\\|AttachmentUploader\\\\|^  \\);$\\\\|^}\" src/pages/Movements.tsx)",
       "Bash(docker run *)",
       "Bash(grep -n 'setTransferSel\\(new Set\\(\\)\\); setTransferFilter\\(\"\"\\);$' src/pages/Movements.tsx)",
-      "Bash(grep -vE '^\\\\s*#|^\\\\s*$' .env)"
+      "Bash(grep -vE '^\\\\s*#|^\\\\s*$' .env)",
+      "WebSearch",
+      "Bash(docker --version)",
+      "Bash(git check-ignore *)",
+      "Bash(npm -v)",
+      "Bash(echo \"node: $\\(node -v 2>&1\\)  npm: $\\(npm -v 2>&1\\)\")",
+      "Bash(zsh -lic 'which node; node -v')",
+      "Bash(zsh -lic 'echo $PATH')",
+      "Read(//opt/**)",
+      "Bash(grep -i 'bin/node$')",
+      "Bash(mdfind -name 'node')",
+      "Bash(grep -E '/bin/node$')",
+      "Bash(docker network *)",
+      "Bash(docker rm *)",
+      "Bash(git mv *)",
+      "Bash(chmod +x scripts/backup-db.sh scripts/restore-db.sh)",
+      "Bash(awk '{print $1, $NF}')",
+      "Bash(rm -f src/migrations/*_Drift2.ts)"
     ]
   }
 }

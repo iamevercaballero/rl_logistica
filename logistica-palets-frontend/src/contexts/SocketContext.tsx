@@ -20,6 +20,8 @@ import {
   type ReactNode,
 } from "react";
 import { io, type Socket } from "socket.io-client";
+import { useAuth } from "../auth/AuthContext";
+import { getToken } from "../auth/authStorage";
 
 /* ── Types ────────────────────────────────────────────────────────────────── */
 
@@ -48,18 +50,21 @@ const WS_URL =
   (import.meta.env.VITE_WS_URL as string | undefined) ?? "http://localhost:3000";
 
 export function SocketProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
   const [connected, setConnected] = useState(false);
   const socketRef = useRef<Socket | null>(null);
 
+  // Crear el socket una sola vez (sin conectar). El backend exige JWT en el
+  // handshake: `auth` es una función, así que se reevalúa el token en cada
+  // (re)conexión y siempre usa el access_token vigente.
   useEffect(() => {
     const socket = io(`${WS_URL}/events`, {
       transports: ["websocket", "polling"],
       reconnectionDelay: 2_000,
       reconnectionDelayMax: 30_000,
       reconnectionAttempts: Infinity,
-      // Don't connect on app mount if the user is offline — the hook returns
-      // false for `connected` and retries when the network comes back.
-      autoConnect: true,
+      autoConnect: false,
+      auth: (cb) => cb({ token: getToken() }),
     });
 
     socketRef.current = socket;
@@ -73,6 +78,19 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       socketRef.current = null;
     };
   }, []);
+
+  // Conectar sólo cuando hay sesión activa; desconectar al cerrar sesión.
+  useEffect(() => {
+    const socket = socketRef.current;
+    if (!socket) return;
+
+    if (user) {
+      if (!socket.connected) socket.connect();
+    } else {
+      // disconnect() dispara el handler 'disconnect' → setConnected(false).
+      socket.disconnect();
+    }
+  }, [user]);
 
   const on = useCallback((event: string, handler: AnyHandler) => {
     socketRef.current?.on(event, handler);

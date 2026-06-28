@@ -19,6 +19,7 @@ export class SeedService {
     // xlsx se carga dinámicamente para no romper el bundle de producción
     let XLSX: any;
     try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy-load deliberado (seed es dev-only)
       XLSX = require('xlsx');
     } catch {
       throw new BadRequestException('Librería xlsx no disponible. Instalá: npm install xlsx');

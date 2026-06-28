@@ -1,14 +1,16 @@
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
   MaxLength,
   Min,
 } from 'class-validator';
-import { locationZones } from '../entities/location.entity';
+import { locationZones, temperatureZones } from '../entities/location.entity';
 
 export class CreateLocationDto {
   @IsString()
@@ -53,4 +55,26 @@ export class CreateLocationDto {
   @IsInt()
   @Min(1)
   capacityPallets?: number;
+
+  /* ── Restricciones de slotting ─────────────────────────────────────────── */
+
+  @IsOptional()
+  @IsIn(temperatureZones)
+  temperatureZone?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  maxWeightKg?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  maxHeightCm?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  allowsStacking?: boolean;
 }

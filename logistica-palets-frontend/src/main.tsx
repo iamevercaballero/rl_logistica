@@ -136,13 +136,13 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
-        <SocketProvider>
-          <ToastProvider>
-            <AuthProvider>
+        <ToastProvider>
+          <AuthProvider>
+            <SocketProvider>
               <RouterProvider router={router} />
-            </AuthProvider>
-          </ToastProvider>
-        </SocketProvider>
+            </SocketProvider>
+          </AuthProvider>
+        </ToastProvider>
         {import.meta.env.DEV && <ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-left" />}
       </QueryClientProvider>
     </ThemeProvider>

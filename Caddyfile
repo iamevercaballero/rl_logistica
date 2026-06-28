@@ -1,0 +1,28 @@
+# =============================================================================
+# RL Logística — Caddy reverse proxy con HTTPS automático (Let's Encrypt).
+#
+# Dominios y email se inyectan por variables de entorno desde .env.prod:
+#   APP_DOMAIN  → frontend (ej: app.tudominio.com)
+#   API_DOMAIN  → backend  (ej: api.tudominio.com)  — sirve /api y WebSocket
+#   ACME_EMAIL  → email para los certificados Let's Encrypt
+#
+# Cloudflare: para que Caddy emita el certificado, poné los registros DNS en
+# "DNS only" (nube gris) la primera vez. Luego podés activar el proxy de
+# Cloudflare en modo "Full (strict)"; Caddy conserva el certificado.
+# =============================================================================
+{
+	email {$ACME_EMAIL}
+}
+
+# Frontend (React/Vite servido por Nginx dentro del contenedor `frontend`).
+{$APP_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy frontend:80
+}
+
+# Backend (NestJS). reverse_proxy gestiona el upgrade WebSocket automáticamente,
+# así que /api y /socket.io (namespace /events) funcionan sin config extra.
+{$API_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy backend:3000
+}

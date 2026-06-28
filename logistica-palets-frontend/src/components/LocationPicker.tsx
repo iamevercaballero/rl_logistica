@@ -1,6 +1,11 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getLocationAvailability, type LocationAvailability, type LocationAvailabilityStatus } from "../api/locations";
+import {
+  getLocationAvailability,
+  getLocationRecommendations,
+  type LocationAvailability,
+  type LocationAvailabilityStatus,
+} from "../api/locations";
 import SearchableSelect from "../design-system/SearchableSelect";
 
 type Props = {
@@ -11,6 +16,8 @@ type Props = {
   placeholder?: string;
   /** Si true, excluye ubicaciones bloqueadas/llenas (para destinos). */
   excludeUnavailable?: boolean;
+  /** Si se pasa, muestra ubicaciones recomendadas (slotting) para ese producto. */
+  productId?: string;
 };
 
 const STATUS_META: Record<LocationAvailabilityStatus, { label: string; color: string }> = {
@@ -33,7 +40,7 @@ function statusText(l: LocationAvailability) {
  * con disponibilidad (Libre / Parcial / Llena / Bloqueada). Incluye modo "Buscar"
  * para elegir escribiendo el código.
  */
-export default function LocationPicker({ value, onChange, warehouseId, placeholder = "Ubicación", excludeUnavailable }: Props) {
+export default function LocationPicker({ value, onChange, warehouseId, placeholder = "Ubicación", excludeUnavailable, productId }: Props) {
   const [mode, setMode] = useState<"guided" | "search">("guided");
   const [zone, setZone] = useState("");
   const [aisle, setAisle] = useState("");
@@ -45,6 +52,22 @@ export default function LocationPicker({ value, onChange, warehouseId, placehold
     queryFn: getLocationAvailability,
     staleTime: 30_000,
   });
+
+  // Slotting: ubicaciones recomendadas para el producto (si se pasó productId).
+  const { data: slotting } = useQuery({
+    queryKey: ["location-recommendations", productId, warehouseId],
+    queryFn: () => getLocationRecommendations(productId!),
+    enabled: !!productId,
+    staleTime: 30_000,
+  });
+  const recommendations = useMemo(() => {
+    let recs = slotting?.recommendations ?? [];
+    if (warehouseId) {
+      const inWh = new Set(all.filter((l) => l.warehouseId === warehouseId).map((l) => l.id));
+      recs = recs.filter((r) => inWh.has(r.id));
+    }
+    return recs;
+  }, [slotting, all, warehouseId]);
 
   const base = useMemo(() => {
     let list = all;
@@ -89,6 +112,38 @@ export default function LocationPicker({ value, onChange, warehouseId, placehold
           </span>
         )}
       </div>
+
+      {productId && recommendations.length > 0 && (
+        <div style={{ display: "grid", gap: 6, padding: 8, border: "1px solid var(--border)", borderRadius: 8, background: "var(--primary-light, rgba(0,0,0,0.03))" }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", letterSpacing: 0.3 }}>
+            ✨ UBICACIONES RECOMENDADAS
+          </span>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {recommendations.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => onChange(r.id)}
+                title={r.reasons.join(" · ")}
+                style={{
+                  display: "flex", flexDirection: "column", gap: 2, alignItems: "flex-start",
+                  padding: "6px 10px", borderRadius: 6, cursor: "pointer", textAlign: "left",
+                  border: r.id === value ? "2px solid var(--primary)" : "1px solid var(--border)",
+                  background: r.id === value ? "var(--primary-light)" : "var(--bg, #fff)",
+                }}
+              >
+                <span style={{ fontWeight: 700, fontSize: 13 }}>
+                  {r.code}
+                  {r.capacity != null && (
+                    <span style={{ fontWeight: 500, color: "var(--muted)" }}> · {r.occupied}/{r.capacity}</span>
+                  )}
+                </span>
+                <span style={{ fontSize: 11, color: "var(--muted)" }}>{r.reasons[0]}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {isLoading ? (
         <p style={{ color: "var(--muted)", fontSize: 13, margin: 0 }}>Cargando ubicaciones…</p>

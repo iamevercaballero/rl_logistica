@@ -34,6 +34,14 @@ Thumbs.db
 logs/
 *.log
 
+# Backups de base de datos (nunca commitear dumps)
+backups/
+*.sql.gz
+
+# Datos/cert de Caddy (volúmenes locales si se montan a disco)
+caddy_data/
+caddy_config/
+
 # Testing / coverage
 coverage/
 .nyc_output/

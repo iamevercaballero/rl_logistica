@@ -1,5 +1,8 @@
-import { IsBoolean, IsInt, IsOptional, IsString, Length, Max, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, Length, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
+import { temperatureZones } from '../../locations/entities/location.entity';
+
+export const rotationPolicies = ['FEFO', 'FIFO'] as const;
 
 export class CreateProductDto {
   @IsString()
@@ -44,4 +47,35 @@ export class CreateProductDto {
   @IsString()
   @Length(0, 200)
   stackingNotes?: string | null;
+
+  /* ── Atributos de slotting ─────────────────────────────────────────────── */
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  weightKg?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  heightCm?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  fragile?: boolean;
+
+  @IsOptional()
+  @IsIn(temperatureZones)
+  temperatureZone?: string;
+
+  @IsOptional()
+  @IsIn(rotationPolicies)
+  rotationPolicy?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 40)
+  compatibilityGroup?: string | null;
 }

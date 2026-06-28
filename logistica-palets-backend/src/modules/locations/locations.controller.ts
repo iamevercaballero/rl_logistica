@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Delete,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { LocationsService } from './locations.service';
@@ -33,6 +34,16 @@ export class LocationsController {
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
   availability() {
     return this.service.availability();
+  }
+
+  /** Slotting: ubicaciones recomendadas para guardar un pallet de un producto. */
+  @Get('recommendations')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  recommendations(
+    @Query('productId') productId: string,
+    @Query('quantity') quantity?: string,
+  ) {
+    return this.service.recommend(productId, quantity ? Number(quantity) : 1);
   }
 
   @Get(':id')

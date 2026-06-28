@@ -158,21 +158,45 @@ describe('motor de stock — concurrencia', () => {
       palletItems: [{ lotCode: 'L-RACE', quantity: 100, fechaVencimiento: '2026-06-01' }],
     }, USER_ID);
 
-    // Dos salidas de 60 en paralelo: 120 > 100. Con lock, sólo salen 100 en total.
-    await Promise.allSettled([
+    // Dos salidas de 60 en paralelo (120 > 100). El lock pesimista las serializa.
+    // EXIT es todo-o-nada: una orden despacha 60 completos; la otra NO puede
+    // cumplir 60 con los 40 restantes y se RECHAZA entera (rollback). Nunca se
+    // sobre-vende: total despachado = 60, quedan 40.
+    const results = await Promise.allSettled([
       service.create({ type: 'EXIT', productId: base.product.id, quantity: 60 }, USER_ID),
       service.create({ type: 'EXIT', productId: base.product.id, quantity: 60 }, USER_ID),
     ]);
 
+    const fulfilled = results.filter((r) => r.status === 'fulfilled').length;
+    const rejected = results.filter((r) => r.status === 'rejected').length;
     const stock = await stockOf(base.product.id);
     const pallet = await ds.getRepository(Pallet).findOne({
       where: { lotId: (await lotByCode(base.product.id, 'L-RACE'))!.id },
     });
 
-    // Nunca negativo y nunca sobre-vendido: exactamente 100 despachados.
+    // Invariante de seguridad: nunca negativo, nunca sobre-vendido.
     expect(stock!.currentQuantity).toBeGreaterThanOrEqual(0);
-    expect(stock!.currentQuantity).toBe(0);
-    expect(pallet!.quantity).toBe(0);
+    // Exactamente una orden se cumple y la otra se rechaza.
+    expect(fulfilled).toBe(1);
+    expect(rejected).toBe(1);
+    // Se despacharon 60 (la orden cumplida); la rechazada no tocó el stock.
+    expect(stock!.currentQuantity).toBe(40);
+    expect(pallet!.quantity).toBe(40);
+  });
+
+  it('auto-FEFO despacha desde pallets PARTIAL (ya abiertos)', async () => {
+    // Entrada de 100 en un pallet; una salida parcial lo deja PARTIAL.
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      palletItems: [{ lotCode: 'L-PART', quantity: 100, fechaVencimiento: '2026-06-01' }],
+    }, USER_ID);
+
+    await service.create({ type: 'EXIT', productId: base.product.id, quantity: 30 }, USER_ID); // pallet → PARTIAL 70
+    // La 2ª salida auto-FEFO debe consumir del pallet ya abierto (no fallar).
+    await service.create({ type: 'EXIT', productId: base.product.id, quantity: 50 }, USER_ID); // PARTIAL 70 → 20
+
+    const stock = await stockOf(base.product.id);
+    expect(stock!.currentQuantity).toBe(20);
   });
 
   it('no crea filas de stock duplicadas para la misma celda bajo concurrencia', async () => {

@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Location } from './entities/location.entity';
 import { Warehouse } from '../warehouses/entities/warehouse.entity';
 import { Pallet } from '../pallets/entities/pallet.entity';
+import { Product } from '../products/entities/product.entity';
 import { CreateLocationDto } from './dto/create-location.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
 import { GenerateLocationsDto } from './dto/generate-locations.dto';
@@ -20,6 +21,8 @@ export class LocationsService {
     private readonly warehouseRepo: Repository<Warehouse>,
     @InjectRepository(Pallet)
     private readonly palletRepo: Repository<Pallet>,
+    @InjectRepository(Product)
+    private readonly productRepo: Repository<Product>,
   ) {}
 
   async create(dto: CreateLocationDto) {
@@ -40,6 +43,10 @@ export class LocationsService {
       level: dto.level ?? null,
       position: dto.position ?? null,
       capacityPallets: dto.capacityPallets ?? null,
+      temperatureZone: dto.temperatureZone ?? 'AMBIENT',
+      maxWeightKg: dto.maxWeightKg ?? null,
+      maxHeightCm: dto.maxHeightCm ?? null,
+      allowsStacking: dto.allowsStacking ?? true,
       warehouse,
     });
 
@@ -178,6 +185,130 @@ export class LocationsService {
         status,
       };
     });
+  }
+
+  /**
+   * Slotting: recomienda dónde guardar un pallet de `productId`.
+   * Filtra ubicaciones factibles (temperatura, peso, altura, capacidad,
+   * apilamiento) y las puntúa (consolidación con el mismo producto, zona de
+   * almacenamiento, frágil al piso, llenar huecos abiertos). Devuelve top 3 con
+   * el motivo de cada recomendación.
+   */
+  async recommend(productId: string, quantity = 1) {
+    const product = await this.productRepo.findOne({ where: { id: productId } });
+    if (!product) throw new NotFoundException('Producto no encontrado');
+
+    const locations = await this.locationRepo.find({ relations: ['warehouse'] });
+
+    // Ocupación vigente por ubicación.
+    const counts = await this.palletRepo
+      .createQueryBuilder('p')
+      .select('p."currentLocationId"', 'locationId')
+      .addSelect('COUNT(*)', 'occupied')
+      .where("p.status NOT IN ('EXITED', 'EMPTY')")
+      .andWhere('p."currentLocationId" IS NOT NULL')
+      .groupBy('p."currentLocationId"')
+      .getRawMany<{ locationId: string; occupied: string }>();
+    const occByLoc = new Map(counts.map((c) => [c.locationId, Number(c.occupied)]));
+
+    // Ubicaciones que ya contienen el mismo producto (para consolidar).
+    const sameProductRows = await this.palletRepo
+      .createQueryBuilder('p')
+      .innerJoin('lots', 'lot', 'lot.id = p."lotId"')
+      .select('DISTINCT p."currentLocationId"', 'locationId')
+      .where('lot."productId" = :productId', { productId })
+      .andWhere("p.status NOT IN ('EXITED', 'EMPTY')")
+      .andWhere('p."currentLocationId" IS NOT NULL')
+      .getRawMany<{ locationId: string }>();
+    const sameProductLocs = new Set(sameProductRows.map((r) => r.locationId));
+
+    const pWeight = product.weightKg ?? null;
+    const pTemp = product.temperatureZone ?? 'AMBIENT';
+
+    const scored = locations
+      .filter((loc) => loc.active)
+      .map((loc) => {
+        const occupied = occByLoc.get(loc.id) ?? 0;
+        const capacity = loc.capacityPallets ?? null;
+        const reasons: string[] = [];
+        const blockers: string[] = [];
+
+        // ── Restricciones duras (factibilidad) ──
+        const hasRoom = capacity == null || occupied < capacity;
+        if (!hasRoom) blockers.push('sin lugar (llena)');
+
+        const locTemp = loc.temperatureZone ?? 'AMBIENT';
+        const tempOk = locTemp === pTemp;
+        if (!tempOk) blockers.push(`temperatura ${locTemp} ≠ ${pTemp}`);
+
+        const maxW = loc.maxWeightKg ?? null;
+        const weightOk = maxW == null || pWeight == null || pWeight <= maxW;
+        if (!weightOk) blockers.push('excede peso máximo');
+
+        const heightOk =
+          loc.maxHeightCm == null || product.heightCm == null || product.heightCm <= loc.maxHeightCm;
+        if (!heightOk) blockers.push('excede altura máxima');
+
+        // No apilable (producto o ubicación) → requiere celda vacía.
+        const stackOk = (product.stackable && loc.allowsStacking) || occupied === 0;
+        if (!stackOk) blockers.push('no apilable y celda ocupada');
+
+        const feasible = hasRoom && tempOk && weightOk && heightOk && stackOk;
+
+        // ── Puntaje (mayor = mejor) ──
+        let score = 0;
+        if (sameProductLocs.has(loc.id)) {
+          score += 50;
+          reasons.push('mismo producto ya almacenado aquí');
+        }
+        if (loc.zone === 'ALMACENAMIENTO') {
+          score += 20;
+          reasons.push('zona de almacenamiento');
+        }
+        if (product.fragile && loc.level === 1) {
+          score += 10;
+          reasons.push('producto frágil → nivel piso');
+        }
+        if (occupied > 0 && product.stackable && loc.allowsStacking) {
+          score += 10;
+          reasons.push('aprovecha hueco abierto');
+        }
+        // Desempate suave: preferir más espacio libre.
+        if (capacity != null) score += Math.max(0, capacity - occupied);
+
+        return { loc, occupied, capacity, feasible, score, reasons, blockers };
+      });
+
+    const recommendations = scored
+      .filter((s) => s.feasible)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+      .map((s) => ({
+        id: s.loc.id,
+        code: s.loc.code,
+        zone: s.loc.zone ?? null,
+        warehouseName: s.loc.warehouse?.name ?? null,
+        occupied: s.occupied,
+        capacity: s.capacity,
+        score: s.score,
+        reasons: s.reasons.length ? s.reasons : ['cumple las restricciones'],
+      }));
+
+    return {
+      productId,
+      quantity,
+      product: {
+        code: product.code,
+        description: product.description,
+        temperatureZone: pTemp,
+        fragile: product.fragile,
+        rotationPolicy: product.rotationPolicy,
+      },
+      recommendations,
+      message: recommendations.length
+        ? null
+        : 'No hay ubicaciones factibles. Revisá temperatura, capacidad, peso o altura.',
+    };
   }
 
   async findOne(id: string) {

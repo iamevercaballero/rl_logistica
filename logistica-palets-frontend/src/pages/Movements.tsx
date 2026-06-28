@@ -1188,6 +1188,7 @@ export default function MovementsPage() {
                   onChange={setLocationId}
                   warehouseId={warehouseId || undefined}
                   placeholder="Ubicación (opcional)"
+                  productId={product?.id}
                 />
               </div>
             </>
@@ -1233,7 +1234,7 @@ export default function MovementsPage() {
                 </div>
                 <div>
                   <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Ubicación destino</label>
-                  <LocationPicker value={toLocationId} onChange={setToLocationId} placeholder="Seleccionar destino" excludeUnavailable />
+                  <LocationPicker value={toLocationId} onChange={setToLocationId} placeholder="Seleccionar destino" excludeUnavailable productId={transferProduct?.id} />
                   {toLocationId && destPalletsQ.data && (
                     <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--muted)" }}>
                       El destino ya tiene {destPalletsQ.data.filter((p) => p.status !== "EXITED" && p.status !== "EMPTY").length} palet(s)

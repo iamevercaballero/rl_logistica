@@ -47,6 +47,58 @@ jobs:
           TEST_DB_PASSWORD: test_password_change_me
           TEST_DB_DATABASE: logistica_palets_test
 
+  migrations:
+    name: Backend — validar migraciones (DB limpia, synchronize=false)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: logistica-palets-backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: rl_test
+          POSTGRES_PASSWORD: test_password_change_me
+          POSTGRES_DB: logistica_migrations_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rl_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: logistica-palets-backend/package-lock.json
+      - run: npm install --no-audit --no-fund
+      # Camino REAL de producción: DB vacía + migraciones, sin synchronize.
+      # Si InitialSchema estuviera incompleta (p.ej. faltara uuid-ossp), falla acá.
+      - name: migration:run sobre DB vacía
+        run: npm run migration:run
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USERNAME: rl_test
+          DB_PASSWORD: test_password_change_me
+          DB_DATABASE: logistica_migrations_test
+          DB_SYNCHRONIZE: "false"
+          DB_MIGRATIONS_RUN: "false"
+      # Segunda corrida: no debe haber migraciones pendientes (idempotencia).
+      - name: migration:run de nuevo (idempotencia)
+        run: npm run migration:run
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USERNAME: rl_test
+          DB_PASSWORD: test_password_change_me
+          DB_DATABASE: logistica_migrations_test
+          DB_SYNCHRONIZE: "false"
+          DB_MIGRATIONS_RUN: "false"
+
   frontend:
     name: Frontend — lint, build
     runs-on: ubuntu-latest

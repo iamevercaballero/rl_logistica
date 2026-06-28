@@ -5,21 +5,32 @@
 -- InitialSchema. Esto la marca como "ya aplicada" e (opcional) limpia los
 -- registros de las migraciones incrementales que vas a archivar.
 --
--- 1) Reemplazá <TS> y <NAME> por el timestamp y el nombre de clase de la
---    migración generada (ej: archivo 1718999999999-InitialSchema.ts →
---    class InitialSchema1718999999999 → TS=1718999999999, NAME=InitialSchema1718999999999).
--- 2) Corré esto UNA vez en cada DB existente, ANTES de deployar con migraciones.
+-- Valores reales de la baseline ya generada:
+--   archivo: src/migrations/1782626569588-InitialSchema.ts
+--   clase:   InitialSchema1782626569588
+--   TS=1782626569588   NAME=InitialSchema1782626569588
+--
+-- Corré esto UNA vez en cada DB existente (creada por synchronize), ANTES de
+-- deployar con migraciones. En un VPS NUEVO con DB vacía NO hace falta: ahí
+-- InitialSchema corre limpio con migration:run.
 --
 --   psql "$DATABASE_URL" -f scripts/fake-apply-baseline.sql
 -- =============================================================================
 
 BEGIN;
 
+-- typeorm_migrations puede no existir todavía en una DB creada por synchronize.
+CREATE TABLE IF NOT EXISTS typeorm_migrations (
+  "id"        SERIAL PRIMARY KEY,
+  "timestamp" bigint NOT NULL,
+  "name"      character varying NOT NULL
+);
+
 -- Marca InitialSchema como aplicada sin ejecutarla (la DB ya tiene el schema).
 INSERT INTO typeorm_migrations ("timestamp", "name")
-SELECT <TS>, '<NAME>'
+SELECT 1782626569588, 'InitialSchema1782626569588'
 WHERE NOT EXISTS (
-  SELECT 1 FROM typeorm_migrations WHERE "name" = '<NAME>'
+  SELECT 1 FROM typeorm_migrations WHERE "name" = 'InitialSchema1782626569588'
 );
 
 -- Opcional: limpia los registros de las incrementales que vas a archivar

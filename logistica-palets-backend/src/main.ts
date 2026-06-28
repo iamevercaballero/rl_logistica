@@ -4,8 +4,13 @@ import { ValidationPipe } from '@nestjs/common';
 import { Logger } from 'nestjs-pino';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
+import { validateEnv } from './config/env.validation';
 
 async function bootstrap() {
+  // Fail-fast: en producción aborta si faltan secretos JWT (o son débiles).
+  // Debe correr ANTES de crear la app para que ningún módulo use fallbacks.
+  validateEnv();
+
   // bufferLogs: true ensures Pino captures early boot messages
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
 

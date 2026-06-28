@@ -1485,7 +1485,9 @@ export class MovementsService {
     const qb = palletRepo
       .createQueryBuilder('pallet')
       .innerJoin('lots', 'lot', 'lot.id = pallet."lotId"')
-      .where('pallet.status = :status', { status: 'AVAILABLE' })
+      // AVAILABLE y PARTIAL: el auto-FEFO también consume de pallets ya abiertos
+      // (los más viejos), no solo de los intactos. Excluye BLOCKED/DAMAGED/EXITED/EMPTY.
+      .where('pallet.status IN (:...statuses)', { statuses: ['AVAILABLE', 'PARTIAL'] })
       .andWhere('pallet.quantity > 0')
       .andWhere('lot."productId" = :productId', { productId })
       .andWhere("lot.status != 'PENDING_REGULARIZATION'")

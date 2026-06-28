@@ -17,8 +17,32 @@ export class UsersService implements OnApplicationBootstrap {
     const count = await this.userRepo.count();
     if (count > 0) return;
 
-    const username = process.env.BOOTSTRAP_ADMIN_USER ?? 'admin';
-    const password = process.env.BOOTSTRAP_ADMIN_PASSWORD ?? 'admin123';
+    const isProd = process.env.NODE_ENV === 'production';
+    const envUser = process.env.BOOTSTRAP_ADMIN_USER;
+    const envPassword = process.env.BOOTSTRAP_ADMIN_PASSWORD;
+
+    // En producción NO se permite el admin por defecto: exigir credenciales
+    // fuertes definidas explícitamente. Sólo aplica en fresh install (tabla
+    // vacía); en restarts de una DB ya poblada este bloque no se ejecuta.
+    if (isProd) {
+      if (!envUser || !envPassword) {
+        throw new Error(
+          'Fresh install en producción: definí BOOTSTRAP_ADMIN_USER y ' +
+            'BOOTSTRAP_ADMIN_PASSWORD antes de arrancar.',
+        );
+      }
+      if (envPassword.length < 12) {
+        throw new Error(
+          'BOOTSTRAP_ADMIN_PASSWORD debe tener al menos 12 caracteres en producción.',
+        );
+      }
+      if (envPassword === 'admin123') {
+        throw new Error('BOOTSTRAP_ADMIN_PASSWORD no puede ser el valor por defecto.');
+      }
+    }
+
+    const username = envUser ?? 'admin';
+    const password = envPassword ?? 'admin123'; // 'admin123' sólo en dev/test
     const passwordHash = await bcrypt.hash(password, 10);
     await this.userRepo.save(
       this.userRepo.create({ username, passwordHash, role: 'ADMIN', active: true, fullName: 'Administrador' }),

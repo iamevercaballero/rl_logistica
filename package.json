@@ -1,5 +1,8 @@
 {
-  "dependencies": {
-    "node": "^24.12.0"
+  "name": "rl-logistica",
+  "private": true,
+  "description": "Monorepo RL Logística WMS — backend (NestJS) y frontend (React/Vite). Cada app tiene su propio package.json.",
+  "engines": {
+    "node": ">=20"
   }
 }

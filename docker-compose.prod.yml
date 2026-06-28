@@ -100,12 +100,36 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
+    # Sin 'ports': el frontend lo expone Caddy por red interna. Para debug local
+    # podés agregar temporalmente "127.0.0.1:8080:80".
+    networks: [internal]
+
+  # ── Caddy (reverse proxy + HTTPS automático) ───────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: rl_logistica_caddy_prod
+    restart: unless-stopped
+    depends_on:
+      - frontend
+      - backend
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      API_DOMAIN: ${API_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
     ports:
-      - "127.0.0.1:8080:80"
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3 (QUIC)
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data       # certificados (persistentes — no perderlos)
+      - caddy_config:/config
     networks: [internal]
 
 volumes:
   postgres_data_prod:
+  caddy_data:
+  caddy_config:
 
 networks:
   internal:

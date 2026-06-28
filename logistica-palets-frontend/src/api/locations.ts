@@ -65,6 +65,41 @@ export async function getLocationAvailability() {
   return data;
 }
 
+/* ── Slotting: ubicación recomendada ──────────────────────────────────────── */
+
+export type LocationRecommendation = {
+  id: string;
+  code: string;
+  zone: string | null;
+  warehouseName: string | null;
+  occupied: number;
+  capacity: number | null;
+  score: number;
+  reasons: string[];
+};
+
+export type SlottingResult = {
+  productId: string;
+  quantity: number;
+  product: {
+    code: string;
+    description: string;
+    temperatureZone: string;
+    fragile: boolean;
+    rotationPolicy: string;
+  };
+  recommendations: LocationRecommendation[];
+  message: string | null;
+};
+
+/** Pide al backend las ubicaciones recomendadas para guardar un pallet del producto. */
+export async function getLocationRecommendations(productId: string, quantity = 1) {
+  const { data } = await api.get<SlottingResult>("/locations/recommendations", {
+    params: { productId, quantity },
+  });
+  return data;
+}
+
 export async function createLocation(payload: {
   code: string;
   warehouseId: string;

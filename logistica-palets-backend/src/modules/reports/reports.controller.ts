@@ -53,7 +53,7 @@ export class ReportsController {
   }
 
   @Get('kpis')
-  @Roles('ADMIN', 'MANAGER', 'AUDITOR')
+  @Roles('ADMIN', 'MANAGER', 'AUDITOR', 'OPERATOR')
   kpis(@Query() query: KpisQueryDto) {
     return this.service.kpis(query);
   }

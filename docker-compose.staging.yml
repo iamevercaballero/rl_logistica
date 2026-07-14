@@ -1,0 +1,129 @@
+# =============================================================================
+# RL Logística — STAGING (VM local Hyper-V + Cloudflare Tunnel)
+# Uso:
+#   docker compose -f docker-compose.staging.yml --env-file .env.staging up -d --build
+#
+# Diferencias con docker-compose.prod.yml:
+#  - No hay Caddy: TLS lo termina Cloudflare en su borde. El servicio
+#    `cloudflared` abre un túnel saliente hacia Cloudflare y expone
+#    frontend:80 / backend:3000 en los hostnames públicos configurados
+#    en el dashboard de Cloudflare Zero Trust (Networks → Tunnels →
+#    Public Hostname). No requiere config.yml ni credentials.json: todo
+#    el ruteo vive en el dashboard, acá solo hace falta TUNNEL_TOKEN.
+#  - Se agrega el volumen `uploads_data_staging` al backend (adjuntos/
+#    fotos): docker-compose.prod.yml no lo tiene, y sin esto los archivos
+#    subidos por el cliente durante la prueba se perderían en cualquier
+#    `--force-recreate`.
+#  - Mismo criterio de seguridad que prod: db/redis sin puertos al host,
+#    variables críticas (DB_SYNCHRONIZE, DB_MIGRATIONS_RUN, ALLOW_SEED,
+#    NODE_ENV) fijadas acá y no sobreescribibles desde .env.staging.
+# =============================================================================
+
+services:
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: rl_logistica_db_staging
+    restart: unless-stopped
+    env_file: [.env.staging]
+    volumes:
+      - postgres_data_staging:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+    # Sin 'ports': la base de datos NO es accesible desde el host.
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: rl_logistica_redis_staging
+    restart: unless-stopped
+    command: redis-server --save "" --appendonly no --maxmemory 128mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [internal]
+    # Sin 'ports': Redis no expuesto al host.
+
+  # ── Backend ───────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./logistica-palets-backend
+      dockerfile: Dockerfile
+    container_name: rl_logistica_backend_staging
+    restart: unless-stopped
+    env_file: [.env.staging]
+    environment:
+      # ── Overrides fijos (no pueden ser cambiados desde .env.staging) ───────
+      PORT:              3000
+      DB_HOST:           db
+      DB_PORT:           5432
+      REDIS_HOST:        redis
+      REDIS_PORT:        6379
+      NODE_ENV:          production
+      DB_SYNCHRONIZE:    "false"     # NUNCA synchronize
+      DB_MIGRATIONS_RUN: "true"      # aplica migrations al arrancar
+      ALLOW_SEED:        "false"     # seed bloqueado
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('http').get('http://localhost:3000/api/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - uploads_data_staging:/app/uploads
+    networks: [internal]
+
+  # ── Frontend (React → Nginx) ───────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./logistica-palets-frontend
+      dockerfile: Dockerfile
+      args:
+        # Estas URLs se inyectan en tiempo de build (import.meta.env)
+        VITE_API_URL:  ${VITE_API_URL}
+        VITE_WS_URL:   ${VITE_WS_URL}
+    container_name: rl_logistica_frontend_staging
+    restart: unless-stopped
+    depends_on:
+      - backend
+    # Sin 'ports': lo expone cloudflared por la red interna.
+    networks: [internal]
+
+  # ── Cloudflare Tunnel (reemplaza a Caddy: TLS termina en el borde de CF) ───
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: rl_logistica_cloudflared_staging
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+    depends_on:
+      - backend
+      - frontend
+    networks: [internal]
+
+volumes:
+  postgres_data_staging:
+  uploads_data_staging:
+
+networks:
+  internal:
+    driver: bridge

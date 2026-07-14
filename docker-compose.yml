@@ -62,6 +62,10 @@ services:
       DB_MIGRATIONS_RUN: "${DB_MIGRATIONS_RUN:-true}"
       DB_LOGGING: "${DB_LOGGING:-false}"
       ALLOW_SEED: "${ALLOW_SEED:-false}"
+      # Admin inicial (fresh install). Con NODE_ENV=production el backend EXIGE
+      # estos valores (password ≥12) o aborta. Se reenvían desde el .env.
+      BOOTSTRAP_ADMIN_USER: "${BOOTSTRAP_ADMIN_USER:-}"
+      BOOTSTRAP_ADMIN_PASSWORD: "${BOOTSTRAP_ADMIN_PASSWORD:-}"
       # Seguridad
       CORS_ORIGIN: "${CORS_ORIGIN:-}"
       THROTTLE_TTL: "${THROTTLE_TTL:-60000}"

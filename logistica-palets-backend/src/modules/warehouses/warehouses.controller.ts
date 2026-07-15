@@ -40,21 +40,20 @@ export class WarehousesController {
     return this.service.findOne(id);
   }
 
-  // ✅ WRITE: admin/manager
   @Post()
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   create(@Body() dto: CreateWarehouseDto) {
     return this.service.create(dto);
   }
 
   @Patch(':id')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   update(@Param('id') id: string, @Body() dto: UpdateWarehouseDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(':id')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   remove(@Param('id') id: string) {
     return this.service.remove(id);
   }

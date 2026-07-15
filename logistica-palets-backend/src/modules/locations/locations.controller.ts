@@ -52,9 +52,8 @@ export class LocationsController {
     return this.service.findOne(id);
   }
 
-  // ✅ WRITE: admin/manager
   @Post()
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   create(@Body() dto: CreateLocationDto) {
     return this.service.create(dto);
   }
@@ -67,13 +66,13 @@ export class LocationsController {
   }
 
   @Patch(':id')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   update(@Param('id') id: string, @Body() dto: UpdateLocationDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(':id')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   remove(@Param('id') id: string) {
     return this.service.remove(id);
   }

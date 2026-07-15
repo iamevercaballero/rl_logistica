@@ -32,7 +32,7 @@ export class TransportsController {
   }
 
   @Post()
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   create(@Body() dto: CreateTransportDto) {
     return this.service.create(dto);
   }
@@ -49,7 +49,7 @@ export class TransportsController {
   }
 
   @Patch(':id')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   update(
     @Param('id') id: string,
     @Body() dto: UpdateTransportDto,
@@ -59,7 +59,7 @@ export class TransportsController {
   }
 
   @Delete(':id')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   remove(@Param('id') id: string) {
     return this.service.remove(id);
   }

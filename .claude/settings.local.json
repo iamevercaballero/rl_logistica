@@ -172,7 +172,20 @@
       "Bash(scp -i ~/.ssh/rl_staging_ed25519 ../rl_logistica_update.tar.gz evercab@192.168.100.26:~/)",
       "Bash(ssh -i ~/.ssh/rl_staging_ed25519 -o BatchMode=yes evercab@192.168.100.26 \"tar -xzf ~/rl_logistica_update.tar.gz -C ~/rl_logistica && rm ~/rl_logistica_update.tar.gz && echo EXTRAIDO\")",
       "Bash(ssh -i ~/.ssh/rl_staging_ed25519 -o BatchMode=yes evercab@192.168.100.26 \"cd ~/rl_logistica && docker compose -f docker-compose.staging.yml --env-file .env.staging up -d --build backend && sleep 3 && curl -fsS http://127.0.0.1:3000/api/health\")",
-      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 -o BatchMode=yes evercab@192.168.100.26 \"cd ~/rl_logistica && echo '--- CONTENEDORES ---' && docker compose -f docker-compose.staging.yml ps && echo && echo '--- MEMORIA ---' && free -h && echo && echo '--- DISCO ---' && df -h / && echo && echo '--- HEALTH INTERNO ---' && curl -fsS http://127.0.0.1:3000/api/health && echo && echo '--- TUNNEL \\(ultimas lineas\\) ---' && docker compose -f docker-compose.staging.yml logs cloudflared --tail=5\")"
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 -o BatchMode=yes evercab@192.168.100.26 \"cd ~/rl_logistica && echo '--- CONTENEDORES ---' && docker compose -f docker-compose.staging.yml ps && echo && echo '--- MEMORIA ---' && free -h && echo && echo '--- DISCO ---' && df -h / && echo && echo '--- HEALTH INTERNO ---' && curl -fsS http://127.0.0.1:3000/api/health && echo && echo '--- TUNNEL \\(ultimas lineas\\) ---' && docker compose -f docker-compose.staging.yml logs cloudflared --tail=5\")",
+      "Bash(npm audit *)",
+      "Bash(node -e \"const d=require\\('C:/Users/Usuario/AppData/Local/Temp/claude/C--Users-Usuario-Documents-cursos-rl-logistica/fed30630-a065-450b-99ab-fea0a8bde5f8/scratchpad/audit-backend-prod.json'\\); console.log\\(JSON.stringify\\(d.metadata,null,2\\)\\); console.log\\('VULN NAMES:', Object.keys\\(d.vulnerabilities||{}\\).join\\(', '\\)\\)\")",
+      "Bash(node -e \"const d=require\\('C:/Users/Usuario/AppData/Local/Temp/claude/C--Users-Usuario-Documents-cursos-rl-logistica/fed30630-a065-450b-99ab-fea0a8bde5f8/scratchpad/audit-frontend.json'\\); console.log\\(JSON.stringify\\(d.metadata,null,2\\)\\); console.log\\('VULN NAMES:', Object.keys\\(d.vulnerabilities||{}\\).join\\(', '\\)\\)\")",
+      "Bash(ls \"/c/Program Files/Docker/Docker/Docker Desktop.exe\" 2>&1)",
+      "Bash(gh --version)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(ping -n 3 192.168.100.26)",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 -o BatchMode=yes -o ConnectTimeout=8 evercab@192.168.100.39 \"echo CONECTADO_OK && hostname\")",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 -o BatchMode=yes evercab@192.168.100.39 \"ls -la ~/rl_logistica_update.tar.gz && tar -xzf ~/rl_logistica_update.tar.gz -C ~/rl_logistica && rm ~/rl_logistica_update.tar.gz && echo EXTRAIDO\")",
+      "Bash(scp -i ~/.ssh/rl_staging_ed25519 ../rl_logistica_update.tar.gz evercab@192.168.100.39:~/)",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 -o BatchMode=yes evercab@192.168.100.39 \"ls -la ~/rl_logistica_update.tar.gz && tar -xzf ~/rl_logistica_update.tar.gz -C ~/rl_logistica && rm ~/rl_logistica_update.tar.gz && cd ~/rl_logistica && docker compose -f docker-compose.staging.yml --env-file .env.staging up -d --build frontend\")",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 -o BatchMode=yes evercab@192.168.100.39 \"ls -la ~/rl_logistica_update.tar.gz && tar -xzf ~/rl_logistica_update.tar.gz -C ~/rl_logistica && rm ~/rl_logistica_update.tar.gz && cd ~/rl_logistica && docker compose -f docker-compose.staging.yml --env-file .env.staging up -d --build backend frontend && sleep 6 && curl -fsS http://127.0.0.1:3000/api/health\")",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 -o BatchMode=yes evercab@192.168.100.39 \"sleep 5 && cd ~/rl_logistica && docker compose -f docker-compose.staging.yml ps && curl -fsS http://127.0.0.1:3000/api/health\")"
     ]
   }
 }

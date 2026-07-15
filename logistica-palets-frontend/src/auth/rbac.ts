@@ -24,9 +24,9 @@ type ModulePermissions = {
 export const PERMS: Record<ModuleKey, ModulePermissions> = {
   products: {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
-    create: ["ADMIN", "MANAGER"],
-    update: ["ADMIN", "MANAGER"],
-    remove: ["ADMIN", "MANAGER"],
+    create: ["ADMIN", "MANAGER", "OPERATOR"],
+    update: ["ADMIN", "MANAGER", "OPERATOR"],
+    remove: ["ADMIN", "MANAGER", "OPERATOR"],
   },
   lots: {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
@@ -36,15 +36,15 @@ export const PERMS: Record<ModuleKey, ModulePermissions> = {
   },
   warehouses: {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
-    create: ["ADMIN", "MANAGER"],
-    update: ["ADMIN", "MANAGER"],
-    remove: ["ADMIN", "MANAGER"],
+    create: ["ADMIN", "MANAGER", "OPERATOR"],
+    update: ["ADMIN", "MANAGER", "OPERATOR"],
+    remove: ["ADMIN", "MANAGER", "OPERATOR"],
   },
   locations: {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
-    create: ["ADMIN", "MANAGER"],
-    update: ["ADMIN", "MANAGER"],
-    remove: ["ADMIN", "MANAGER"],
+    create: ["ADMIN", "MANAGER", "OPERATOR"],
+    update: ["ADMIN", "MANAGER", "OPERATOR"],
+    remove: ["ADMIN", "MANAGER", "OPERATOR"],
   },
   pallets: {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
@@ -70,9 +70,9 @@ export const PERMS: Record<ModuleKey, ModulePermissions> = {
   },
   transports: {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
-    create: ["ADMIN", "MANAGER"],
-    update: ["ADMIN", "MANAGER"],
-    remove: ["ADMIN", "MANAGER"],
+    create: ["ADMIN", "MANAGER", "OPERATOR"],
+    update: ["ADMIN", "MANAGER", "OPERATOR"],
+    remove: ["ADMIN", "MANAGER", "OPERATOR"],
   },
   reports: {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],

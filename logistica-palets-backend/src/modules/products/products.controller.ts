@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
@@ -7,14 +8,21 @@ import {
   Patch,
   Delete,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import { extname } from 'path';
 import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles/roles.guard';
 import { Roles } from '../auth/roles/roles.decorator';
+
+const IMPORT_EXTENSIONS = ['.xlsx', '.xls', '.csv'];
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('products')
@@ -43,6 +51,28 @@ export class ProductsController {
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   create(@Body() dto: CreateProductDto) {
     return this.productsService.create(dto);
+  }
+
+  /** Carga masiva de materiales desde un archivo Excel (.xlsx/.xls) o CSV. */
+  @Post('bulk-import')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 15 * 1024 * 1024 },
+      fileFilter: (_req, file, cb) => {
+        const ext = extname(file.originalname).toLowerCase();
+        if (!IMPORT_EXTENSIONS.includes(ext)) {
+          cb(new BadRequestException('Formato no soportado. Usá un archivo .xlsx, .xls o .csv.'), false);
+          return;
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  bulkImport(@UploadedFile() file: Express.Multer.File) {
+    if (!file) throw new BadRequestException('No se recibió ningún archivo.');
+    return this.productsService.bulkImport(file.buffer);
   }
 
   @Patch(':id')

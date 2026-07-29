@@ -88,7 +88,9 @@ import { AppController } from './app.controller';
           database: process.env.DB_DATABASE,
           autoLoadEntities: true,
           synchronize,
-          migrations: [migrationsGlob],
+          // Si no se van a correr migraciones, no hace falta cargarlas: evita
+          // importar los .ts crudos vía ts-node en dev (rompe con Node 22+).
+          migrations: migrationsRun ? [migrationsGlob] : [],
           migrationsRun,
           migrationsTableName: 'typeorm_migrations',
           logging:

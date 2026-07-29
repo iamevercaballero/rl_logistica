@@ -185,7 +185,31 @@
       "Bash(scp -i ~/.ssh/rl_staging_ed25519 ../rl_logistica_update.tar.gz evercab@192.168.100.39:~/)",
       "Bash(ssh -i ~/.ssh/rl_staging_ed25519 -o BatchMode=yes evercab@192.168.100.39 \"ls -la ~/rl_logistica_update.tar.gz && tar -xzf ~/rl_logistica_update.tar.gz -C ~/rl_logistica && rm ~/rl_logistica_update.tar.gz && cd ~/rl_logistica && docker compose -f docker-compose.staging.yml --env-file .env.staging up -d --build frontend\")",
       "Bash(ssh -i ~/.ssh/rl_staging_ed25519 -o BatchMode=yes evercab@192.168.100.39 \"ls -la ~/rl_logistica_update.tar.gz && tar -xzf ~/rl_logistica_update.tar.gz -C ~/rl_logistica && rm ~/rl_logistica_update.tar.gz && cd ~/rl_logistica && docker compose -f docker-compose.staging.yml --env-file .env.staging up -d --build backend frontend && sleep 6 && curl -fsS http://127.0.0.1:3000/api/health\")",
-      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 -o BatchMode=yes evercab@192.168.100.39 \"sleep 5 && cd ~/rl_logistica && docker compose -f docker-compose.staging.yml ps && curl -fsS http://127.0.0.1:3000/api/health\")"
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 -o BatchMode=yes evercab@192.168.100.39 \"sleep 5 && cd ~/rl_logistica && docker compose -f docker-compose.staging.yml ps && curl -fsS http://127.0.0.1:3000/api/health\")",
+      "Bash(python -c ' *)",
+      "Bash(node -e \"console.log\\(require\\('./node_modules/typescript/package.json'\\).version\\)\")",
+      "Bash(powershell -Command \"Get-Process 'Docker Desktop' -ErrorAction SilentlyContinue\")",
+      "Read(//c/Program Files/Docker/Docker/**)",
+      "Bash(powershell -Command \"Start-Process 'C:\\\\Program Files\\\\Docker\\\\Docker\\\\Docker Desktop.exe'\")",
+      "Bash(timeout 15 docker ps)",
+      "Bash(echo \"exit:$?\")",
+      "Bash(powershell -Command 'Get-Process | Where-Object {$_.ProcessName -like '\\\\''*Docker*'\\\\''} | Select-Object ProcessName,Id')",
+      "Bash(wsl --status)",
+      "Bash(wsl -l -v)",
+      "Bash(timeout 10 docker ps)",
+      "Bash(timeout 10 docker ps --format \"table {{.Names}}\\\\t{{.Status}}\\\\t{{.Ports}}\")",
+      "Bash(node -e \"console.log\\(require\\('pg/package.json'\\).version\\)\")",
+      "PowerShell(winget --version 2>&1)",
+      "PowerShell(winget search OpenJS.NodeJS 2>&1)",
+      "PowerShell(winget search OpenJS.NodeJS --source winget --accept-source-agreements 2>&1)",
+      "Bash(powershell -Command \"Get-ChildItem -Path 'C:\\\\Users\\\\Usuario\\\\Documents\\\\cursos\\\\rl-logistica' -Filter *.xlsx -Recurse -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 10 FullName,LastWriteTime\")",
+      "Bash(powershell -Command \"try { \\(Invoke-WebRequest -Uri http://localhost:5173 -UseBasicParsing -TimeoutSec 3\\).StatusCode } catch { 'not running' }\")",
+      "Bash(npx ts-node *)",
+      "Bash(rm \"C:\\\\Users\\\\Usuario\\\\Documents\\\\cursos\\\\rl-logistica\\\\logistica-palets-backend\\\\scripts\\\\_tmp-test-stock-list.ts\")",
+      "Bash(xargs cat)",
+      "Bash(powershell -Command 'try { \\(Invoke-WebRequest -Uri http://localhost:5173 -UseBasicParsing -TimeoutSec 3\\).StatusCode } catch { '\\\\''not running: '\\\\'' + $_.Exception.Message }')",
+      "Bash(grep -n '`R\\\\${r}`' src/modules/locations/locations.service.ts)",
+      "Bash(grep -n \"private async applyNetAdjustments\\\\|private parseSnapshotSheet\\\\|async revertStockSnapshot\\\\|^interface SnapshotRow\\\\|^export interface StockSnapshot\\\\|^export interface StockListSnapshotResult\\\\|^export interface StockLot\\\\|^  }$\" src/modules/movements/movements.service.ts)"
     ]
   }
 }

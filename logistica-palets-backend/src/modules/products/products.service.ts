@@ -1,9 +1,54 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ILike, Repository } from 'typeorm';
+import * as XLSX from 'xlsx';
 import { Product } from './entities/product.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+
+export interface BulkImportRowError {
+  row: number;
+  code?: string;
+  description?: string;
+  reason: string;
+}
+
+export interface BulkImportResult {
+  totalRows: number;
+  imported: number;
+  skipped: number;
+  errors: BulkImportRowError[];
+}
+
+/** Alias de encabezados aceptados por columna, ya normalizados (sin tildes, minúsculas). */
+const HEADER_ALIASES: Record<'code' | 'description' | 'unitOfMeasure' | 'stackable', string[]> = {
+  code: ['codigo', 'cod', 'material', 'codigo material', 'codigo de material'],
+  description: ['descripcion', 'desc', 'descripcion material'],
+  unitOfMeasure: ['um', 'u.m.', 'unidad', 'unidad de medida'],
+  stackable: ['apilable', 'stackable'],
+};
+
+const DIACRITICS_PATTERN = new RegExp('[̀-ͯ]', 'g');
+
+function normalizeHeader(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(DIACRITICS_PATTERN, '')
+    .trim()
+    .toLowerCase();
+}
+
+function mapRow(raw: Record<string, unknown>): Record<string, unknown> {
+  const mapped: Record<string, unknown> = {};
+  for (const [header, value] of Object.entries(raw)) {
+    const norm = normalizeHeader(header);
+    const field = (Object.keys(HEADER_ALIASES) as (keyof typeof HEADER_ALIASES)[]).find((key) =>
+      HEADER_ALIASES[key].includes(norm),
+    );
+    if (field) mapped[field] = value;
+  }
+  return mapped;
+}
 
 @Injectable()
 export class ProductsService {
@@ -81,5 +126,89 @@ export class ProductsService {
     if (existing && existing.id !== excludeId) {
       throw new BadRequestException('Ya existe un material con ese código');
     }
+  }
+
+  /**
+   * Carga masiva de materiales desde un archivo Excel/CSV.
+   * Filas con datos inválidos, incompletos o códigos duplicados se omiten y se
+   * reportan en `errors`; el resto se inserta en un solo lote.
+   */
+  async bulkImport(buffer: Buffer): Promise<BulkImportResult> {
+    let workbook: XLSX.WorkBook;
+    try {
+      workbook = XLSX.read(buffer, { type: 'buffer' });
+    } catch {
+      throw new BadRequestException('No se pudo leer el archivo. Verificá que sea un Excel (.xlsx/.xls) o CSV válido.');
+    }
+
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    if (!sheet) throw new BadRequestException('El archivo no contiene hojas con datos.');
+
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', raw: false });
+    if (rows.length === 0) throw new BadRequestException('El archivo no contiene filas de datos.');
+
+    const existingCodes = new Set((await this.productRepo.find({ select: ['code'] })).map((p) => p.code));
+    const seenCodes = new Set<string>();
+    const errors: BulkImportRowError[] = [];
+    const candidates: Partial<Product>[] = [];
+
+    rows.forEach((raw, index) => {
+      const rowNumber = index + 2; // fila 1 = encabezado
+      const mapped = mapRow(raw);
+
+      const codeRaw = String(mapped.code ?? '').trim();
+      if (!codeRaw) {
+        errors.push({ row: rowNumber, reason: 'Código vacío' });
+        return;
+      }
+      if (!/\d/.test(codeRaw)) {
+        errors.push({ row: rowNumber, code: codeRaw, reason: 'Código inválido (no contiene dígitos)' });
+        return;
+      }
+      const code = codeRaw.toUpperCase();
+
+      const descRaw = String(mapped.description ?? '').trim();
+      if (!descRaw) {
+        errors.push({ row: rowNumber, code, reason: 'Descripción vacía' });
+        return;
+      }
+      const description = descRaw.toUpperCase().replace(/\s+/g, ' ');
+
+      const umRaw = String(mapped.unitOfMeasure ?? '').trim();
+      if (!umRaw) {
+        errors.push({ row: rowNumber, code, description, reason: 'Unidad de medida vacía' });
+        return;
+      }
+      const unitOfMeasure = umRaw.toUpperCase();
+
+      if (seenCodes.has(code)) {
+        errors.push({ row: rowNumber, code, description, reason: 'Código duplicado dentro del archivo' });
+        return;
+      }
+      if (existingCodes.has(code)) {
+        errors.push({ row: rowNumber, code, description, reason: 'Ya existe un material con este código' });
+        return;
+      }
+      seenCodes.add(code);
+
+      const apilableRaw = String(mapped.stackable ?? '').trim().toUpperCase();
+      const stackable = apilableRaw !== 'NO';
+
+      const product: Partial<Product> = { code, description, unitOfMeasure, stackable };
+      if (!stackable) product.canReceiveWeightOnTop = false;
+      candidates.push(product);
+    });
+
+    if (candidates.length > 0) {
+      const entities = candidates.map((c) => this.productRepo.create(c));
+      await this.productRepo.save(entities);
+    }
+
+    return {
+      totalRows: rows.length,
+      imported: candidates.length,
+      skipped: errors.length,
+      errors,
+    };
   }
 }

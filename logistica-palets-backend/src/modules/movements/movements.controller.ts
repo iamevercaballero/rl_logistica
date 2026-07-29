@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -7,8 +8,13 @@ import {
   Post,
   Query,
   Req,
+  UploadedFiles,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import { extname } from 'path';
 import { Request } from 'express';
 import { MovementsService } from './movements.service';
 import { CreateMovementDto } from './dto/create-movement.dto';
@@ -20,6 +26,8 @@ import { MovementsQueryDto } from './dto/movements-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles/roles.guard';
 import { Roles } from '../auth/roles/roles.decorator';
+
+const SNAPSHOT_EXTENSIONS = ['.xlsx', '.xls', '.csv'];
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('movements')
@@ -37,6 +45,52 @@ export class MovementsController {
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   createDocument(@Body() dto: CreateDocumentDto, @Req() req: Request & { user: { userId: string } }) {
     return this.service.createDocument(dto, req.user.userId);
+  }
+
+  /**
+   * Snapshot de stock inicial CON lotes reales (código de lote de proveedor,
+   * lote SAP, vencimiento). Si un código no existe en el catálogo, se crea el
+   * producto automáticamente (apilable por defecto). `commit=false` (default)
+   * solo calcula y devuelve el resultado.
+   */
+  @Post('stock-snapshot/from-lots')
+  @Roles('ADMIN')
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [{ name: 'stock', maxCount: 1 }],
+      {
+        storage: memoryStorage(),
+        limits: { fileSize: 20 * 1024 * 1024 },
+        fileFilter: (_req, file, cb) => {
+          const ext = extname(file.originalname).toLowerCase();
+          if (!SNAPSHOT_EXTENSIONS.includes(ext)) {
+            cb(new BadRequestException('Formato no soportado. Usá un archivo .xlsx, .xls o .csv.'), false);
+            return;
+          }
+          cb(null, true);
+        },
+      },
+    ),
+  )
+  stockSnapshotFromLots(
+    @UploadedFiles() files: { stock?: Express.Multer.File[] },
+    @Query('commit') commit: string,
+    @Req() req: Request & { user: { userId: string } },
+  ) {
+    const stock = files.stock?.[0];
+    if (!stock) throw new BadRequestException('Se requiere el archivo de stock.');
+    return this.service.stockSnapshotFromLotList(stock.buffer, req.user.userId, commit === 'true');
+  }
+
+  /**
+   * Revierte los ajustes creados por el snapshot de stock inicial (identificados
+   * por `adjustmentCategory: 'CARGA_INICIAL'`). `commit=false` solo lista qué se
+   * revertiría, sin tocar nada.
+   */
+  @Post('stock-snapshot/revert')
+  @Roles('ADMIN')
+  revertStockSnapshot(@Query('commit') commit: string) {
+    return this.service.revertStockSnapshot(commit === 'true');
   }
 
   /** Transferencia multi-producto: N pallets de una ubicación a otra en una sola transacción. */

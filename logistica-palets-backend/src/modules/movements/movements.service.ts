@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DataSource, EntityManager, In, IsNull } from 'typeorm';
+import * as XLSX from 'xlsx';
 import { CreateMovementDto } from './dto/create-movement.dto';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { AdjustmentRequest } from '../adjustments/entities/adjustment-request.entity';
@@ -1558,4 +1559,362 @@ export class MovementsService {
     if (type === 'EXIT' || type === 'ADJUSTMENT_OUT') return 'Resta stock';
     return 'Suma stock';
   }
+
+  /**
+   * Snapshot de stock inicial CON lotes reales: cada fila es un lote de un
+   * producto (código de lote de proveedor, lote SAP, vencimiento, cantidad).
+   * A diferencia de `stockSnapshotFromStockList`, acá se preserva el detalle
+   * por lote (queda disponible para FEFO desde el primer movimiento nuevo) y,
+   * si un código no existe en el catálogo, se crea el producto automáticamente
+   * (apilable por defecto) en vez de omitir la fila.
+   */
+  async stockSnapshotFromLotList(buffer: Buffer, userId: string, commit: boolean): Promise<StockLotSnapshotResult> {
+    let workbook: XLSX.WorkBook;
+    try {
+      workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+    } catch {
+      throw new BadRequestException('No se pudo leer el archivo de stock. Verificá que sea un Excel/CSV válido.');
+    }
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    if (!sheet) throw new BadRequestException('El archivo de stock no contiene hojas con datos.');
+    const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', raw: false });
+
+    const CODE_ALIASES = ['codigo', 'codigo material'];
+    const DESC_ALIASES = ['material', 'descripcion'];
+    const UM_ALIASES = ['umb', 'um', 'unidad de medida'];
+    const QTY_ALIASES = ['stock lu', 'stock', 'cantidad'];
+    const FECHA_VTO_ALIASES = ['fecha de vto', 'fecha vencimiento', 'fecha de vencimiento'];
+    const LOTE_PROVEEDOR_ALIASES = ['lote de proveedor'];
+    const LOTE_SAP_ALIASES = ['lote', 'lote sap'];
+
+    const normalize = (value: string): string =>
+      value.normalize('NFD').replace(new RegExp('[̀-ͯ]', 'g'), '').trim().toLowerCase();
+
+    const parseQty = (value: unknown): number | null => {
+      const str = String(value ?? '').replace(/[^0-9.\-]/g, '');
+      if (!str) return null;
+      const n = parseFloat(str);
+      return Number.isFinite(n) ? Math.round(n) || 0 : null;
+    };
+
+    const parseDate = (value: unknown): string | null => {
+      if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
+      if (!value) return null;
+      const d = new Date(String(value));
+      return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+    };
+
+    const rowIssues: StockSnapshotRowIssue[] = [];
+    type Group = { description: string; unitOfMeasure: string; lots: StockLotItem[] };
+    const groups = new Map<string, Group>();
+
+    raw.forEach((entry, index) => {
+      const rowNumber = index + 2;
+      let code = '';
+      let description = '';
+      let unitOfMeasure = '';
+      let qty: number | null = null;
+      let fechaVencimiento: string | null = null;
+      let lotCode = '';
+      let sapLot = '';
+
+      for (const [header, value] of Object.entries(entry)) {
+        const norm = normalize(header);
+        if (CODE_ALIASES.includes(norm)) code = String(value ?? '').trim().toUpperCase();
+        else if (LOTE_PROVEEDOR_ALIASES.includes(norm)) lotCode = String(value ?? '').trim().toUpperCase();
+        else if (LOTE_SAP_ALIASES.includes(norm)) sapLot = String(value ?? '').trim().toUpperCase();
+        else if (UM_ALIASES.includes(norm)) unitOfMeasure = String(value ?? '').trim().toUpperCase();
+        else if (QTY_ALIASES.includes(norm)) qty = parseQty(value);
+        else if (FECHA_VTO_ALIASES.includes(norm)) fechaVencimiento = parseDate(value);
+        else if (DESC_ALIASES.includes(norm)) description = String(value ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
+      }
+
+      if (!code) {
+        rowIssues.push({ file: 'STOCK', row: rowNumber, reason: 'Código vacío' });
+        return;
+      }
+      if (!/\d/.test(code)) {
+        rowIssues.push({ file: 'STOCK', row: rowNumber, code, reason: 'Código inválido (no contiene dígitos)' });
+        return;
+      }
+      if (!lotCode) {
+        rowIssues.push({ file: 'STOCK', row: rowNumber, code, reason: 'Lote de proveedor vacío' });
+        return;
+      }
+      if (qty === null || qty <= 0) {
+        rowIssues.push({ file: 'STOCK', row: rowNumber, code, reason: 'Cantidad inválida o vacía' });
+        return;
+      }
+
+      const group = groups.get(code) ?? { description, unitOfMeasure, lots: [] };
+      if (!group.description && description) group.description = description;
+      if (!group.unitOfMeasure && unitOfMeasure) group.unitOfMeasure = unitOfMeasure;
+
+      const existingLot = group.lots.find((l) => l.lotCode === lotCode);
+      if (existingLot) {
+        existingLot.quantity += qty;
+        rowIssues.push({ file: 'STOCK', row: rowNumber, code, reason: `Lote "${lotCode}" duplicado para este código — cantidades sumadas` });
+      } else {
+        group.lots.push({ lotCode, sapLot: sapLot || undefined, quantity: qty, fechaVencimiento });
+      }
+      groups.set(code, group);
+    });
+
+    const products = await this.dataSource.getRepository(Product).find();
+    const productByCode = new Map(products.map((p) => [p.code.trim().toUpperCase(), p] as const));
+
+    const stockRows = await this.dataSource.getRepository(Stock).find();
+    const stockByProduct = new Map<string, number>();
+    for (const s of stockRows) {
+      stockByProduct.set(s.productId, (stockByProduct.get(s.productId) ?? 0) + s.currentQuantity);
+    }
+
+    const results: StockLotSnapshotProductResult[] = [];
+    const summary = {
+      adjusted: 0,
+      newProducts: 0,
+      skippedInactive: 0,
+      skippedAlreadyHasStock: 0,
+      skippedNonPositive: 0,
+      errors: 0,
+    };
+
+    for (const [code, group] of groups) {
+      const net = group.lots.reduce((s, l) => s + l.quantity, 0);
+      const base: Omit<StockLotSnapshotProductResult, 'status'> = {
+        code,
+        description: group.description,
+        unitOfMeasure: group.unitOfMeasure || undefined,
+        isNewProduct: !productByCode.has(code),
+        lots: group.lots,
+        net,
+      };
+
+      let product = productByCode.get(code);
+      if (!product) {
+        if (!group.description) {
+          summary.errors++;
+          results.push({ ...base, status: 'ERROR', error: 'Producto nuevo sin descripción — no se puede crear' });
+          continue;
+        }
+        if (!commit) {
+          summary.adjusted++;
+          results.push({ ...base, status: 'WOULD_ADJUST' });
+          continue;
+        }
+        try {
+          const created = await this.dataSource.getRepository(Product).save(
+            this.dataSource.getRepository(Product).create({
+              code,
+              description: group.description,
+              unitOfMeasure: group.unitOfMeasure || undefined,
+              active: true,
+              stackable: true,
+            }),
+          );
+          product = created;
+          productByCode.set(code, created);
+        } catch (err) {
+          summary.errors++;
+          results.push({ ...base, status: 'ERROR', error: `No se pudo crear el producto: ${err instanceof Error ? err.message : String(err)}` });
+          continue;
+        }
+      } else if (!product.active) {
+        summary.skippedInactive++;
+        results.push({ ...base, status: 'SKIPPED_INACTIVE' });
+        continue;
+      } else if ((stockByProduct.get(product.id) ?? 0) !== 0) {
+        summary.skippedAlreadyHasStock++;
+        results.push({ ...base, status: 'SKIPPED_ALREADY_HAS_STOCK' });
+        continue;
+      }
+
+      if (net <= 0) {
+        summary.skippedNonPositive++;
+        results.push({ ...base, status: 'SKIPPED_NON_POSITIVE' });
+        continue;
+      }
+
+      if (!commit) {
+        summary.adjusted++;
+        if (base.isNewProduct) summary.newProducts++;
+        results.push({ ...base, status: 'WOULD_ADJUST' });
+        continue;
+      }
+
+      try {
+        const createdMovement = await this.create(
+          {
+            type: 'ADJUSTMENT_IN',
+            productId: product.id,
+            adjustmentReason: 'DIFERENCIA_INVENTARIO',
+            adjustmentCategory: 'CARGA_INICIAL',
+            notes: 'Snapshot de stock inicial por lote (import automático)',
+            palletItems: group.lots.map((l) => ({
+              lotCode: l.lotCode,
+              quantity: l.quantity,
+              fechaVencimiento: l.fechaVencimiento ?? undefined,
+              sapLot: l.sapLot,
+            })),
+          },
+          userId,
+        );
+        summary.adjusted++;
+        if (base.isNewProduct) summary.newProducts++;
+        results.push({ ...base, status: 'ADJUSTED', movementId: createdMovement.movementId, productCreated: base.isNewProduct });
+      } catch (err) {
+        summary.errors++;
+        results.push({ ...base, status: 'ERROR', error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    return {
+      committed: commit,
+      sourceRows: raw.length,
+      rowIssues,
+      products: results,
+      summary,
+    };
+  }
+
+  /**
+   * Revierte los ajustes creados por `stockSnapshotFromLotList` (identificados
+   * por `adjustmentCategory: 'CARGA_INICIAL'`): descuenta el stock que sumaron,
+   * borra lotes/pallets asociados y los movimientos. No toca productos,
+   * ubicaciones ni ningún otro dato. `commit=false` solo lista qué se revertiría.
+   */
+  async revertStockSnapshot(commit: boolean): Promise<StockSnapshotRevertResult> {
+    const movements = await this.dataSource.getRepository(Movement).find({
+      where: { type: 'ADJUSTMENT_IN', adjustmentCategory: 'CARGA_INICIAL' },
+      order: { createdAt: 'ASC' },
+    });
+
+    const products = await this.dataSource.getRepository(Product).find();
+    const productById = new Map(products.map((p) => [p.id, p] as const));
+
+    const items: StockSnapshotRevertItem[] = [];
+
+    for (const movement of movements) {
+      const product = productById.get(movement.productId);
+      const base = {
+        movementId: movement.id,
+        code: product?.code ?? movement.productId,
+        description: product?.description ?? '',
+        quantity: movement.quantity,
+      };
+
+      if (!commit) {
+        items.push({ ...base, reverted: false });
+        continue;
+      }
+
+      try {
+        await this.dataSource.transaction(async (manager) => {
+          // Deshacer lotes/pallets creados por el snapshot con lotes (si los hay).
+          const details = await manager.getRepository(MovementDetail).find({ where: { movementId: movement.id } });
+          for (const detail of details) {
+            if (detail.palletId) await manager.delete(Pallet, detail.palletId);
+            if (detail.lotId) {
+              const lot = await manager.getRepository(Lot).findOne({ where: { id: detail.lotId } });
+              if (lot) {
+                const remaining = lot.stockActual - detail.quantity;
+                if (remaining <= 0) await manager.delete(Lot, lot.id);
+                else {
+                  lot.stockActual = remaining;
+                  await manager.save(lot);
+                }
+              }
+            }
+          }
+          if (details.length) await manager.delete(MovementDetail, { movementId: movement.id });
+
+          await this.applyDecrease(manager, movement.productId, movement.warehouseId ?? null, movement.locationId ?? null, movement.quantity);
+          await manager.delete(Movement, movement.id);
+        });
+        items.push({ ...base, reverted: true });
+      } catch (err) {
+        items.push({ ...base, reverted: false, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    if (commit) {
+      void Promise.all([this.cache.delPattern('kpis:*'), this.cache.delPattern('stock:*')]);
+      this.events.emitStockUpdated({ warehouseId: null });
+    }
+
+    return {
+      committed: commit,
+      totalFound: movements.length,
+      totalReverted: items.filter((i) => i.reverted).length,
+      items,
+    };
+  }
+
+}
+
+export interface StockSnapshotRowIssue {
+  file: 'ENTRADA' | 'SALIDA' | 'STOCK';
+  row: number;
+  code?: string;
+  reason: string;
+}
+
+export type StockSnapshotProductStatus =
+  | 'ADJUSTED'
+  | 'WOULD_ADJUST'
+  | 'SKIPPED_NOT_FOUND'
+  | 'SKIPPED_INACTIVE'
+  | 'SKIPPED_ALREADY_HAS_STOCK'
+  | 'SKIPPED_NON_POSITIVE'
+  | 'ERROR';
+
+export interface StockSnapshotRevertItem {
+  movementId: string;
+  code: string;
+  description: string;
+  quantity: number;
+  reverted: boolean;
+  error?: string;
+}
+
+export interface StockSnapshotRevertResult {
+  committed: boolean;
+  totalFound: number;
+  totalReverted: number;
+  items: StockSnapshotRevertItem[];
+}
+
+export interface StockLotItem {
+  lotCode: string;
+  sapLot?: string;
+  quantity: number;
+  fechaVencimiento?: string | null;
+}
+
+export interface StockLotSnapshotProductResult {
+  code: string;
+  description: string;
+  unitOfMeasure?: string;
+  isNewProduct: boolean;
+  lots: StockLotItem[];
+  net: number;
+  status: StockSnapshotProductStatus;
+  movementId?: string;
+  productCreated?: boolean;
+  error?: string;
+}
+
+export interface StockLotSnapshotResult {
+  committed: boolean;
+  sourceRows: number;
+  rowIssues: StockSnapshotRowIssue[];
+  products: StockLotSnapshotProductResult[];
+  summary: {
+    adjusted: number;
+    newProducts: number;
+    skippedInactive: number;
+    skippedAlreadyHasStock: number;
+    skippedNonPositive: number;
+    errors: number;
+  };
 }

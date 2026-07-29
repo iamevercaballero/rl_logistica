@@ -75,6 +75,10 @@ export class LocationsService {
 
     const prefix = dto.codePrefix?.trim().toUpperCase() || null;
     const isRack = aisles.length > 0;
+    // El tipo físico depende de si hay más de 1 nivel real (rack de verdad),
+    // no de si la ubicación usa la jerarquía pasillo/fila/nivel/posición —
+    // un sector de piso con varias filas (isRack=true, levels=1) sigue siendo PISO.
+    const physicalType = isRack && levels > 1 ? 'RACK' : 'PISO';
 
     type NewLoc = {
       code: string; zone: string; aisle: string | null; rack: string | null;
@@ -88,8 +92,8 @@ export class LocationsService {
           for (let n = 1; n <= levels; n++) {
             for (let p = 1; p <= dto.positions; p++) {
               wanted.push({
-                code: [prefix, aisle, `R${r}`, `N${n}`, `P${p}`].filter(Boolean).join('-'),
-                zone: dto.zone, aisle, rack: `R${r}`, level: n, position: p,
+                code: [prefix, aisle, `F${r}`, `N${n}`, `P${p}`].filter(Boolean).join('-'),
+                zone: dto.zone, aisle, rack: `F${r}`, level: n, position: p,
               });
             }
           }
@@ -116,7 +120,7 @@ export class LocationsService {
     const entities = toCreate.map((w) =>
       this.locationRepo.create({
         code: w.code,
-        type: isRack ? 'RACK' : 'PISO',
+        type: physicalType,
         zone: w.zone,
         aisle: w.aisle,
         rack: w.rack,

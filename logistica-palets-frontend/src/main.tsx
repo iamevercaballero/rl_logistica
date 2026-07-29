@@ -25,6 +25,7 @@ import TransportsPage from "./pages/Transports";
 import WarehousesPage from "./pages/Warehouses";
 import BillingPage from "./pages/Billing";
 import SeedPage from "./pages/Seed";
+import StockSnapshotPage from "./pages/StockSnapshot";
 import PrintDocumentPage from "./pages/PrintDocument";
 import PrintLabelsPage from "./pages/PrintLabels";
 import UsersPage from "./pages/Users";
@@ -127,6 +128,7 @@ const router = createBrowserRouter([
         ),
       },
       { path: "seed", element: <SeedPage /> },
+      { path: "stock-snapshot", element: <StockSnapshotPage /> },
       { path: "*", element: <Navigate to="/" replace /> },
     ],
   },

@@ -1,6 +1,14 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createProduct, deleteProduct, listProducts, updateProduct, type Product } from "../api/products";
+import {
+  bulkImportProducts,
+  createProduct,
+  deleteProduct,
+  listProducts,
+  updateProduct,
+  type BulkImportResult,
+  type Product,
+} from "../api/products";
 import { useAuth } from "../auth/AuthContext";
 import { canCreate, canDelete, canUpdate } from "../auth/rbac";
 import { useToast } from "../design-system/toast";
@@ -14,6 +22,7 @@ const UNITS_OF_MEASURE = [
   { value: "GR", label: "GR — Gramo" },
   { value: "TN", label: "TN — Tonelada" },
   { value: "TS", label: "TS — Tonelada seca" },
+  { value: "HL", label: "HL — Hectolitro" },
   { value: "MT", label: "MT — Metro" },
   { value: "M2", label: "M2 — Metro cuadrado" },
   { value: "M3", label: "M3 — Metro cúbico" },
@@ -103,6 +112,9 @@ export default function ProductsPage() {
     onError: (err) => toast.error(getFriendlyApiError(err)),
   });
 
+  // Carga masiva desde Excel/CSV
+  const [showBulkImport, setShowBulkImport] = useState(false);
+
   // Edición de material existente (modal)
   const [editing, setEditing] = useState<Product | null>(null);
   const updateMut = useMutation({
@@ -141,11 +153,18 @@ export default function ProductsPage() {
 
   return (
     <div>
-      <div style={{ marginBottom: 20 }}>
-        <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.5, marginBottom: 4 }}>Materiales</h1>
-        <p style={{ color: "var(--muted)", fontSize: 14, marginBottom: 0 }}>
-          Catálogo de materiales operativos. {!allowCreate ? "Modo lectura." : ""}
-        </p>
+      <div style={{ marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.5, marginBottom: 4 }}>Materiales</h1>
+          <p style={{ color: "var(--muted)", fontSize: 14, marginBottom: 0 }}>
+            Catálogo de materiales operativos. {!allowCreate ? "Modo lectura." : ""}
+          </p>
+        </div>
+        {allowCreate && (
+          <button className="btn" type="button" onClick={() => setShowBulkImport(true)}>
+            Carga masiva
+          </button>
+        )}
       </div>
 
       {/* ── Search bar ──────────────────────────────────────────────────────── */}
@@ -376,6 +395,124 @@ export default function ProductsPage() {
           onSave={(payload) => updateMut.mutate({ id: editing.id, payload })}
         />
       )}
+
+      {showBulkImport && (
+        <BulkImportModal
+          onClose={() => setShowBulkImport(false)}
+          onImported={() => queryClient.invalidateQueries({ queryKey: ["products"] })}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Modal de carga masiva de materiales (Excel/CSV) ─────────────────────────────
+function BulkImportModal({ onClose, onImported }: { onClose: () => void; onImported: () => void }) {
+  const { toast } = useToast();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [result, setResult] = useState<BulkImportResult | null>(null);
+
+  const mut = useMutation({
+    mutationFn: (f: File) => bulkImportProducts(f),
+    onSuccess: (res) => {
+      setResult(res);
+      if (res.imported > 0) {
+        toast.success(`${res.imported} material${res.imported !== 1 ? "es" : ""} importado${res.imported !== 1 ? "s" : ""}`);
+        onImported();
+      }
+      if (res.skipped > 0) {
+        toast.error(`${res.skipped} fila${res.skipped !== 1 ? "s" : ""} omitida${res.skipped !== 1 ? "s" : ""}, revisá el detalle`);
+      }
+    },
+    onError: (err) => toast.error(getFriendlyApiError(err)),
+  });
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0] ?? null;
+    setFile(f);
+    setResult(null);
+  }
+
+  function handleImport() {
+    if (!file) return;
+    mut.mutate(file);
+  }
+
+  return (
+    <div
+      onMouseDown={onClose}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 2000,
+        display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+      }}
+      role="dialog" aria-modal="true" aria-label="Carga masiva de materiales"
+    >
+      <div
+        onMouseDown={(e) => e.stopPropagation()}
+        className="card"
+        style={{ width: "100%", maxWidth: 560, display: "grid", gap: 12, maxHeight: "90vh", overflowY: "auto" }}
+      >
+        <h2 style={{ fontSize: 18, fontWeight: 800, margin: 0 }}>Carga masiva de materiales</h2>
+        <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>
+          Subí un Excel o CSV con columnas Código, Descripción, UM y Apilable. Se omiten filas con código o
+          descripción vacíos, UM vacía, o código duplicado (en el archivo o ya existente).
+        </p>
+
+        <div
+          style={{
+            border: "2px dashed var(--border)", borderRadius: 8, padding: "12px 16px", textAlign: "center",
+            cursor: "pointer", background: file ? "var(--primary-light)" : "var(--bg)",
+          }}
+          onClick={() => inputRef.current?.click()}
+        >
+          {file ? (
+            <span style={{ fontSize: 13, fontWeight: 600 }}>
+              📄 {file.name} <span style={{ color: "var(--muted)", fontWeight: 400 }}>({(file.size / 1024).toFixed(0)} KB)</span>
+            </span>
+          ) : (
+            <span style={{ fontSize: 13, color: "var(--muted)" }}>Hacé click para seleccionar un archivo (.xlsx, .xls, .csv)</span>
+          )}
+          <input ref={inputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleFileChange} style={{ display: "none" }} />
+        </div>
+
+        {result && (
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ display: "flex", gap: 14, fontSize: 13 }}>
+              <span><strong>{result.totalRows}</strong> filas leídas</span>
+              <span style={{ color: "var(--success)" }}><strong>{result.imported}</strong> importados</span>
+              <span style={{ color: result.skipped ? "var(--danger)" : "var(--muted)" }}>
+                <strong>{result.skipped}</strong> omitidos
+              </span>
+            </div>
+            {result.errors.length > 0 && (
+              <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6 }}>
+                <table className="table" style={{ fontSize: 12 }}>
+                  <thead>
+                    <tr><th scope="col">Fila</th><th scope="col">Código</th><th scope="col">Motivo</th></tr>
+                  </thead>
+                  <tbody>
+                    {result.errors.map((e, i) => (
+                      <tr key={i}>
+                        <td>{e.row}</td>
+                        <td>{e.code ?? "-"}</td>
+                        <td>{e.reason}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
+          <button type="button" className="btn" onClick={onClose}>Cerrar</button>
+          <button type="button" className="btn btn--primary" onClick={handleImport} disabled={!file || mut.isPending}>
+            {mut.isPending ? "Importando..." : "Importar"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

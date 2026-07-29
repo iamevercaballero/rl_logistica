@@ -324,3 +324,92 @@ export async function regularizeMovement(id: string, payload: {
   const { data } = await api.patch(`/movements/${id}/regularize`, payload);
   return data;
 }
+
+export type StockSnapshotRowIssue = {
+  file: "ENTRADA" | "SALIDA" | "STOCK";
+  row: number;
+  code?: string;
+  reason: string;
+};
+
+export type StockSnapshotProductStatus =
+  | "ADJUSTED"
+  | "WOULD_ADJUST"
+  | "SKIPPED_NOT_FOUND"
+  | "SKIPPED_INACTIVE"
+  | "SKIPPED_ALREADY_HAS_STOCK"
+  | "SKIPPED_NON_POSITIVE"
+  | "ERROR";
+
+
+export type StockLotItem = {
+  lotCode: string;
+  sapLot?: string;
+  quantity: number;
+  fechaVencimiento?: string | null;
+};
+
+export type StockLotSnapshotProductResult = {
+  code: string;
+  description: string;
+  unitOfMeasure?: string;
+  isNewProduct: boolean;
+  lots: StockLotItem[];
+  net: number;
+  status: StockSnapshotProductStatus;
+  movementId?: string;
+  productCreated?: boolean;
+  error?: string;
+};
+
+export type StockLotSnapshotResult = {
+  committed: boolean;
+  sourceRows: number;
+  rowIssues: StockSnapshotRowIssue[];
+  products: StockLotSnapshotProductResult[];
+  summary: {
+    adjusted: number;
+    newProducts: number;
+    skippedInactive: number;
+    skippedAlreadyHasStock: number;
+    skippedNonPositive: number;
+    errors: number;
+  };
+};
+
+export async function stockSnapshotFromLots(
+  stock: File,
+  commit: boolean,
+): Promise<StockLotSnapshotResult> {
+  const form = new FormData();
+  form.append("stock", stock);
+  const { data } = await api.post<StockLotSnapshotResult>(
+    `/movements/stock-snapshot/from-lots?commit=${commit ? "true" : "false"}`,
+    form,
+    { headers: { "Content-Type": "multipart/form-data" }, timeout: 300000 },
+  );
+  return data;
+}
+
+export type StockSnapshotRevertItem = {
+  movementId: string;
+  code: string;
+  description: string;
+  quantity: number;
+  reverted: boolean;
+  error?: string;
+};
+
+export type StockSnapshotRevertResult = {
+  committed: boolean;
+  totalFound: number;
+  totalReverted: number;
+  items: StockSnapshotRevertItem[];
+};
+
+export async function revertStockSnapshot(commit: boolean): Promise<StockSnapshotRevertResult> {
+  const { data } = await api.post<StockSnapshotRevertResult>(
+    `/movements/stock-snapshot/revert?commit=${commit ? "true" : "false"}`,
+  );
+  return data;
+}

@@ -15,7 +15,7 @@ import { locationZones } from '../entities/location.entity';
 
 /**
  * Generador masivo de estructura: crea las posiciones de una zona en lote.
- * Código resultante: [prefijo-]PASILLO-R{rack}-N{nivel}-P{posición}
+ * Código resultante: [prefijo-]PASILLO-F{rack}-N{nivel}-P{posición}
  * (las partes ausentes se omiten; una zona plana genera [prefijo-]P{n}).
  */
 export class GenerateLocationsDto {

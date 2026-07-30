@@ -207,11 +207,11 @@ export default function ProductsPage() {
             </button>
           )}
         </div>
-        {search && (
-          <span style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>
-            {items.length} resultado{items.length !== 1 ? "s" : ""}
-          </span>
-        )}
+        <span style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>
+          {search
+            ? `${items.length} resultado${items.length !== 1 ? "s" : ""}`
+            : `${items.length} material${items.length !== 1 ? "es" : ""}`}
+        </span>
       </div>
 
       <form onSubmit={handleSubmit} style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }} aria-label="Nuevo material">

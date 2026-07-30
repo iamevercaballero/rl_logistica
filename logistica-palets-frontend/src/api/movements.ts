@@ -59,10 +59,13 @@ export type MovementsMeta = { page: number; limit: number; total: number; totalP
 
 export async function getMovements(params: {
   page?: number; limit?: number; warehouseId?: string; locationId?: string;
-  productId?: string; type?: MovementType; dateFrom?: string; dateTo?: string;
+  productId?: string; type?: MovementType | MovementType[]; dateFrom?: string; dateTo?: string;
   search?: string; status?: MovementStatus;
 }): Promise<{ data: Movement[]; meta: MovementsMeta }> {
-  const { data } = await api.get<{ data: Movement[]; meta: MovementsMeta }>("/movements", { params });
+  const { type, ...rest } = params;
+  const { data } = await api.get<{ data: Movement[]; meta: MovementsMeta }>("/movements", {
+    params: { ...rest, type: Array.isArray(type) ? type.join(",") : type },
+  });
   return data;
 }
 

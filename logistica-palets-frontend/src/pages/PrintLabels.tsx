@@ -262,7 +262,7 @@ export default function PrintLabelsPage() {
 
         /* Título principal */
         .lbl-main-title {
-          background: #000;
+          background: #2563eb;
           color: #fff;
           text-align: center;
           font-size: 28px;
@@ -274,7 +274,7 @@ export default function PrintLabelsPage() {
 
         /* Barra de sección */
         .lbl-section-bar {
-          background: #000;
+          background: #2563eb;
           color: #fff;
           text-align: center;
           font-size: 14px;
@@ -325,7 +325,7 @@ export default function PrintLabelsPage() {
           margin-bottom: 4px;
         }
         .lbl-sap-code-box {
-          background: #000;
+          background: #2563eb;
           color: #fff;
           font-size: 36px;
           font-weight: 900;
@@ -342,7 +342,7 @@ export default function PrintLabelsPage() {
 
         /* Lote SAP grande */
         .lbl-big-lot-box {
-          background: #000;
+          background: #2563eb;
           color: #fff;
           text-align: center;
           font-size: 42px;
@@ -442,6 +442,11 @@ export default function PrintLabelsPage() {
 
         /* ── Impresión ── */
         @media print {
+          * {
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+            color-adjust: exact;
+          }
           body { background: #fff; }
           .print-controls { display: none !important; }
           .label {

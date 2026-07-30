@@ -2,7 +2,7 @@ import axios from "axios";
 
 export function getFriendlyApiError(error: unknown): string {
   if (!axios.isAxiosError(error)) {
-    return "Ocurrió un error. Probá de nuevo.";
+    return error instanceof Error && error.message.trim() ? error.message : "Ocurrió un error. Probá de nuevo.";
   }
 
   const status = error.response?.status;

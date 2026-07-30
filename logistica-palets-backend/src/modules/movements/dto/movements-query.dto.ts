@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
 import { movementStatuses, movementTypes, MovementType } from '../entities/movement.entity';
 
@@ -28,9 +28,11 @@ export class MovementsQueryDto {
   @IsUUID()
   productId?: string;
 
+  /** Acepta un tipo (?type=ENTRY) o varios separados por coma (?type=ENTRY,EXIT). */
   @IsOptional()
-  @IsIn(movementTypes)
-  type?: MovementType;
+  @Transform(({ value }) => (Array.isArray(value) ? value : String(value).split(',')))
+  @IsIn(movementTypes, { each: true })
+  type?: MovementType[];
 
   @IsOptional()
   @IsDateString()

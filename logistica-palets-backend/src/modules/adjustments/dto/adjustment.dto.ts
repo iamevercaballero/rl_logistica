@@ -9,6 +9,7 @@ import {
   IsUUID,
   MaxLength,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { adjustmentRequestTypes, AdjustmentRequestType } from '../entities/adjustment-request.entity';
@@ -45,7 +46,13 @@ export class CreateAdjustmentDto {
   @MaxLength(120)
   adjustmentCategory?: string;
 
-  @IsOptional()
+  /**
+   * Obligatorio para ADJUSTMENT_IN: sin depósito, el pallet nuevo queda con
+   * currentLocationId null — stock "fantasma" invisible en las vistas por
+   * depósito/ubicación (layout, ocupación, slotting). ADJUSTMENT_OUT no lo
+   * necesita: usa la ubicación real del pallet que ya existe.
+   */
+  @ValidateIf((o: CreateAdjustmentDto) => o.type === 'ADJUSTMENT_IN')
   @IsUUID()
   warehouseId?: string;
 

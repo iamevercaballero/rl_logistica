@@ -50,8 +50,8 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
   const [fechaFabricacion, setFechaFabricacion] = useState("");
   const [formError, setFormError] = useState("");
 
-  // Desglose por lote (cantidades y pallets) — solo entradas no anuladas
-  const canEditLots = isEntry && (movement.voidStatus ?? "NONE") === "NONE";
+  // Desglose por lote (cantidades y pallets) — entradas y salidas no anuladas
+  const canEditLots = (isEntry || isExit) && (movement.voidStatus ?? "NONE") === "NONE";
   const lotsQ = useQuery({
     queryKey: ["movement-lots", movement.id],
     queryFn: () => getMovementLots(movement.id),
@@ -68,7 +68,9 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
     fechaVencimiento: l.fechaVencimiento ?? "",
     fechaFabricacion: l.fechaFabricacion ?? "",
     proveedor: l.proveedor ?? "",
-    pallets: Object.fromEntries(l.pallets.map((p) => [p.id, String(p.currentQuantity)])),
+    // ENTRY: se edita el saldo actual del pallet. EXIT: se edita cuánto salió de ese pallet
+    // en ESTE movimiento (quantityInMovement) — son ejes distintos, ver comentario del backend.
+    pallets: Object.fromEntries(l.pallets.map((p) => [p.id, String(isExit ? p.quantityInMovement : p.currentQuantity)])),
     addQuantity: "",
     addPalletCount: "1",
   });
@@ -156,10 +158,12 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
       const fabChanged = !!edit.fechaFabricacion && edit.fechaFabricacion !== (l.fechaFabricacion ?? "");
       const provChanged = edit.proveedor.trim() !== "" && edit.proveedor.trim() !== (l.proveedor ?? "");
 
-      // Reducciones por pallet (solo se puede bajar; para sumar está "Agregar unidades")
+      // Corrección por pallet. ENTRY: solo se puede bajar el saldo actual (para sumar
+      // está "Agregar unidades"). EXIT: se compara contra lo que salió en ESTE movimiento
+      // (quantityInMovement) y se puede subir o bajar — no hay "Agregar unidades".
       const palletEdits: { palletId: string; newQuantity: number }[] = [];
       for (const p of l.pallets) {
-        if (p.status === "EXITED") continue;
+        if (!isExit && p.status === "EXITED") continue;
         const raw = edit.pallets[p.id];
         if (raw === undefined) continue;
         const newQty = Number(raw);
@@ -167,19 +171,28 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
           setFormError(`Cantidad inválida en el pallet ${p.code}.`);
           return;
         }
-        if (newQty > p.currentQuantity) {
-          setFormError(
-            `El pallet ${p.code} tiene ${p.currentQuantity.toLocaleString("es-PY")} unid. — solo se puede reducir. Para sumar unidades usá "Agregar unidades" del lote.`,
-          );
-          return;
+        if (isExit) {
+          const ceiling = p.quantityInMovement + p.currentQuantity;
+          if (newQty > ceiling) {
+            setFormError(`El pallet ${p.code}: como máximo se le puede sacar ${ceiling.toLocaleString("es-PY")} unid. en total.`);
+            return;
+          }
+          if (newQty !== p.quantityInMovement) palletEdits.push({ palletId: p.id, newQuantity: newQty });
+        } else {
+          if (newQty > p.currentQuantity) {
+            setFormError(
+              `El pallet ${p.code} tiene ${p.currentQuantity.toLocaleString("es-PY")} unid. — solo se puede reducir. Para sumar unidades usá "Agregar unidades" del lote.`,
+            );
+            return;
+          }
+          if (newQty !== p.currentQuantity) palletEdits.push({ palletId: p.id, newQuantity: newQty });
         }
-        if (newQty !== p.currentQuantity) palletEdits.push({ palletId: p.id, newQuantity: newQty });
       }
 
-      // Agregado de unidades → pallets nuevos al aprobar
+      // Agregado de unidades → pallets nuevos al aprobar (solo ENTRY)
       const addQty = Number(edit.addQuantity);
-      const hasAdd = edit.addQuantity.trim() !== "" && Number.isInteger(addQty) && addQty > 0;
-      if (edit.addQuantity.trim() !== "" && (!Number.isInteger(addQty) || addQty < 0)) {
+      const hasAdd = !isExit && edit.addQuantity.trim() !== "" && Number.isInteger(addQty) && addQty > 0;
+      if (!isExit && edit.addQuantity.trim() !== "" && (!Number.isInteger(addQty) || addQty < 0)) {
         setFormError(`Cantidad a agregar inválida en el lote ${l.lotCode}.`);
         return;
       }
@@ -430,23 +443,27 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                 <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>Cargando lotes...</p>
               ) : lots.length === 0 ? (
                 <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>
-                  Esta entrada no tiene lotes asociados.
+                  Este movimiento no tiene lotes asociados.
                 </p>
               ) : (
                 <div style={{ display: "grid", gap: 10 }}>
                   {lots.map((l) => {
                     const edit = getEdit(l);
-                    const activePallets = l.pallets.filter((p) => p.status !== "EXITED");
-                    const exitedPallets = l.pallets.filter((p) => p.status === "EXITED");
-                    const currentTotal = activePallets.reduce((s, p) => s + p.currentQuantity, 0);
+                    // EXIT: todos los pallets son editables (el punto es corregir lo que salió,
+                    // esté o no EXITED). ENTRY: los ya despachados quedan aparte, no editables.
+                    const activePallets = isExit ? l.pallets : l.pallets.filter((p) => p.status !== "EXITED");
+                    const exitedPallets = isExit ? [] : l.pallets.filter((p) => p.status === "EXITED");
+                    const baseline = (p: MovementLotBreakdown["pallets"][number]) => isExit ? p.quantityInMovement : p.currentQuantity;
+                    const ceiling = (p: MovementLotBreakdown["pallets"][number]) => isExit ? p.quantityInMovement + p.currentQuantity : p.currentQuantity;
+                    const currentTotal = activePallets.reduce((s, p) => s + baseline(p), 0);
                     const newTotal = activePallets.reduce((s, p) => {
                       const raw = edit.pallets[p.id];
                       const n = Number(raw);
-                      if (raw === undefined || raw.trim() === "" || !Number.isInteger(n) || n < 0) return s + p.currentQuantity;
-                      return s + Math.min(n, p.currentQuantity);
+                      if (raw === undefined || raw.trim() === "" || !Number.isInteger(n) || n < 0) return s + baseline(p);
+                      return s + Math.min(n, ceiling(p));
                     }, 0);
                     const addQtyNum = Number(edit.addQuantity);
-                    const addQty = edit.addQuantity.trim() !== "" && Number.isInteger(addQtyNum) && addQtyNum > 0 ? addQtyNum : 0;
+                    const addQty = !isExit && edit.addQuantity.trim() !== "" && Number.isInteger(addQtyNum) && addQtyNum > 0 ? addQtyNum : 0;
                     const addCount = Math.max(1, Number(edit.addPalletCount) || 1);
                     const delta = newTotal + addQty - currentTotal;
                     const codeChanged = edit.lotCode.trim() !== "" && edit.lotCode.trim() !== l.lotCode;
@@ -524,39 +541,42 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                         <div style={{ padding: "8px 12px" }}>
                           <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 120px", gap: 8, padding: "2px 0 6px", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>
                             <span>Pallet</span>
-                            <span style={{ textAlign: "right" }}>Actual</span>
-                            <span>Nueva cantidad</span>
+                            <span style={{ textAlign: "right" }}>{isExit ? "Salió" : "Actual"}</span>
+                            <span>{isExit ? "Cantidad correcta" : "Nueva cantidad"}</span>
                           </div>
                           <div style={{ display: "grid", gap: 4 }}>
                             {activePallets.map((p) => {
-                              const raw = edit.pallets[p.id] ?? String(p.currentQuantity);
+                              const base = baseline(p);
+                              const max = ceiling(p);
+                              const raw = edit.pallets[p.id] ?? String(base);
                               const n = Number(raw);
-                              const valid = raw.trim() !== "" && Number.isInteger(n) && n >= 0 && n <= p.currentQuantity;
-                              const reduced = valid && n < p.currentQuantity;
+                              const valid = raw.trim() !== "" && Number.isInteger(n) && n >= 0 && n <= max;
+                              const reduced = valid && n < base;
                               return (
                                 <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 120px", gap: 8, alignItems: "center" }}>
                                   <span style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                     {p.code}
                                     {p.status === "PARTIAL" && <span className="badge badge--estado-pendiente" style={{ fontSize: 9, marginLeft: 6 }}>PARCIAL</span>}
+                                    {isExit && p.status === "EXITED" && <span className="badge" style={{ fontSize: 9, marginLeft: 6, background: "var(--muted)", color: "#fff" }}>DESPACHADO</span>}
                                   </span>
                                   <span
                                     style={{ textAlign: "right", fontSize: 12, color: "var(--muted)" }}
-                                    title={p.quantityInMovement !== p.currentQuantity ? `Ingresó con ${p.quantityInMovement.toLocaleString("es-PY")} unid.` : undefined}
+                                    title={isExit ? `Queda disponible en el pallet: ${p.currentQuantity.toLocaleString("es-PY")} unid.` : (p.quantityInMovement !== p.currentQuantity ? `Ingresó con ${p.quantityInMovement.toLocaleString("es-PY")} unid.` : undefined)}
                                   >
-                                    {p.currentQuantity.toLocaleString("es-PY")}
+                                    {base.toLocaleString("es-PY")}
                                   </span>
                                   <input
                                     className="input"
                                     type="number"
                                     min={0}
-                                    max={p.currentQuantity}
+                                    max={max}
                                     value={raw}
                                     onChange={(e) => updateLotPallet(l, p.id, e.target.value)}
                                     style={{
                                       fontWeight: 700, fontSize: 13, padding: "4px 8px",
                                       borderColor: !valid ? "var(--danger)" : reduced ? "var(--warning)" : undefined,
                                     }}
-                                    aria-label={`Nueva cantidad del pallet ${p.code}`}
+                                    aria-label={`${isExit ? "Cantidad correcta" : "Nueva cantidad"} del pallet ${p.code}`}
                                   />
                                 </div>
                               );
@@ -577,7 +597,8 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                           </div>
                         </div>
 
-                        {/* Agregar unidades → pallets nuevos */}
+                        {/* Agregar unidades → pallets nuevos (solo entradas) */}
+                        {!isExit && (
                         <div style={{ borderTop: "1px dashed var(--border)", padding: "8px 12px", display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
                           <div>
                             <label style={{ ...tinyLabel, color: "var(--success)" }}>➕ Agregar unidades</label>
@@ -610,6 +631,7 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                             </span>
                           )}
                         </div>
+                        )}
 
                         {/* Resumen del lote */}
                         <div style={{ background: "var(--bg)", borderTop: "1px solid var(--border)", padding: "7px 12px", fontSize: 12, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
@@ -633,7 +655,7 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                   })}
 
                   <p style={{ fontSize: 11, color: "var(--muted)", margin: 0 }}>
-                    Las reducciones por pallet y los agregados generan solicitudes de ajuste (RLAI/RLAO) pendientes de aprobación
+                    Los cambios de cantidad por pallet generan solicitudes de ajuste (RLAI/RLAO) pendientes de aprobación
                     del MANAGER — el stock no cambia hasta aprobar. El código y los datos del lote se aplican al guardar y quedan auditados.
                   </p>
                 </div>

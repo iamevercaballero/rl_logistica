@@ -58,7 +58,7 @@ export const PERMS: Record<ModuleKey, ModulePermissions> = {
     // la página entera pese a tener permiso de crear en el backend.
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
     create: ["ADMIN", "MANAGER", "OPERATOR"],
-    update: ["ADMIN", "MANAGER"],
+    update: ["ADMIN", "MANAGER", "OPERATOR"],
     remove: [],
     approve: ["ADMIN", "MANAGER"],
   },

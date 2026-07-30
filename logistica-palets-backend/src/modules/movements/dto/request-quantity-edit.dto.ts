@@ -13,7 +13,12 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-/** Nueva cantidad de un pallet existente del movimiento (solo se permite reducir). */
+/**
+ * Nueva cantidad de un pallet existente del movimiento.
+ * ENTRY: solo se permite reducir el saldo actual del pallet.
+ * EXIT: se compara contra lo que ESE movimiento registró para el pallet — se
+ * puede subir (sacar más) o bajar (devolver stock).
+ */
 export class PalletQuantityEditDto {
   @IsUUID()
   palletId: string;

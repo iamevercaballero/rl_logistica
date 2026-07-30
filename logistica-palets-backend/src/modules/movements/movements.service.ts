@@ -367,7 +367,12 @@ export class MovementsService {
             // Lock pesimista: evita que dos despachos concurrentes resten del mismo palet.
             const pallet = await manager.getRepository(Pallet).findOne({ where: { id: item.palletId }, lock: { mode: 'pessimistic_write' } });
             if (!pallet) throw new NotFoundException(`Palet no encontrado: ${item.palletId}`);
-            if (pallet.status === 'EXITED') throw new BadRequestException(`El palet ${pallet.code} ya fue despachado`);
+            // ADJUSTMENT_IN restaura cantidad a un palet existente (típicamente ya EXITED
+            // por la salida que se está corrigiendo) — para el resto de los tipos, un
+            // palet ya despachado no puede volver a tocarse.
+            if (dto.type !== 'ADJUSTMENT_IN' && pallet.status === 'EXITED') {
+              throw new BadRequestException(`El palet ${pallet.code} ya fue despachado`);
+            }
             resolvedLotId = pallet.lotId;
             // Para EXIT/TRANSFER: la ubicación de origen es donde estaba el palet
             detailLocationId = pallet.currentLocationId ?? null;
@@ -412,6 +417,16 @@ export class MovementsService {
               await this.applyDecrease(manager, dto.productId, fromWarehouseId, fromLocationId, item.quantity);
               await this.applyIncrease(manager, dto.productId, resolved.toWarehouseId, dto.toLocationId ?? null, item.quantity);
               pallet.currentLocationId = dto.toLocationId ?? null;
+
+            } else if (dto.type === 'ADJUSTMENT_IN') {
+              // Corrección de salida: devolver cantidad a un palet ya existente (posiblemente
+              // EXITED). El stock agregado ya se sumó arriba (isEntry → applyIncrease con el
+              // total); acá solo se sincroniza el objeto palet puntual.
+              pallet.quantity += item.quantity;
+              if (pallet.quantity > 0 && pallet.status === 'EXITED') {
+                pallet.status = 'PARTIAL';
+                pallet.exitedAt = null;
+              }
             }
 
             await manager.save(pallet);
@@ -437,6 +452,11 @@ export class MovementsService {
             resolvedPalletId = savedPallet.id;
             // Para ENTRADA: la ubicación de destino es donde queda el palet
             detailLocationId = resolved.locationId ?? null;
+          } else {
+            // Ni palletId (existente) ni lotCode (nuevo): sin esto no hay forma de crear
+            // el lote/pallet correspondiente y el stock agregado quedaría desincronizado
+            // del invariante Stock=Lote=Pallet.
+            throw new BadRequestException('Cada ítem debe indicar un pallet existente (palletId) o un código de lote (lotCode).');
           }
 
           if (resolvedLotId) {
@@ -768,19 +788,26 @@ export class MovementsService {
   }
 
   /**
-   * Solicita la corrección de lotes/cantidades/pallets de una ENTRADA ya posteada.
+   * Solicita la corrección de lotes/cantidades/pallets de una ENTRADA o SALIDA ya posteada.
    * - Renombres de código de lote se aplican directo (sin impacto de stock) y quedan
    *   auditados en regularization_logs; los códigos de pallets derivados se renombran en cascada.
    * - Las diferencias de cantidad generan AdjustmentRequest (RLAI/RLAO) en PENDIENTE_APROBACION:
    *   el stock NO cambia hasta que el MANAGER apruebe. A diferencia de la anulación,
    *   NO se setea originalMovementId (el movimiento original no se marca VOIDED).
+   * - ENTRY: la cantidad por pallet se compara contra el saldo actual del pallet (solo se
+   *   puede reducir; para sumar existe "agregar pallets nuevos").
+   * - EXIT: la cantidad por pallet se compara contra lo que ESA salida registró para ese
+   *   pallet (MovementDetail.quantity), no contra el saldo actual — son ejes distintos.
+   *   Reducir lo que salió devuelve stock al pallet (ADJUSTMENT_IN); aumentar saca más
+   *   (ADJUSTMENT_OUT). No existe "agregar pallets nuevos" para salidas.
    */
   async requestQuantityEdit(id: string, dto: RequestQuantityEditDto, userId: string) {
     const movement = await this.dataSource.getRepository(Movement).findOne({ where: { id } });
     if (!movement) throw new NotFoundException('Movimiento no encontrado');
-    if (movement.type !== 'ENTRY') {
-      throw new BadRequestException('La corrección de cantidades solo está disponible para entradas.');
+    if (!['ENTRY', 'EXIT'].includes(movement.type)) {
+      throw new BadRequestException('La corrección de cantidades solo está disponible para entradas y salidas.');
     }
+    const isExit = movement.type === 'EXIT';
     if (movement.voidStatus !== 'NONE') {
       throw new BadRequestException('El movimiento tiene una anulación en curso o ya fue anulado.');
     }
@@ -809,6 +836,9 @@ export class MovementsService {
     const fieldUpdates: Array<{ lot: Lot; field: LotField; oldValue: string | null; newValue: string }> = [];
     const increaseItems: IncreaseItem[] = [];
     const decreaseItems: Array<{ palletId: string; quantity: number }> = [];
+    // Solo EXIT: devolver stock a un pallet ya existente (posiblemente EXITED) — ver
+    // la rama ADJUSTMENT_IN + palletId en createInTransactionPublic.
+    const restoreItems: Array<{ palletId: string; quantity: number }> = [];
     const warnings: string[] = [];
 
     for (const edit of dto.lots) {
@@ -846,7 +876,7 @@ export class MovementsService {
         }
       }
 
-      // ── Reducciones por pallet (newQuantity ≤ cantidad actual) ──
+      // ── Corrección por pallet ──
       const lotDetails = details.filter((d) => d.lotId === lot.id);
       const lotPalletIds = new Set(lotDetails.map((d) => d.palletId).filter(Boolean) as string[]);
       for (const pe of edit.palletEdits ?? []) {
@@ -854,22 +884,51 @@ export class MovementsService {
         if (!pallet || !lotPalletIds.has(pe.palletId)) {
           throw new BadRequestException(`El pallet indicado no pertenece al lote ${lot.lotCode} de este movimiento.`);
         }
-        if (pallet.status === 'EXITED') {
-          warnings.push(`El pallet ${pallet.code} ya fue despachado — no se modifica.`);
-          continue;
+
+        if (isExit) {
+          // La cantidad nueva se compara contra lo que ESTA salida registró para este
+          // pallet — no contra el saldo actual (son ejes distintos, ver comentario del método).
+          const detail = lotDetails.find((d) => d.palletId === pe.palletId);
+          const takenInThisExit = detail?.quantity ?? 0;
+          if (pe.newQuantity < 0) {
+            throw new BadRequestException(`Cantidad inválida en el pallet ${pallet.code}.`);
+          }
+          if (pe.newQuantity > takenInThisExit) {
+            // Se despachó más de lo registrado: sacar la diferencia del pallet (debe alcanzar el saldo).
+            const extra = pe.newQuantity - takenInThisExit;
+            if (extra > pallet.quantity) {
+              throw new BadRequestException(
+                `El pallet ${pallet.code} solo tiene ${pallet.quantity} unid. disponibles — no se puede sacar ${extra} más.`,
+              );
+            }
+            if (extra > 0) decreaseItems.push({ palletId: pallet.id, quantity: extra });
+          } else if (pe.newQuantity < takenInThisExit) {
+            // Se despachó menos de lo registrado: devolver la diferencia al pallet.
+            const giveBack = takenInThisExit - pe.newQuantity;
+            if (giveBack > 0) restoreItems.push({ palletId: pallet.id, quantity: giveBack });
+          }
+        } else {
+          // ENTRY: solo se puede reducir el saldo actual del pallet.
+          if (pallet.status === 'EXITED') {
+            warnings.push(`El pallet ${pallet.code} ya fue despachado — no se modifica.`);
+            continue;
+          }
+          if (pe.newQuantity > pallet.quantity) {
+            throw new BadRequestException(
+              `El pallet ${pallet.code} tiene ${pallet.quantity} unid. — solo se puede reducir. ` +
+              `Para sumar unidades usá "Agregar pallets nuevos" del lote.`,
+            );
+          }
+          const take = pallet.quantity - pe.newQuantity;
+          if (take > 0) decreaseItems.push({ palletId: pallet.id, quantity: take });
         }
-        if (pe.newQuantity > pallet.quantity) {
-          throw new BadRequestException(
-            `El pallet ${pallet.code} tiene ${pallet.quantity} unid. — solo se puede reducir. ` +
-            `Para sumar unidades usá "Agregar pallets nuevos" del lote.`,
-          );
-        }
-        const take = pallet.quantity - pe.newQuantity;
-        if (take > 0) decreaseItems.push({ palletId: pallet.id, quantity: take });
       }
 
-      // ── Agregado de unidades → pallets nuevos al aprobar ──
-      if (edit.addQuantity && edit.addQuantity > 0) {
+      // ── Agregado de unidades → pallets nuevos al aprobar (solo ENTRY) ──
+      if (isExit && edit.addQuantity && edit.addQuantity > 0) {
+        throw new BadRequestException('No se pueden agregar pallets nuevos al corregir una salida.');
+      }
+      if (!isExit && edit.addQuantity && edit.addQuantity > 0) {
         const effectiveCode = newCode || lot.lotCode;
         const count = Math.max(1, edit.addPalletCount ?? 1);
         const base = Math.floor(edit.addQuantity / count);
@@ -889,7 +948,10 @@ export class MovementsService {
       }
     }
 
-    if (renames.length === 0 && fieldUpdates.length === 0 && increaseItems.length === 0 && decreaseItems.length === 0) {
+    if (
+      renames.length === 0 && fieldUpdates.length === 0 &&
+      increaseItems.length === 0 && decreaseItems.length === 0 && restoreItems.length === 0
+    ) {
       throw new BadRequestException('No hay cambios para aplicar.');
     }
 
@@ -952,7 +1014,7 @@ export class MovementsService {
           type,
           status: 'PENDIENTE_APROBACION',
           reason: 'DIFERENCIA_INVENTARIO',
-          notes: `Corrección de cantidad de ENTRADA del ${new Date(movement.date).toLocaleDateString('es-PY')}` +
+          notes: `Corrección de cantidad de ${isExit ? 'SALIDA' : 'ENTRADA'} del ${new Date(movement.date).toLocaleDateString('es-PY')}` +
             `${movement.documentNumber ? ` · MIC/Fac/Rem. ${movement.documentNumber}` : ''} — ${dto.reason}`,
           warehouseId: movement.warehouseId ?? null,
           locationId: movement.locationId ?? null,
@@ -973,6 +1035,7 @@ export class MovementsService {
       };
 
       if (increaseItems.length > 0) await createRequest('ADJUSTMENT_IN', increaseItems);
+      if (restoreItems.length > 0) await createRequest('ADJUSTMENT_IN', restoreItems);
       if (decreaseItems.length > 0) await createRequest('ADJUSTMENT_OUT', decreaseItems);
 
       return { renamed: renames.length, lotFieldChanges: fieldUpdates.length, requests };
@@ -1171,7 +1234,7 @@ export class MovementsService {
       );
     }
     if (query.productId) qb.andWhere('movement."productId" = :productId', { productId: query.productId });
-    if (query.type) qb.andWhere('movement.type = :type', { type: query.type });
+    if (query.type?.length) qb.andWhere('movement.type IN (:...types)', { types: query.type });
     if (query.status) qb.andWhere('movement.status = :status', { status: query.status });
     if (query.dateFrom) qb.andWhere('movement.date >= :dateFrom', { dateFrom: this.toStartDate(query.dateFrom) });
     if (query.dateTo) qb.andWhere('movement.date <= :dateTo', { dateTo: this.toEndDate(query.dateTo) });

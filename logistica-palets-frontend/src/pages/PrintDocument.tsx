@@ -61,7 +61,7 @@ export default function PrintDocumentPage() {
   const { document } = data;
   const { warehouseMap } = buildMaps(data);
   const isEntry = document.type === "ENTRY";
-  const docTypeLabel = isEntry ? "NOTA DE ENTRADA" : "NOTA DE SALIDA";
+  const docTypeLabel = isEntry ? "NOTA DE ENTRADA" : "NOTA DE ENTREGA";
   const warehouseName = document.warehouseId ? (warehouseMap[document.warehouseId]?.name ?? "—") : "—";
   const totalQty  = lines.reduce((s, l) => s + l.movement.quantity, 0);
   const totalPallets = lines.reduce((s, l) => s + l.palletCount, 0);

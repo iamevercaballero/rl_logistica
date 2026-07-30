@@ -137,7 +137,7 @@ export class MovementsController {
 
   /** Edita metadatos de cualquier movimiento con trazabilidad completa. */
   @Patch(':id/edit')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   editMetadata(
     @Param('id') id: string,
     @Body() dto: RegularizeMovementDto,
@@ -169,7 +169,7 @@ export class MovementsController {
    * generan solicitudes RLAI/RLAO en PENDIENTE_APROBACION (stock intacto hasta aprobar).
    */
   @Post(':id/request-quantity-edit')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   requestQuantityEdit(
     @Param('id') id: string,
     @Body() dto: RequestQuantityEditDto,

@@ -3,8 +3,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import ProductSearch from "../components/ProductSearch";
 import ProductCatalogModal from "../components/ProductCatalogModal";
 import LocationPicker from "../components/LocationPicker";
-import AdjustmentInForm from "./AdjustmentInForm";
-import AdjustmentOutForm from "./AdjustmentOutForm";
+import CorregirMovimientoForm from "./CorregirMovimientoForm";
 import InventoryAdjustmentPage from "./InventoryAdjustment";
 import {
   createDocument,
@@ -877,20 +876,9 @@ export default function MovementsPage() {
         />
       )}
 
-      {/* ── Ajuste de Entrada — componente dedicado ── */}
-      {!showInventoryAdj && movType === "ADJUSTMENT_IN" && (
-        <AdjustmentInForm
-          onTypeChange={(t) => {
-            setLastCreatedDoc(null);
-            if (t === "INVENTORY_ADJUSTMENT") { setShowInventoryAdj(true); resetForm(); }
-            else { setShowInventoryAdj(false); setMovType(t); resetForm(); }
-          }}
-        />
-      )}
-
-      {/* ── Ajuste de Salida — componente dedicado ── */}
-      {!showInventoryAdj && movType === "ADJUSTMENT_OUT" && (
-        <AdjustmentOutForm
+      {/* ── Corregir Movimiento (fusiona Ajuste Entrada + Ajuste Salida) ── */}
+      {!showInventoryAdj && (movType === "ADJUSTMENT_IN" || movType === "ADJUSTMENT_OUT") && (
+        <CorregirMovimientoForm
           onTypeChange={(t) => {
             setLastCreatedDoc(null);
             if (t === "INVENTORY_ADJUSTMENT") { setShowInventoryAdj(true); resetForm(); }
@@ -1153,9 +1141,8 @@ export default function MovementsPage() {
               <option value="ENTRY">Entrada</option>
               <option value="EXIT">Salida</option>
               <option value="TRANSFER">Transferencia</option>
-              <option value="ADJUSTMENT_IN">Ajuste entrada</option>
-              <option value="ADJUSTMENT_OUT">Ajuste salida</option>
-              <option value="INVENTORY_ADJUSTMENT">Ajuste de inventario</option>
+              <option value="ADJUSTMENT_IN">Corregir movimiento</option>
+              <option value="INVENTORY_ADJUSTMENT">Diferencia de inventario</option>
             </select>
             {!isTransfer && (
               <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>

@@ -219,3 +219,114 @@ describe('motor de stock — concurrencia', () => {
     expect(rows.length).toBeLessThanOrEqual(1);
   });
 });
+
+describe('motor de stock — corrección de salidas (Corregir Movimiento)', () => {
+  it('un ADJUSTMENT_IN a un pallet ya EXITED le restaura la cantidad y lo vuelve PARTIAL', async () => {
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      palletItems: [{ lotCode: 'L-RESTORE', quantity: 100, fechaVencimiento: '2026-06-01' }],
+    }, USER_ID);
+    const lot = await lotByCode(base.product.id, 'L-RESTORE');
+    const pallet = await ds.getRepository(Pallet).findOne({ where: { lotId: lot!.id } });
+
+    // Salida completa del pallet → queda EXITED, cantidad 0.
+    await service.create({
+      type: 'EXIT', productId: base.product.id,
+      palletItems: [{ palletId: pallet!.id, quantity: 100 }],
+    }, USER_ID);
+
+    let refreshed = await ds.getRepository(Pallet).findOne({ where: { id: pallet!.id } });
+    expect(refreshed!.status).toBe('EXITED');
+    expect(refreshed!.quantity).toBe(0);
+
+    // Corrección: en realidad solo salieron 60 → devolver 40 al pallet ya despachado.
+    await service.create({
+      type: 'ADJUSTMENT_IN', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      adjustmentReason: 'DIFERENCIA_INVENTARIO',
+      palletItems: [{ palletId: pallet!.id, quantity: 40 }],
+    }, USER_ID);
+
+    refreshed = await ds.getRepository(Pallet).findOne({ where: { id: pallet!.id } });
+    const stock = await stockOf(base.product.id);
+    expect(refreshed!.status).toBe('PARTIAL');
+    expect(refreshed!.quantity).toBe(40);
+    expect(stock!.currentQuantity).toBe(40); // 100 entrada − 100 salida + 40 restaurado
+  });
+
+  it('requestQuantityEdit sobre una SALIDA: reducir lo despachado genera un RLAI pendiente sin tocar stock', async () => {
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      palletItems: [{ lotCode: 'L-EDITEXIT1', quantity: 100, fechaVencimiento: '2026-06-01' }],
+    }, USER_ID);
+    const lot = await lotByCode(base.product.id, 'L-EDITEXIT1');
+    const pallet = await ds.getRepository(Pallet).findOne({ where: { lotId: lot!.id } });
+
+    const exit = await service.create({
+      type: 'EXIT', productId: base.product.id,
+      palletItems: [{ palletId: pallet!.id, quantity: 100 }],
+    }, USER_ID);
+
+    const res = await service.requestQuantityEdit(exit.movementId, {
+      reason: 'Se despachó menos de lo registrado',
+      lots: [{ lotId: lot!.id, palletEdits: [{ palletId: pallet!.id, newQuantity: 60 }] }],
+    }, USER_ID);
+
+    expect(res.requests).toHaveLength(1);
+    expect(res.requests[0].code).toMatch(/^RLAI-/);
+    expect(res.requests[0].totalQuantity).toBe(40);
+    const req = await ds.getRepository(AdjustmentRequest).findOne({ where: { id: res.requests[0].requestId } });
+    expect(req!.status).toBe('PENDIENTE_APROBACION');
+
+    // El stock NO cambia hasta aprobar (sigue en 0: 100 entrada − 100 salida).
+    const stock = await stockOf(base.product.id);
+    expect(stock!.currentQuantity).toBe(0);
+  });
+
+  it('requestQuantityEdit sobre una SALIDA: aumentar lo despachado genera un RLAO pendiente', async () => {
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      palletItems: [{ lotCode: 'L-EDITEXIT2', quantity: 100, fechaVencimiento: '2026-06-01' }],
+    }, USER_ID);
+    const lot = await lotByCode(base.product.id, 'L-EDITEXIT2');
+    const pallet = await ds.getRepository(Pallet).findOne({ where: { lotId: lot!.id } });
+
+    const exit = await service.create({
+      type: 'EXIT', productId: base.product.id,
+      palletItems: [{ palletId: pallet!.id, quantity: 60 }],
+    }, USER_ID);
+
+    const res = await service.requestQuantityEdit(exit.movementId, {
+      reason: 'Se despachó más de lo registrado',
+      lots: [{ lotId: lot!.id, palletEdits: [{ palletId: pallet!.id, newQuantity: 90 }] }],
+    }, USER_ID);
+
+    expect(res.requests).toHaveLength(1);
+    expect(res.requests[0].code).toMatch(/^RLAO-/);
+    expect(res.requests[0].totalQuantity).toBe(30);
+
+    // El stock NO cambia hasta aprobar (sigue en 40: 100 entrada − 60 salida).
+    const stock = await stockOf(base.product.id);
+    expect(stock!.currentQuantity).toBe(40);
+  });
+
+  it('requestQuantityEdit rechaza "agregar pallets nuevos" en una salida', async () => {
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      palletItems: [{ lotCode: 'L-EDITEXIT3', quantity: 100, fechaVencimiento: '2026-06-01' }],
+    }, USER_ID);
+    const lot = await lotByCode(base.product.id, 'L-EDITEXIT3');
+    const pallet = await ds.getRepository(Pallet).findOne({ where: { lotId: lot!.id } });
+
+    const exit = await service.create({
+      type: 'EXIT', productId: base.product.id,
+      palletItems: [{ palletId: pallet!.id, quantity: 60 }],
+    }, USER_ID);
+
+    await expect(
+      service.requestQuantityEdit(exit.movementId, {
+        reason: 'Intento inválido de agregar pallets nuevos',
+        lots: [{ lotId: lot!.id, addQuantity: 10 }],
+      }, USER_ID),
+    ).rejects.toThrow();
+  });
+});

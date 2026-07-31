@@ -590,13 +590,22 @@ export default function MovementsPage() {
       };
     }
 
-    // SALIDA: arma palletItems desde la selección FEFO (mismo cálculo que antes).
+    // SALIDA: arma palletItems desde la selección FEFO.
     const palletItems: PalletItem[] = [];
+    // Lotes donde lo pedido supera lo que suman los palets tildados. Despachar de
+    // menos en silencio cambiaría la intención del operador sin que se entere.
+    const faltantes: { lotCode: string; pedido: number; disponible: number }[] = [];
+
     for (const row of fefoRows) {
       const targetQty = Number(row.exitQtyInput);
       const selectedPallets = row.lot.pallets.filter((p) => row.selectedIds.has(p.id));
       if (selectedPallets.length === 0) continue;
       if (targetQty > 0) {
+        const disponible = selectedPallets.reduce((s, p) => s + p.quantity, 0);
+        if (targetQty > disponible) {
+          faltantes.push({ lotCode: row.lot.lotCode, pedido: targetQty, disponible });
+          continue;
+        }
         let remaining = targetQty;
         for (const p of selectedPallets) {
           if (remaining <= 0) break;
@@ -610,6 +619,18 @@ export default function MovementsPage() {
         }
       }
     }
+
+    if (faltantes.length > 0) {
+      const n = (v: number) => v.toLocaleString("es-PY");
+      const detalle = faltantes
+        .map((f) =>
+          `Lote ${f.lotCode}: solicitaste ${n(f.pedido)} unidades, pero los palets seleccionados contienen ${n(f.disponible)}. ` +
+          `Faltan seleccionar ${n(f.pedido - f.disponible)} unidades.`,
+        )
+        .join(" ");
+      return { error: `Cantidad seleccionada insuficiente. ${detalle}` };
+    }
+
     if (palletItems.length === 0) return { error: "Ingresá una cantidad en al menos un lote para despachar." };
     const totalQty = palletItems.reduce((s, i) => s + (i.quantity || 0), 0);
     const lotsUsed = fefoRows.filter((r) => r.selectedIds.size > 0).map((r) => r.lot.lotCode);
@@ -1580,11 +1601,14 @@ export default function MovementsPage() {
                             <div style={{ fontSize: 10, fontWeight: 700, color: blocked ? "var(--muted)" : "var(--danger)", textTransform: "uppercase", marginBottom: 3 }}>
                               Cantidad a despachar
                             </div>
+                            {/* Sin `max`: la validación nativa del navegador se adelantaba al
+                                submit y mostraba su propio texto ("El valor debe ser menor de o
+                                igual a N"), tapando el mensaje de la aplicación. El tope se
+                                valida acá abajo y otra vez al armar el remito. */}
                             <input
                               className="input"
                               type="number"
                               min={0}
-                              max={availQty}
                               placeholder="0"
                               value={row.exitQtyInput}
                               onChange={(e) => handleExitQtyChange(lotIdx, e.target.value)}
@@ -1594,7 +1618,10 @@ export default function MovementsPage() {
                             />
                             {row.exitQtyInput && enteredQty > availQty && (
                               <p style={{ color: "var(--danger)", fontSize: 11, margin: "3px 0 0" }}>
-                                Supera el stock disponible ({availQty.toLocaleString("es-PY")} unid.)
+                                Cantidad seleccionada insuficiente: solicitaste{" "}
+                                {enteredQty.toLocaleString("es-PY")} unidades y el lote tiene{" "}
+                                {availQty.toLocaleString("es-PY")}. Faltan{" "}
+                                {(enteredQty - availQty).toLocaleString("es-PY")} unidades.
                               </p>
                             )}
                           </div>

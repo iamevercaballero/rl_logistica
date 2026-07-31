@@ -9,6 +9,7 @@ import {
   Query,
   UseGuards,
   HttpCode,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { LotsService } from './lots.service';
 import { CreateLotDto } from './dto/create-lot.dto';
@@ -46,7 +47,7 @@ export class LotsController {
 
   @Get(':id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.findOne(id);
   }
 
@@ -58,13 +59,13 @@ export class LotsController {
 
   @Patch(':id')
   @Roles('ADMIN', 'MANAGER')
-  update(@Param('id') id: string, @Body() dto: UpdateLotDto) {
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateLotDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(':id')
   @Roles('ADMIN', 'MANAGER')
-  remove(@Param('id') id: string) {
+  remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.remove(id);
   }
 
@@ -72,7 +73,7 @@ export class LotsController {
   @Post(':id/reconcile')
   @HttpCode(200)
   @Roles('ADMIN', 'MANAGER')
-  reconcile(@Param('id') id: string) {
+  reconcile(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.reconcileStock(id);
   }
 

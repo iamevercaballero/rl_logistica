@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards, ParseUUIDPipe } from '@nestjs/common';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/roles/roles.decorator';
@@ -21,27 +21,30 @@ export class TransportsController {
   /** Historial de remitos (entradas/salidas) vinculados a la patente del vehículo. */
   @Get(':id/history')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
-  history(@Param('id') id: string) {
+  history(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.history(id);
   }
 
   @Get(':id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.findOne(id);
   }
 
   @Post()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
-  create(@Body() dto: CreateTransportDto) {
-    return this.service.create(dto);
+  create(
+    @Body() dto: CreateTransportDto,
+    @Req() req: Request & { user: { userId: string } },
+  ) {
+    return this.service.create(dto, req.user.userId);
   }
 
   /** Registra una inspección en la bitácora del vehículo. */
   @Post(':id/inspection')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   inspect(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RegisterInspectionDto,
     @Req() req: Request & { user: { userId: string } },
   ) {
@@ -51,7 +54,7 @@ export class TransportsController {
   @Patch(':id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   update(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateTransportDto,
     @Req() req: Request & { user: { userId: string } },
   ) {
@@ -60,7 +63,10 @@ export class TransportsController {
 
   @Delete(':id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
-  remove(@Param('id') id: string) {
-    return this.service.remove(id);
+  remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: Request & { user: { userId: string } },
+  ) {
+    return this.service.remove(id, req.user.userId);
   }
 }

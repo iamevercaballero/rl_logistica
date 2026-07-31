@@ -11,6 +11,7 @@ import {
   UploadedFiles,
   UseGuards,
   UseInterceptors,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
@@ -110,14 +111,14 @@ export class MovementsController {
   /** Documento enriquecido para impresión (nombres de producto, lote, depósito y pallets). */
   @Get('documents/:id/print')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
-  findDocumentForPrint(@Param('id') id: string) {
+  findDocumentForPrint(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.findDocumentForPrint(id);
   }
 
   /** Detalle de un documento: cabecera + líneas (movimientos) + detalle por palet. */
   @Get('documents/:id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
-  findDocument(@Param('id') id: string) {
+  findDocument(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.findDocument(id);
   }
 
@@ -129,7 +130,7 @@ export class MovementsController {
   @Post(':id/void')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   requestVoid(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Req() req: Request & { user: { userId: string } },
   ) {
     return this.service.requestVoid(id, req.user.userId);
@@ -139,7 +140,7 @@ export class MovementsController {
   @Patch(':id/edit')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   editMetadata(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RegularizeMovementDto,
     @Req() req: Request & { user: { userId: string } },
   ) {
@@ -149,7 +150,7 @@ export class MovementsController {
   @Patch(':id/regularize')
   @Roles('ADMIN', 'MANAGER')
   regularize(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RegularizeMovementDto,
     @Req() req: Request & { user: { userId: string } },
   ) {
@@ -159,7 +160,7 @@ export class MovementsController {
   /** Desglose por lote (cantidades y pallets actuales) — usado por el editor de ajustes. */
   @Get(':id/lots')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
-  getLotsBreakdown(@Param('id') id: string) {
+  getLotsBreakdown(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.getLotsBreakdown(id);
   }
 
@@ -171,7 +172,7 @@ export class MovementsController {
   @Post(':id/request-quantity-edit')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   requestQuantityEdit(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RequestQuantityEditDto,
     @Req() req: Request & { user: { userId: string } },
   ) {
@@ -186,7 +187,7 @@ export class MovementsController {
 
   @Get(':id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.findOne(id);
   }
 }

@@ -64,15 +64,34 @@ export class MovementsService {
     const isIncrease = ['ENTRY', 'ADJUSTMENT_IN'].includes(movement.type);
     const compensatingType = isIncrease ? 'ADJUSTMENT_OUT' : 'ADJUSTMENT_IN';
 
-    // ── 3. Verificar integridad de pallets (ENTRY: ¿ya salieron?) ───
+    // ── 3. Verificar que la compensación sea aplicable ───
+    // Anular una entrada implica sacar del depósito lo que entró. Si esa mercadería
+    // ya salió, la compensación nunca podría aprobarse y el movimiento quedaría
+    // atascado en VOID_PENDING: mejor rechazar acá con un mensaje entendible.
     const warnings: string[] = [];
     if (isIncrease && details.length > 0) {
       const palletIds = details.map((d) => d.palletId).filter(Boolean) as string[];
       if (palletIds.length > 0) {
         const pallets = await this.dataSource.getRepository(Pallet).findByIds(palletIds);
-        const consumed = pallets.filter((p) => p.status === 'EXITED');
+        const palletMap = Object.fromEntries(pallets.map((p) => [p.id, p]));
+        const faltantes = details
+          .filter((d) => d.palletId && d.quantity > 0)
+          .map((d) => ({ detail: d, pallet: palletMap[d.palletId!] }))
+          .filter(({ detail, pallet }) => !pallet || pallet.status === 'EXITED' || pallet.quantity < detail.quantity);
+
+        if (faltantes.length > 0) {
+          const detalle = faltantes
+            .slice(0, 3)
+            .map(({ detail, pallet }) =>
+              `${pallet?.code ?? 'palet eliminado'} (quedan ${pallet?.quantity ?? 0} de ${detail.quantity})`)
+            .join(', ');
+          throw new BadRequestException(
+            `No se puede anular: la mercadería de ${faltantes.length} palet(s) ya salió del depósito — ${detalle}. ` +
+            `Registrá un Ajuste de Inventario en lugar de anular.`,
+          );
+        }
+
         const partial = pallets.filter((p) => p.status === 'PARTIAL');
-        if (consumed.length > 0) warnings.push(`${consumed.length} pallet(s) ya fueron despachados completamente.`);
         if (partial.length > 0) warnings.push(`${partial.length} pallet(s) tienen salidas parciales.`);
       }
     }
@@ -173,9 +192,27 @@ export class MovementsService {
     return { ...result, warnings };
   }
 
+  /**
+   * Reintenta una vez ante una violación de índice único (23505). El caso real es
+   * la carrera create-create de un lote nuevo: dos entradas simultáneas del mismo
+   * `lotCode` hacen SELECT (no existe) e INSERT; con `uq_lot_product_code` la
+   * segunda falla, y al reintentar ya encuentra el lote y suma sobre él.
+   */
+  private async withUniqueRetry<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      const code = (error as { code?: string })?.code;
+      if (code !== '23505') throw error;
+      return operation();
+    }
+  }
+
   async create(dto: CreateMovementDto, userId: string) {
-    const result = await this.dataSource.transaction((manager) =>
-      this.createInTransaction(manager, dto, userId),
+    const result = await this.withUniqueRetry(() =>
+      this.dataSource.transaction((manager) =>
+        this.createInTransaction(manager, dto, userId),
+      ),
     );
 
     // Post-transaction: invalidate cache + broadcast (fire-and-forget, non-blocking)
@@ -377,12 +414,30 @@ export class MovementsService {
             // Para EXIT/TRANSFER: la ubicación de origen es donde estaba el palet
             detailLocationId = pallet.currentLocationId ?? null;
 
+            // El palet debe pertenecer al material de la línea: si no, se descontaría
+            // stock del producto A moviendo un palet del producto B.
+            const palletOwner = await manager.getRepository(Lot).findOne({ where: { id: pallet.lotId } });
+            if (palletOwner && palletOwner.productId !== dto.productId) {
+              throw new BadRequestException(
+                `El palet ${pallet.code} pertenece al lote "${palletOwner.lotCode}" de otro material.`,
+              );
+            }
+
             if (dto.type === 'EXIT' || dto.type === 'ADJUSTMENT_OUT') {
               // Verificar que el lote no esté pendiente de regularización
-              const palletLot = await manager.getRepository(Lot).findOne({ where: { id: pallet.lotId } });
+              const palletLot = palletOwner;
               if (palletLot?.status === 'PENDING_REGULARIZATION') {
                 throw new BadRequestException(
                   `El lote "${palletLot.lotCode}" está pendiente de regularización. Regularizá el lote antes de despachar.`,
+                );
+              }
+
+              // Tope por saldo del palet: sin esto el stock se descuenta por la cantidad
+              // pedida mientras el palet solo baja lo que tiene, y las tres contabilidades
+              // (stock / lote / palet) divergen en silencio.
+              if (item.quantity > pallet.quantity) {
+                throw new BadRequestException(
+                  `El palet ${pallet.code} tiene ${pallet.quantity} unid. disponibles — no se pueden retirar ${item.quantity}.`,
                 );
               }
 
@@ -407,6 +462,16 @@ export class MovementsService {
               }
 
             } else if (dto.type === 'TRANSFER') {
+              // El palet se mueve entero: si se transfiriera solo una parte, el stock se
+              // repartiría entre dos celdas mientras el palet queda en una sola, y la
+              // ubicación de origen mostraría stock sin palet que lo respalde.
+              if (item.quantity !== pallet.quantity) {
+                throw new BadRequestException(
+                  `El palet ${pallet.code} tiene ${pallet.quantity} unid. y se transfiere completo. ` +
+                  `Para mover una parte, primero dividí el palet.`,
+                );
+              }
+
               // Transferencia: reducir desde ubicación actual del palet, aumentar en destino
               const fromLocationId: string | null = pallet.currentLocationId ?? null;
               let fromWarehouseId: string | null = null;
@@ -499,7 +564,7 @@ export class MovementsService {
    * movimiento a la cabecera. Si una línea falla, se revierte TODO el documento.
    */
   async createDocument(dto: CreateDocumentDto, userId: string) {
-    const result = await this.dataSource.transaction(async (manager) => {
+    const result = await this.withUniqueRetry(() => this.dataSource.transaction(async (manager) => {
       const docDate = dto.date ? new Date(dto.date) : new Date();
       const code = await this.sequences.nextCode(manager, dto.type, docDate);
 
@@ -564,7 +629,7 @@ export class MovementsService {
         warehouseId: dto.warehouseId ?? null,
         movementIds,
       };
-    });
+    }));
 
     // Post-transaction: invalidar cache + broadcast (una sola vez por documento)
     void Promise.all([
@@ -575,7 +640,7 @@ export class MovementsService {
 
     void this.uploads.log('DOCUMENT', result.documentId, 'CREADO',
       `Remito ${result.code} creado con ${result.movementIds.length} línea(s)`,
-      undefined, undefined, undefined, result.code);
+      userId, undefined, undefined, result.code);
 
     return {
       documentId: result.documentId,
@@ -1125,8 +1190,20 @@ export class MovementsService {
             }
           }
 
-          if (lotChanged) {
+          // Regularizar el movimiento libera SIEMPRE sus lotes: el caso normal es que
+          // solo llegue el remito definitivo (campos del movimiento) sin tocar datos del
+          // lote, y hasta acá eso dejaba el lote bloqueado sin vía para desbloquearlo.
+          if (lot.status === 'PENDING_REGULARIZATION') {
+            logs.push({
+              movementId: id, field: `lot.${lot.lotCode}.status`,
+              oldValue: 'PENDING_REGULARIZATION', newValue: 'NORMAL',
+              changedById: userId, reason: dto.reason,
+            });
             lot.status = 'NORMAL';
+            lotChanged = true;
+          }
+
+          if (lotChanged) {
             await manager.save(Lot, lot);
           }
         }

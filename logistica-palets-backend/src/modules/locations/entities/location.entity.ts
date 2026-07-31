@@ -29,6 +29,7 @@ export type TemperatureZone = (typeof temperatureZones)[number];
  * Posición se modela como atributos de la misma fila: el código sigue siendo
  * el identificador operativo y nada del resto del sistema cambia.
  */
+@Index('uq_location_warehouse_code', ['warehouse', 'code'], { unique: true })
 @Index('idx_location_zone', ['zone'])
 @Entity('locations')
 export class Location {

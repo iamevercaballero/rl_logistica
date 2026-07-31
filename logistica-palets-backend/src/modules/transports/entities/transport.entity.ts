@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, Index } from 'typeorm';
 
 /** Estado operativo del vehículo. */
 export const transportStatuses = [
@@ -19,6 +19,7 @@ export type TransportDriver = {
   status?: string | null;
 };
 
+@Index('uq_transport_plate', ['plate'], { unique: true })
 @Entity('transports')
 export class Transport {
   @PrimaryGeneratedColumn('uuid')

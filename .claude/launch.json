@@ -2,10 +2,26 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "frontend-attach",
+      "url": "http://localhost:5173",
+      "port": 5173
+    },
+    {
       "name": "frontend-dev",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "logistica-palets-frontend", "run", "dev"],
-      "port": 5173
+      "port": 5173,
+      "autoPort": false
+    },
+    {
+      "name": "frontend-audit",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix", "logistica-palets-frontend", "run", "dev",
+        "--", "--mode", "audit", "--port", "5174", "--strictPort"
+      ],
+      "port": 5174,
+      "autoPort": false
     }
   ]
 }

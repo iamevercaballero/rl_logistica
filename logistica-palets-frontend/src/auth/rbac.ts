@@ -26,7 +26,8 @@ export const PERMS: Record<ModuleKey, ModulePermissions> = {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
     create: ["ADMIN", "MANAGER", "OPERATOR"],
     update: ["ADMIN", "MANAGER", "OPERATOR"],
-    remove: ["ADMIN", "MANAGER", "OPERATOR"],
+    // Dar de baja catálogo maestro es de supervisión, no de piso (igual que el backend).
+    remove: ["ADMIN", "MANAGER"],
   },
   lots: {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
@@ -38,13 +39,15 @@ export const PERMS: Record<ModuleKey, ModulePermissions> = {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
     create: ["ADMIN", "MANAGER", "OPERATOR"],
     update: ["ADMIN", "MANAGER", "OPERATOR"],
-    remove: ["ADMIN", "MANAGER", "OPERATOR"],
+    // Eliminar un depósito arrastra su estructura: queda fuera del alcance del operador.
+    remove: ["ADMIN", "MANAGER"],
   },
   locations: {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
     create: ["ADMIN", "MANAGER", "OPERATOR"],
     update: ["ADMIN", "MANAGER", "OPERATOR"],
-    remove: ["ADMIN", "MANAGER", "OPERATOR"],
+    // Ídem: borrar estructura del depósito es de supervisión.
+    remove: ["ADMIN", "MANAGER"],
   },
   pallets: {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],

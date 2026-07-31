@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { Warehouse } from './entities/warehouse.entity';
@@ -28,8 +28,15 @@ export class WarehousesService {
     private readonly dataSource: DataSource,
   ) {}
 
-  create(dto: CreateWarehouseDto) {
-    const warehouse = this.warehouseRepo.create(dto);
+  async create(dto: CreateWarehouseDto) {
+    const name = dto.name.trim();
+    if (!name) throw new BadRequestException('El nombre del depósito es obligatorio');
+
+    // Dos depósitos homónimos son indistinguibles en los selectores y en los reportes.
+    const existing = await this.warehouseRepo.findOne({ where: { name } });
+    if (existing) throw new BadRequestException(`Ya existe un depósito con el nombre "${name}"`);
+
+    const warehouse = this.warehouseRepo.create({ ...dto, name });
     return this.warehouseRepo.save(warehouse);
   }
 
@@ -106,8 +113,28 @@ export class WarehousesService {
     return this.warehouseRepo.save(warehouse);
   }
 
+  /**
+   * Un depósito con ubicaciones no puede borrarse: la FK de `locations.warehouseId`
+   * lo impedía con un 500 sin explicación. Con stock además hay mercadería real.
+   */
   async remove(id: string) {
     const warehouse = await this.findOne(id);
+
+    const [{ locations, stock }] = (await this.warehouseRepo.query(
+      `SELECT
+         (SELECT COUNT(*) FROM locations WHERE "warehouseId" = $1)::int AS locations,
+         (SELECT COALESCE(SUM("currentQuantity"), 0) FROM stocks
+           WHERE "warehouseId" = $1)::int                               AS stock`,
+      [id],
+    )) as Array<{ locations: number; stock: number }>;
+
+    if (locations > 0 || stock !== 0) {
+      throw new BadRequestException(
+        `No se puede eliminar el depósito ${warehouse.name}: tiene ${locations} ubicación(es) y ${stock} unidad(es) de stock. ` +
+        `Vaciá y eliminá sus ubicaciones antes de darlo de baja.`,
+      );
+    }
+
     return this.warehouseRepo.remove(warehouse);
   }
 }

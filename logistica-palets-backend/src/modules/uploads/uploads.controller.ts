@@ -10,6 +10,7 @@ import {
   UploadedFile,
   UseGuards,
   UseInterceptors,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -106,7 +107,7 @@ export class UploadsController {
   /** Descarga / visualiza un archivo adjunto. */
   @Get(':id/file')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
-  async download(@Param('id') id: string, @Res({ passthrough: true }) res: Response) {
+  async download(@Param('id', ParseUUIDPipe) id: string, @Res({ passthrough: true }) res: Response) {
     const { stream, mimeType, filename } = await this.service.streamFile(id);
     res.set({
       'Content-Type': mimeType,
@@ -119,7 +120,7 @@ export class UploadsController {
   @Delete(':id')
   @Roles('ADMIN', 'MANAGER')
   remove(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Req() req: Request & { user: { userId: string; username?: string } },
   ) {
     return this.service.deleteAttachment(id, req.user.userId, req.user.username);

@@ -202,11 +202,30 @@ export type InventoryHealthRow = {
   lotVsPallet: number;
 };
 
+/**
+ * Descuadre a nivel celda: el total del material puede cerrar y aun así estar mal
+ * repartido entre ubicaciones (stock en una celda sin pallets que lo respalden).
+ */
+export type InventoryHealthCell = {
+  productId: string;
+  productCode: string;
+  productDescription: string;
+  locationId: string | null;
+  locationCode: string | null;
+  stockQuantity: number;
+  palletQuantity: number;
+  stockVsPallet: number;
+  /** El stock apunta a una ubicación que ya no existe. */
+  orphanLocation: boolean;
+};
+
 export type InventoryHealth = {
   ok: boolean;
   divergentCount: number;
+  divergentCellCount: number;
   checkedAt: string;
   divergent: InventoryHealthRow[];
+  divergentCells: InventoryHealthCell[];
 };
 
 export async function getInventoryHealth(): Promise<InventoryHealth> {

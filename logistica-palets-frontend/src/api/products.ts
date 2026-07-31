@@ -76,8 +76,20 @@ export async function updateProduct(id: string, payload: Partial<{
   return data;
 }
 
-export async function deleteProduct(id: string): Promise<void> {
-  await api.delete(`/products/${id}`);
+/**
+ * Baja de material. Si tiene lotes o movimientos, el backend lo desactiva en vez
+ * de borrarlo (para no dejar el histórico sin material) y devuelve `deactivated`.
+ */
+export type DeleteProductResult = {
+  deleted: boolean;
+  deactivated: boolean;
+  id: string;
+  reason?: string;
+};
+
+export async function deleteProduct(id: string): Promise<DeleteProductResult> {
+  const { data } = await api.delete<DeleteProductResult>(`/products/${id}`);
+  return data;
 }
 
 export async function bulkImportProducts(file: File): Promise<BulkImportResult> {

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { Transport, TransportDriver } from './entities/transport.entity';
@@ -33,17 +33,27 @@ export class TransportsService {
     return { ...rest, drivers };
   }
 
-  async create(dto: CreateTransportDto) {
+  async create(dto: CreateTransportDto, userId?: string) {
     const { drivers, ...fields } = dto;
+
+    // La patente identifica al vehículo: los remitos se vinculan por ella, así que
+    // duplicarla mezcla el historial de viajes de dos vehículos distintos.
+    const plate = fields.plate.trim().toUpperCase();
+    const existing = await this.repo.findOne({ where: { plate } });
+    if (existing) {
+      throw new BadRequestException(`Ya existe un vehículo con la patente ${plate}`);
+    }
+
     const transport = this.repo.create({
       ...fields,
+      plate,
       status: dto.status ?? 'DISPONIBLE',
       driversJson: drivers && drivers.length > 0 ? JSON.stringify(drivers) : null,
     });
     const saved = await this.repo.save(transport);
 
     void this.uploads.log('VEHICLE', saved.id, 'CREADO',
-      `Vehículo ${saved.plate} (${saved.type}) registrado en la flota`);
+      `Vehículo ${saved.plate} (${saved.type}) registrado en la flota`, userId);
 
     return this.toView(saved);
   }
@@ -134,10 +144,14 @@ export class TransportsService {
     return this.toView(transport);
   }
 
-  async remove(id: string) {
+  async remove(id: string, userId?: string) {
     const transport = await this.repo.findOne({ where: { id } });
     if (!transport) throw new NotFoundException('Transporte no encontrado');
     await this.repo.remove(transport);
+
+    void this.uploads.log('VEHICLE', id, 'EDITADO',
+      `Vehículo ${transport.plate} eliminado de la flota`, userId);
+
     return { deleted: true };
   }
 }

@@ -105,9 +105,14 @@ export default function ProductsPage() {
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => deleteProduct(id),
-    onSuccess: () => {
+    onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ["products"] });
-      toast.success("Material eliminado");
+      // El backend desactiva en vez de borrar cuando el material tiene historia.
+      toast.success(
+        res.deactivated
+          ? "Material desactivado. Se conserva porque tiene movimientos registrados."
+          : "Material eliminado",
+      );
     },
     onError: (err) => toast.error(getFriendlyApiError(err)),
   });
@@ -147,7 +152,11 @@ export default function ProductsPage() {
 
   function handleDelete(item: Product) {
     if (!allowDelete) return;
-    if (!window.confirm(`Eliminar material ${item.code}?`)) return;
+    const mensaje =
+      `¿Dar de baja el material ${item.code}?\n\n` +
+      `Si tiene movimientos registrados quedará inactivo y podrá reactivarse después. ` +
+      `Si nunca se usó, se elimina definitivamente.`;
+    if (!window.confirm(mensaje)) return;
     deleteMut.mutate(item.id);
   }
 
@@ -367,9 +376,9 @@ export default function ProductsPage() {
                         className="btn btn--danger"
                         onClick={() => handleDelete(item)}
                         disabled={saving}
-                        aria-label={`Eliminar material ${item.code}`}
+                        aria-label={`Dar de baja material ${item.code}`}
                       >
-                        Eliminar
+                        Dar de baja
                       </button>
                     ) : null}
                   </td>

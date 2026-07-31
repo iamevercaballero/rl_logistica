@@ -1,4 +1,5 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { numericTransformer } from '../../../common/numeric.transformer';
 
 @Index('idx_movement_detail_movement', ['movementId'])
 @Index('idx_movement_detail_pallet', ['palletId'])
@@ -21,7 +22,7 @@ export class MovementDetail {
   @Column({ type: 'uuid', nullable: true })
   locationId?: string | null;
 
-  @Column({ type: 'int' })
+  @Column({ type: 'numeric', precision: 14, scale: 3, transformer: numericTransformer })
   quantity: number;
 
   @Column({ type: 'varchar', nullable: true })

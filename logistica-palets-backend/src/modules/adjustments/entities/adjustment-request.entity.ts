@@ -1,4 +1,5 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { numericTransformer } from '../../../common/numeric.transformer';
 
 export const adjustmentRequestTypes = ['ADJUSTMENT_IN', 'ADJUSTMENT_OUT'] as const;
 export type AdjustmentRequestType = (typeof adjustmentRequestTypes)[number];
@@ -77,7 +78,7 @@ export class AdjustmentRequest {
   @Column({ type: 'int', default: 0 })
   totalLines: number;
 
-  @Column({ type: 'int', default: 0 })
+  @Column({ type: 'numeric', precision: 14, scale: 3, default: 0, transformer: numericTransformer })
   totalQuantity: number;
 
   @Column({ type: 'uuid' })

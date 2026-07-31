@@ -1,4 +1,5 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { numericTransformer } from '../../../common/numeric.transformer';
 
 /**
  * Una línea de una solicitud de ajuste: un producto con sus lotes/pallets.
@@ -26,7 +27,7 @@ export class AdjustmentRequestLine {
   palletItemsJson: string;
 
   /** Cantidad total de esta línea (denormalizado para listados rápidos). */
-  @Column({ type: 'int', default: 0 })
+  @Column({ type: 'numeric', precision: 14, scale: 3, default: 0, transformer: numericTransformer })
   totalQuantity: number;
 
   /** Ubicación específica de esta línea (override de la del request). */

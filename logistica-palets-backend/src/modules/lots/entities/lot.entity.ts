@@ -1,5 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { Product } from '../../products/entities/product.entity';
+import { numericTransformer } from '../../../common/numeric.transformer';
 
 @Index('uq_lot_product_code', ['productId', 'lotCode'], { unique: true })
 @Index('idx_lot_status', ['status'])
@@ -32,7 +33,16 @@ export class Lot {
   @Column({ type: 'varchar', nullable: true })
   sapLot?: string | null;
 
-  @Column({ type: 'int', default: 0 })
+  /**
+   * Lote del proveedor — dato de trazabilidad únicamente. Puede repetirse entre
+   * lotes internos distintos (un mismo envío del proveedor suele partirse en
+   * varios lotes internos), por eso NO participa de la clave de unicidad, que
+   * es (productId, lotCode).
+   */
+  @Column({ type: 'varchar', nullable: true })
+  supplierLot?: string | null;
+
+  @Column({ type: 'numeric', precision: 14, scale: 3, default: 0, transformer: numericTransformer })
   stockActual: number;
 
   @Column({ type: 'varchar', default: 'NORMAL' })

@@ -6,6 +6,7 @@ import {
   IsDateString,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -25,13 +26,14 @@ export class CreateDocumentLineDto {
   @IsUUID()
   productId: string;
 
-  /** Cantidad total de la línea (si no se usan palletItems). */
+  /** Cantidad total de la línea (si no se usan palletItems). Admite decimales. */
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
-  @Min(1)
+  @IsNumber({ maxDecimalPlaces: 3 })
+  @Min(0.001)
   quantity?: number;
 
+  /** Cantidad de palets físicos — es un conteo, siempre entero. */
   @IsOptional()
   @Type(() => Number)
   @IsInt()

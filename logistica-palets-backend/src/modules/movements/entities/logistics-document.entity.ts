@@ -1,4 +1,5 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { numericTransformer } from '../../../common/numeric.transformer';
 
 /** Tipo de documento logístico. ENTRY → RLNE, EXIT → RLNS. */
 export const documentTypes = ['ENTRY', 'EXIT'] as const;
@@ -87,7 +88,7 @@ export class LogisticsDocument {
   @Column({ type: 'int', default: 0 })
   totalLines: number;
 
-  @Column({ type: 'int', default: 0 })
+  @Column({ type: 'numeric', precision: 14, scale: 3, default: 0, transformer: numericTransformer })
   totalQuantity: number;
 
   @Column({ type: 'uuid' })

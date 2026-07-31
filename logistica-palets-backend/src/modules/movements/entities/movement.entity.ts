@@ -1,4 +1,5 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { numericTransformer } from '../../../common/numeric.transformer';
 
 export const movementTypes = [
   'ENTRY',
@@ -48,7 +49,7 @@ export class Movement {
   @Column({ type: 'uuid' })
   productId: string;
 
-  @Column({ type: 'int' })
+  @Column({ type: 'numeric', precision: 14, scale: 3, transformer: numericTransformer })
   quantity: number;
 
   @Column({ type: 'int', nullable: true })

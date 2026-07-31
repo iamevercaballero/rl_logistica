@@ -4,6 +4,7 @@ import {
   IsDateString,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -13,20 +14,28 @@ import {
 } from 'class-validator';
 import { adjustmentReasons, movementTypes, MovementType } from '../entities/movement.entity';
 
+/**
+ * Las cantidades del inventario son decimales (TS, KG, HL admiten fracciones).
+ * Se aceptan hasta 3 decimales, alineado con `numeric(14,3)` en la base.
+ */
+const QUANTITY_OPTIONS = { maxDecimalPlaces: 3 } as const;
+/** Mínimo positivo representable con 3 decimales — descarta 0 y negativos. */
+const MIN_QUANTITY = 0.001;
+
 export class PalletItemDto {
   /** SALIDA: ID de palet físico existente (marca palet como EXITED) */
   @IsOptional()
   @IsUUID()
   palletId?: string;
 
-  /** ENTRADA: código de lote (crea palet si no existe) */
+  /** ENTRADA: código de lote interno (crea palet si no existe) */
   @IsOptional()
   @IsString()
   lotCode?: string;
 
   @Type(() => Number)
-  @IsInt()
-  @Min(1)
+  @IsNumber(QUANTITY_OPTIONS)
+  @Min(MIN_QUANTITY)
   quantity: number;
 
   @IsOptional()
@@ -41,6 +50,12 @@ export class PalletItemDto {
   @IsOptional()
   @IsString()
   sapLot?: string;
+
+  /** Lote del proveedor — sólo trazabilidad; puede repetirse entre lotes internos. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  supplierLot?: string;
 
   /** Proveedor del lote — informativo por ítem de entrada */
   @IsOptional()
@@ -62,10 +77,11 @@ export class CreateMovementDto {
 
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
-  @Min(1)
+  @IsNumber(QUANTITY_OPTIONS)
+  @Min(MIN_QUANTITY)
   quantity?: number;
 
+  /** Cantidad de palets físicos — es un conteo, siempre entero. */
   @IsOptional()
   @Type(() => Number)
   @IsInt()

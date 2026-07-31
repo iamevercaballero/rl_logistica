@@ -330,6 +330,8 @@ export async function regularizeMovement(id: string, payload: {
 
 export type StockSnapshotRowIssue = {
   file: "ENTRADA" | "SALIDA" | "STOCK";
+  /** ERROR = la fila no se importa; WARNING = se importa pero requiere revisión. */
+  severity: "ERROR" | "WARNING";
   row: number;
   code?: string;
   reason: string;
@@ -346,10 +348,22 @@ export type StockSnapshotProductStatus =
 
 
 export type StockLotItem = {
+  /** Lote interno — junto con el material forma la clave única del lote. */
   lotCode: string;
-  sapLot?: string;
+  /** Lote del proveedor — sólo trazabilidad, puede repetirse. */
+  supplierLot?: string;
   quantity: number;
   fechaVencimiento?: string | null;
+  /** Fila del Excel de origen. */
+  row: number;
+};
+
+export type StockConsistencyReport = {
+  stockTotal: number;
+  lotsTotal: number;
+  palletsTotal: number;
+  consistent: boolean;
+  mismatches: { productId: string; stock: number; lots: number; pallets: number }[];
 };
 
 export type StockLotSnapshotProductResult = {
@@ -368,8 +382,17 @@ export type StockLotSnapshotProductResult = {
 export type StockLotSnapshotResult = {
   committed: boolean;
   sourceRows: number;
+  totals: {
+    materials: number;
+    lots: number;
+    records: number;
+    warnings: number;
+    errors: number;
+  };
   rowIssues: StockSnapshotRowIssue[];
   products: StockLotSnapshotProductResult[];
+  /** Verificación Stock = Lotes = Palets. Sólo tras confirmar la carga. */
+  integrity?: StockConsistencyReport;
   summary: {
     adjusted: number;
     newProducts: number;

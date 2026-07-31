@@ -134,11 +134,12 @@ export default function StockSnapshotPage() {
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-      <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.5, marginBottom: 8 }}>Snapshot de stock inicial</h1>
+      <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.5, marginBottom: 8 }}>Carga inicial de inventario</h1>
       <p style={{ color: "var(--muted)", marginBottom: 28, fontSize: 14 }}>
-        Una fila = un lote de un producto (código, lote de proveedor, lote SAP, UM, cantidad, fecha de
-        vencimiento). Si un código no existe en el catálogo, se crea automáticamente (apilable por defecto).
-        Cada lote queda disponible para FEFO desde el primer movimiento nuevo.
+        Una fila = un lote de un material. La identidad del lote es <strong>material + lote interno</strong>;
+        el lote de proveedor se guarda sólo como trazabilidad y puede repetirse. Cada lote genera su palet
+        lógico en la ubicación temporal <code>STOCK-INICIAL</code>, pendiente de ubicar. Si un material no
+        existe en el catálogo, se crea automáticamente (apilable por defecto).
       </p>
 
       <div className="card" style={{ marginBottom: 20, borderColor: "var(--badge-exit-border)" }}>
@@ -203,34 +204,83 @@ export default function StockSnapshotPage() {
             <h3 style={{ fontWeight: 700, marginBottom: 14 }}>
               {result.committed ? "Resultado" : "Vista previa"}
             </h3>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 16 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 12 }}>
               {[
-                { label: "Filas leídas", value: result.sourceRows },
-                { label: result.committed ? "Ajustados" : "Se ajustarían", value: result.summary.adjusted },
-                { label: "Productos nuevos", value: result.summary.newProducts },
-                { label: "Neto cero/negativo", value: result.summary.skippedNonPositive },
-                { label: "Ya tenían stock", value: result.summary.skippedAlreadyHasStock },
-              ].map(({ label, value }) => (
+                { label: "Materiales", value: result.totals.materials, tone: "var(--primary-text)" },
+                { label: "Lotes", value: result.totals.lots, tone: "var(--primary-text)" },
+                { label: "Registros", value: result.totals.records, tone: "var(--primary-text)" },
+                { label: "Advertencias", value: result.totals.warnings, tone: result.totals.warnings ? "var(--warning, #b8860b)" : "var(--muted)" },
+                { label: "Errores", value: result.totals.errors, tone: result.totals.errors ? "var(--danger)" : "var(--muted)" },
+              ].map(({ label, value, tone }) => (
                 <div key={label} style={{ textAlign: "center", padding: "10px 6px", background: "var(--panel)", borderRadius: "var(--radius)", border: "1px solid var(--border)" }}>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: "var(--primary-text)" }}>{value}</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: tone }}>{value}</div>
                   <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{label}</div>
                 </div>
               ))}
             </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+              {[
+                { label: "Filas leídas", value: result.sourceRows },
+                { label: result.committed ? "Materiales cargados" : "Se cargarían", value: result.summary.adjusted },
+                { label: "Materiales nuevos", value: result.summary.newProducts },
+                { label: "Ya tenían stock", value: result.summary.skippedAlreadyHasStock },
+              ].map(({ label, value }) => (
+                <div key={label} style={{ textAlign: "center", padding: "8px 6px", background: "var(--bg)", borderRadius: "var(--radius)", border: "1px solid var(--border)" }}>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>{value}</div>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{label}</div>
+                </div>
+              ))}
+            </div>
+
+            {result.integrity && (
+              <div
+                style={{
+                  marginBottom: 16, padding: "10px 14px", borderRadius: "var(--radius)", fontSize: 13,
+                  border: `1px solid ${result.integrity.consistent ? "var(--border)" : "var(--danger)"}`,
+                  background: result.integrity.consistent ? "var(--bg)" : "var(--primary-light)",
+                }}
+              >
+                <strong>{result.integrity.consistent ? "✓ Inventario consistente" : "⚠ Inconsistencia detectada"}</strong>
+                <div style={{ color: "var(--muted)", marginTop: 4 }}>
+                  Stock {result.integrity.stockTotal.toLocaleString("es-PY")} · Lotes{" "}
+                  {result.integrity.lotsTotal.toLocaleString("es-PY")} · Palets{" "}
+                  {result.integrity.palletsTotal.toLocaleString("es-PY")}
+                </div>
+                {!result.integrity.consistent && (
+                  <div style={{ color: "var(--danger)", marginTop: 4 }}>
+                    {result.integrity.mismatches.length} material(es) con stock, lotes y palets que no coinciden.
+                  </div>
+                )}
+              </div>
+            )}
             {result.rowIssues.length > 0 && (
-              <details>
+              <details open={result.totals.errors > 0}>
                 <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-                  {result.rowIssues.length} observaciones del archivo (código vacío/inválido, lote duplicado, cantidad inválida, etc.)
+                  {result.totals.errors} error(es) · {result.totals.warnings} advertencia(s) — ver detalle por fila
                 </summary>
-                <div style={{ maxHeight: 200, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6, marginTop: 8 }}>
+                <p style={{ fontSize: 12, color: "var(--muted)", margin: "6px 0" }}>
+                  Los <strong>errores</strong> descartan la fila; las <strong>advertencias</strong> se importan igual pero conviene revisarlas.
+                </p>
+                <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6, marginTop: 8 }}>
                   <table className="table" style={{ fontSize: 12 }}>
-                    <thead><tr><th>Fila</th><th>Código</th><th>Motivo</th></tr></thead>
+                    <thead><tr><th>Tipo</th><th>Fila</th><th>Material</th><th>Motivo</th></tr></thead>
                     <tbody>
-                      {result.rowIssues.slice(0, 300).map((i, idx) => (
-                        <tr key={idx}>
-                          <td>{i.row}</td><td>{i.code ?? "-"}</td><td>{i.reason}</td>
-                        </tr>
-                      ))}
+                      {[...result.rowIssues]
+                        .sort((a, b) => (a.severity === b.severity ? a.row - b.row : a.severity === "ERROR" ? -1 : 1))
+                        .slice(0, 300)
+                        .map((i, idx) => (
+                          <tr key={idx}>
+                            <td>
+                              <span
+                                className="badge"
+                                style={{ color: i.severity === "ERROR" ? "var(--danger)" : undefined, whiteSpace: "nowrap" }}
+                              >
+                                {i.severity === "ERROR" ? "Error" : "Advertencia"}
+                              </span>
+                            </td>
+                            <td>{i.row}</td><td>{i.code ?? "-"}</td><td>{i.reason}</td>
+                          </tr>
+                        ))}
                     </tbody>
                   </table>
                   {result.rowIssues.length > 300 && (
@@ -280,8 +330,9 @@ export default function StockSnapshotPage() {
                           <ul style={{ margin: "4px 0 0 16px", padding: 0, fontSize: 11, color: "var(--muted)" }}>
                             {p.lots.map((l, i) => (
                               <li key={i}>
-                                {l.lotCode}{l.sapLot ? ` (SAP ${l.sapLot})` : ""} — {l.quantity.toLocaleString("es-PY")}
-                                {l.fechaVencimiento ? ` — vto. ${l.fechaVencimiento}` : ""}
+                                <strong>{l.lotCode}</strong>
+                                {l.supplierLot ? ` · prov. ${l.supplierLot}` : ""} — {l.quantity.toLocaleString("es-PY")}
+                                {l.fechaVencimiento ? ` — vto. ${l.fechaVencimiento}` : " — sin vto."}
                               </li>
                             ))}
                           </ul>

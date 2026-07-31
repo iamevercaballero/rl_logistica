@@ -25,6 +25,7 @@ import { Pallet } from '../pallets/entities/pallet.entity';
 import { DeepPartial } from 'typeorm/common/DeepPartial';
 import { EventsGateway } from '../events/events.gateway';
 import { CacheService } from '../cache/cache.service';
+import { roundQuantity } from '../../common/quantity';
 
 @Injectable()
 export class MovementsService {
@@ -453,7 +454,7 @@ export class MovementsService {
               // Salida parcial: reducir cantidad del pallet.
               // - llega a 0  → EXITED (despachado completo)
               // - queda saldo → PARTIAL (salida parcial), salvo que esté BLOCKED/DAMAGED
-              pallet.quantity = Math.max(0, pallet.quantity - item.quantity);
+              pallet.quantity = Math.max(0, roundQuantity(pallet.quantity - item.quantity));
               if (pallet.quantity === 0) {
                 pallet.status = 'EXITED';
                 pallet.exitedAt = new Date();
@@ -503,11 +504,16 @@ export class MovementsService {
               item.fechaVencimiento, item.proveedor,
               item.fechaFabricacion, item.sapLot,
               dto.isProvisional ? 'PENDING_REGULARIZATION' : 'NORMAL',
+              item.supplierLot,
             );
             resolvedLotId = lot.id;
             const existingCount = await manager.getRepository(Pallet).count({ where: { lotId: lot.id } });
+            // El código incluye el material porque `pallets.code` es único global
+            // y el código de lote NO lo es: los lotes SAP se numeran por fecha
+            // (Z011008201), así que dos materiales recibidos el mismo día comparten
+            // lote y, sin el prefijo, el segundo palet choca contra el índice único.
             const pallet = manager.getRepository(Pallet).create({
-              code: `${lot.lotCode}-P${existingCount + 1}`,
+              code: `${product.code}-${lot.lotCode}-P${existingCount + 1}`,
               lotId: lot.id,
               quantity: item.quantity,
               currentLocationId: resolved.locationId ?? null,
@@ -1479,7 +1485,7 @@ export class MovementsService {
     manager: EntityManager, productId: string, warehouseId: string | null, locationId: string | null, quantity: number,
   ) {
     const stock = await this.findOrCreateStock(manager, productId, warehouseId, locationId);
-    stock.currentQuantity += quantity;
+    stock.currentQuantity = roundQuantity(stock.currentQuantity + quantity);
     stock.updatedAt = new Date();
     await manager.save(stock);
   }
@@ -1488,10 +1494,12 @@ export class MovementsService {
     manager: EntityManager, productId: string, warehouseId: string | null, locationId: string | null, quantity: number,
   ) {
     const stock = await this.findOrCreateStock(manager, productId, warehouseId, locationId);
-    if (stock.currentQuantity < quantity) {
+    // Comparación redondeada: sin esto, un residuo de coma flotante
+    // (p.ej. 1244.0999999999999 < 1244.1) rechazaría una salida válida.
+    if (roundQuantity(stock.currentQuantity - quantity) < 0) {
       throw new BadRequestException('Stock insuficiente para completar la operación');
     }
-    stock.currentQuantity -= quantity;
+    stock.currentQuantity = roundQuantity(stock.currentQuantity - quantity);
     stock.updatedAt = new Date();
     await manager.save(stock);
   }
@@ -1530,6 +1538,7 @@ export class MovementsService {
     fechaFabricacion?: string,
     sapLot?: string,
     status = 'NORMAL',
+    supplierLot?: string,
   ): Promise<Lot> {
     const repo = manager.getRepository(Lot);
     lotCode = normalizeLotCode(lotCode);
@@ -1541,6 +1550,7 @@ export class MovementsService {
         fechaFabricacion: fechaFabricacion ?? null,
         proveedor: proveedor ?? null,
         sapLot: sapLot ?? null,
+        supplierLot: supplierLot ?? null,
         stockActual: 0,
         status,
       });
@@ -1551,6 +1561,7 @@ export class MovementsService {
       if (proveedor && !lot.proveedor) { lot.proveedor = proveedor; changed = true; }
       if (fechaFabricacion && !lot.fechaFabricacion) { lot.fechaFabricacion = fechaFabricacion; changed = true; }
       if (sapLot && !lot.sapLot) { lot.sapLot = sapLot; changed = true; }
+      if (supplierLot && !lot.supplierLot) { lot.supplierLot = supplierLot; changed = true; }
       if (changed) lot = await repo.save(lot);
     }
     return lot;
@@ -1567,7 +1578,7 @@ export class MovementsService {
       .where('lot.id = :id', { id: lotId })
       .getOne();
     if (lot) {
-      lot.stockActual = Math.max(0, lot.stockActual + delta);
+      lot.stockActual = Math.max(0, roundQuantity(lot.stockActual + delta));
       await repo.save(lot);
     }
   }
@@ -1665,7 +1676,7 @@ export class MovementsService {
       }
       await this.applyDecrease(manager, productId, stockWarehouseId, stockLocationId, take);
 
-      pallet.quantity -= take;
+      pallet.quantity = roundQuantity(pallet.quantity - take);
       if (pallet.quantity === 0) {
         pallet.status = 'EXITED';
         pallet.exitedAt = new Date();
@@ -1684,7 +1695,9 @@ export class MovementsService {
       await manager.save(detail);
 
       await this.updateLotStock(manager, pallet.lotId, -take);
-      remaining -= take;
+      // Redondeo obligado: sin esto el residuo de coma flotante deja `remaining`
+      // en ~1e-13 y la salida completa se rechaza como "stock insuficiente".
+      remaining = roundQuantity(remaining - take);
     }
 
     if (remaining > 0) {
@@ -1701,12 +1714,20 @@ export class MovementsService {
   }
 
   /**
-   * Snapshot de stock inicial CON lotes reales: cada fila es un lote de un
-   * producto (código de lote de proveedor, lote SAP, vencimiento, cantidad).
-   * A diferencia de `stockSnapshotFromStockList`, acá se preserva el detalle
-   * por lote (queda disponible para FEFO desde el primer movimiento nuevo) y,
-   * si un código no existe en el catálogo, se crea el producto automáticamente
-   * (apilable por defecto) en vez de omitir la fila.
+   * Carga inicial de inventario desde el Excel del cliente. Cada fila es un lote
+   * de un material, con su cantidad, vencimiento y lote de proveedor.
+   *
+   * Reglas de identidad (las que definen si dos filas son el mismo lote):
+   *  - La clave del lote es (material, lote interno). El lote interno viaja en
+   *    `lotCode`, que es donde vive el índice único `uq_lot_product_code`.
+   *  - El lote del proveedor es sólo trazabilidad: puede repetirse entre lotes
+   *    internos distintos y NUNCA fusiona filas. Un mismo envío del proveedor
+   *    suele partirse en varios lotes internos con vencimientos distintos, así
+   *    que agrupar por él perdería stock y mezclaría fechas.
+   *
+   * El archivo no trae palets ni ubicaciones, así que cada lote genera un palet
+   * lógico en una ubicación temporal (`STOCK-INICIAL`) pendiente de ubicar. Eso
+   * mantiene la igualdad Stock = Lotes = Palets desde el primer día.
    */
   async stockSnapshotFromLotList(buffer: Buffer, userId: string, commit: boolean): Promise<StockLotSnapshotResult> {
     let workbook: XLSX.WorkBook;
@@ -1724,81 +1745,135 @@ export class MovementsService {
     const UM_ALIASES = ['umb', 'um', 'unidad de medida'];
     const QTY_ALIASES = ['stock lu', 'stock', 'cantidad'];
     const FECHA_VTO_ALIASES = ['fecha de vto', 'fecha vencimiento', 'fecha de vencimiento'];
-    const LOTE_PROVEEDOR_ALIASES = ['lote de proveedor'];
-    const LOTE_SAP_ALIASES = ['lote', 'lote sap'];
+    const SUPPLIER_LOT_ALIASES = ['lote de proveedor', 'lote proveedor'];
+    const LOT_ALIASES = ['lote', 'lote interno', 'lote sap'];
 
     const normalize = (value: string): string =>
       value.normalize('NFD').replace(new RegExp('[̀-ͯ]', 'g'), '').trim().toLowerCase();
 
+    /**
+     * Acepta decimales con coma o punto. Si aparecen ambos separadores, la coma
+     * es de miles ("1,234.56"); si aparece sólo la coma, es decimal ("1234,56").
+     */
     const parseQty = (value: unknown): number | null => {
-      const str = String(value ?? '').replace(/[^0-9.\-]/g, '');
+      let str = String(value ?? '').replace(/\s/g, '');
+      if (!str) return null;
+      const hasComma = str.includes(',');
+      const hasDot = str.includes('.');
+      if (hasComma && hasDot) str = str.replace(/,/g, '');
+      else if (hasComma) str = str.replace(',', '.');
+      str = str.replace(/[^0-9.\-]/g, '');
       if (!str) return null;
       const n = parseFloat(str);
-      return Number.isFinite(n) ? Math.round(n) || 0 : null;
+      return Number.isFinite(n) ? roundQuantity(n) : null;
     };
 
-    const parseDate = (value: unknown): string | null => {
+    /** `undefined` = celda vacía (sin vencimiento); `null` = valor presente pero inválido. */
+    const parseDate = (value: unknown): string | null | undefined => {
       if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
-      if (!value) return null;
-      const d = new Date(String(value));
+      const str = String(value ?? '').trim();
+      if (!str) return undefined;
+      const d = new Date(str);
       return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
     };
 
     const rowIssues: StockSnapshotRowIssue[] = [];
+    const addIssue = (severity: 'ERROR' | 'WARNING', row: number, reason: string, code?: string) => {
+      rowIssues.push({ file: 'STOCK', severity, row, code, reason });
+    };
+
     type Group = { description: string; unitOfMeasure: string; lots: StockLotItem[] };
     const groups = new Map<string, Group>();
+    /** (material|loteProveedor) → vencimientos vistos, para detectar contradicciones. */
+    const supplierLotDates = new Map<string, { date: string; row: number; lotCode: string }[]>();
+    const hoy = new Date().toISOString().slice(0, 10);
+    let validRecords = 0;
 
     raw.forEach((entry, index) => {
-      const rowNumber = index + 2;
+      const rowNumber = index + 2; // fila 1 = encabezado
       let code = '';
       let description = '';
       let unitOfMeasure = '';
       let qty: number | null = null;
-      let fechaVencimiento: string | null = null;
+      let fechaVencimiento: string | null | undefined;
       let lotCode = '';
-      let sapLot = '';
+      let supplierLot = '';
 
       for (const [header, value] of Object.entries(entry)) {
         const norm = normalize(header);
         if (CODE_ALIASES.includes(norm)) code = String(value ?? '').trim().toUpperCase();
-        else if (LOTE_PROVEEDOR_ALIASES.includes(norm)) lotCode = String(value ?? '').trim().toUpperCase();
-        else if (LOTE_SAP_ALIASES.includes(norm)) sapLot = String(value ?? '').trim().toUpperCase();
+        else if (SUPPLIER_LOT_ALIASES.includes(norm)) supplierLot = String(value ?? '').trim().toUpperCase();
+        else if (LOT_ALIASES.includes(norm)) lotCode = normalizeLotCode(String(value ?? ''));
         else if (UM_ALIASES.includes(norm)) unitOfMeasure = String(value ?? '').trim().toUpperCase();
         else if (QTY_ALIASES.includes(norm)) qty = parseQty(value);
         else if (FECHA_VTO_ALIASES.includes(norm)) fechaVencimiento = parseDate(value);
         else if (DESC_ALIASES.includes(norm)) description = String(value ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
       }
 
-      if (!code) {
-        rowIssues.push({ file: 'STOCK', row: rowNumber, reason: 'Código vacío' });
-        return;
-      }
-      if (!/\d/.test(code)) {
-        rowIssues.push({ file: 'STOCK', row: rowNumber, code, reason: 'Código inválido (no contiene dígitos)' });
-        return;
-      }
-      if (!lotCode) {
-        rowIssues.push({ file: 'STOCK', row: rowNumber, code, reason: 'Lote de proveedor vacío' });
-        return;
-      }
-      if (qty === null || qty <= 0) {
-        rowIssues.push({ file: 'STOCK', row: rowNumber, code, reason: 'Cantidad inválida o vacía' });
-        return;
-      }
+      // ── Errores: la fila no se puede importar ──────────────────────────────
+      if (!code) return addIssue('ERROR', rowNumber, 'Código de material vacío');
+      if (!/\d/.test(code)) return addIssue('ERROR', rowNumber, 'Código de material inválido (no contiene dígitos)', code);
+      if (!lotCode) return addIssue('ERROR', rowNumber, 'Lote interno vacío — es la clave del lote', code);
+      if (qty === null) return addIssue('ERROR', rowNumber, 'Cantidad no numérica', code);
+      if (qty <= 0) return addIssue('ERROR', rowNumber, `Cantidad inválida (${qty}): debe ser mayor a cero`, code);
 
       const group = groups.get(code) ?? { description, unitOfMeasure, lots: [] };
       if (!group.description && description) group.description = description;
       if (!group.unitOfMeasure && unitOfMeasure) group.unitOfMeasure = unitOfMeasure;
 
-      const existingLot = group.lots.find((l) => l.lotCode === lotCode);
-      if (existingLot) {
-        existingLot.quantity += qty;
-        rowIssues.push({ file: 'STOCK', row: rowNumber, code, reason: `Lote "${lotCode}" duplicado para este código — cantidades sumadas` });
-      } else {
-        group.lots.push({ lotCode, sapLot: sapLot || undefined, quantity: qty, fechaVencimiento });
+      // Duplicado real = mismo material + mismo lote interno. No se fusiona: es
+      // un error de datos y sumar a ciegas ocultaría el problema.
+      const duplicate = group.lots.find((l) => l.lotCode === lotCode);
+      if (duplicate) {
+        return addIssue(
+          'ERROR', rowNumber,
+          `Lote interno "${lotCode}" duplicado para este material (ya venía en la fila ${duplicate.row}) — fila omitida`,
+          code,
+        );
       }
+
+      // ── Advertencias: la fila se importa igual ────────────────────────────
+      if (fechaVencimiento === null) {
+        addIssue('WARNING', rowNumber, 'Fecha de vencimiento inválida — el lote se importa sin vencimiento', code);
+      } else if (fechaVencimiento === undefined) {
+        addIssue('WARNING', rowNumber, 'Sin fecha de vencimiento — el lote no participará del orden FEFO por fecha', code);
+      } else if (fechaVencimiento < hoy) {
+        addIssue('WARNING', rowNumber, `Lote ya vencido (${fechaVencimiento})`, code);
+      }
+
+      if (supplierLot) {
+        const key = `${code}|${supplierLot}`;
+        const seen = supplierLotDates.get(key) ?? [];
+        seen.push({ date: fechaVencimiento ?? '(sin fecha)', row: rowNumber, lotCode });
+        supplierLotDates.set(key, seen);
+      }
+
+      group.lots.push({
+        lotCode,
+        supplierLot: supplierLot || undefined,
+        quantity: qty,
+        fechaVencimiento: fechaVencimiento ?? null,
+        row: rowNumber,
+      });
       groups.set(code, group);
+      validRecords++;
     });
+
+    // Lote de proveedor repetido con vencimientos distintos: no impide importar
+    // (son lotes internos distintos), pero casi siempre delata un error de carga
+    // en la planilla de origen.
+    for (const [key, entries] of supplierLotDates) {
+      const distinctDates = new Set(entries.map((e) => e.date));
+      if (entries.length > 1 && distinctDates.size > 1) {
+        const [code, supplierLot] = key.split('|');
+        const detail = entries.map((e) => `${e.lotCode}→${e.date} (fila ${e.row})`).join(', ');
+        addIssue(
+          'WARNING', entries[0].row,
+          `Lote de proveedor "${supplierLot}" aparece con ${distinctDates.size} vencimientos distintos: ${detail}`,
+          code,
+        );
+      }
+    }
 
     const products = await this.dataSource.getRepository(Product).find();
     const productByCode = new Map(products.map((p) => [p.code.trim().toUpperCase(), p] as const));
@@ -1819,8 +1894,14 @@ export class MovementsService {
       errors: 0,
     };
 
+    // Ubicación temporal donde aterriza todo el stock inicial hasta que se
+    // ubique físicamente. Se resuelve una sola vez, y sólo si hay algo que cargar.
+    const initialLocationId = commit && groups.size > 0
+      ? await this.findOrCreateInitialStockLocation()
+      : null;
+
     for (const [code, group] of groups) {
-      const net = group.lots.reduce((s, l) => s + l.quantity, 0);
+      const net = roundQuantity(group.lots.reduce((s, l) => s + l.quantity, 0));
       const base: Omit<StockLotSnapshotProductResult, 'status'> = {
         code,
         description: group.description,
@@ -1839,6 +1920,7 @@ export class MovementsService {
         }
         if (!commit) {
           summary.adjusted++;
+          summary.newProducts++;
           results.push({ ...base, status: 'WOULD_ADJUST' });
           continue;
         }
@@ -1877,7 +1959,6 @@ export class MovementsService {
 
       if (!commit) {
         summary.adjusted++;
-        if (base.isNewProduct) summary.newProducts++;
         results.push({ ...base, status: 'WOULD_ADJUST' });
         continue;
       }
@@ -1887,14 +1968,15 @@ export class MovementsService {
           {
             type: 'ADJUSTMENT_IN',
             productId: product.id,
+            locationId: initialLocationId ?? undefined,
             adjustmentReason: 'DIFERENCIA_INVENTARIO',
             adjustmentCategory: 'CARGA_INICIAL',
-            notes: 'Snapshot de stock inicial por lote (import automático)',
+            notes: 'Carga inicial de inventario por lote (import automático)',
             palletItems: group.lots.map((l) => ({
               lotCode: l.lotCode,
               quantity: l.quantity,
               fechaVencimiento: l.fechaVencimiento ?? undefined,
-              sapLot: l.sapLot,
+              supplierLot: l.supplierLot,
             })),
           },
           userId,
@@ -1908,12 +1990,107 @@ export class MovementsService {
       }
     }
 
+    const importedProducts = results
+      .filter((r) => r.status === 'ADJUSTED')
+      .map((r) => productByCode.get(r.code)?.id)
+      .filter((id): id is string => !!id);
+
     return {
       committed: commit,
       sourceRows: raw.length,
+      totals: {
+        materials: groups.size,
+        lots: [...groups.values()].reduce((s, g) => s + g.lots.length, 0),
+        records: validRecords,
+        warnings: rowIssues.filter((i) => i.severity === 'WARNING').length,
+        errors: rowIssues.filter((i) => i.severity === 'ERROR').length,
+      },
       rowIssues,
       products: results,
       summary,
+      integrity: commit && importedProducts.length > 0
+        ? await this.checkInventoryConsistency(importedProducts)
+        : undefined,
+    };
+  }
+
+  /**
+   * Ubicación donde aterriza el stock de la carga inicial: el archivo del cliente
+   * no trae ubicaciones, y dejar el stock sin ubicar (locationId null) lo vuelve
+   * invisible en el mapa del depósito. Con una ubicación temporal explícita el
+   * pendiente de ubicar es consultable y se puede vaciar con transferencias.
+   */
+  private async findOrCreateInitialStockLocation(): Promise<string> {
+    const locationRepo = this.dataSource.getRepository(Location);
+    const existing = await locationRepo.findOne({ where: { code: INITIAL_STOCK_LOCATION_CODE } });
+    if (existing) return existing.id;
+
+    const warehouses = await this.dataSource.getRepository(Warehouse).find({ where: { active: true } });
+    if (warehouses.length === 0) {
+      throw new BadRequestException(
+        'No hay ningún depósito activo. Creá el depósito antes de cargar el inventario inicial.',
+      );
+    }
+
+    const created = locationRepo.create({
+      code: INITIAL_STOCK_LOCATION_CODE,
+      type: 'TEMPORAL',
+      zone: 'RECEPCION',
+      capacityPallets: null,
+      warehouse: warehouses[0],
+      active: true,
+    });
+    return (await locationRepo.save(created)).id;
+  }
+
+  /**
+   * Verifica la invariante del inventario: para cada producto, el stock total
+   * debe coincidir con la suma de sus lotes y con la suma de sus palets activos.
+   * Se corre después de la carga para que una divergencia salga a la luz en el
+   * momento, y no semanas después como una diferencia inexplicable.
+   */
+  private async checkInventoryConsistency(productIds: string[]): Promise<StockConsistencyReport> {
+    const sum = (rows: { productid: string; total: string }[]) =>
+      new Map(rows.map((r) => [r.productid, roundQuantity(Number(r.total))] as const));
+
+    const stockRows = await this.dataSource.query(
+      `SELECT "productId" AS productid, COALESCE(SUM("currentQuantity"), 0) AS total
+       FROM stocks WHERE "productId" = ANY($1) GROUP BY "productId"`,
+      [productIds],
+    );
+    const lotRows = await this.dataSource.query(
+      `SELECT "productId" AS productid, COALESCE(SUM("stockActual"), 0) AS total
+       FROM lots WHERE "productId" = ANY($1) GROUP BY "productId"`,
+      [productIds],
+    );
+    const palletRows = await this.dataSource.query(
+      `SELECT l."productId" AS productid, COALESCE(SUM(p.quantity), 0) AS total
+       FROM pallets p JOIN lots l ON l.id = p."lotId"
+       WHERE l."productId" = ANY($1) AND p.status <> 'EXITED'
+       GROUP BY l."productId"`,
+      [productIds],
+    );
+
+    const stockByProduct = sum(stockRows);
+    const lotsByProduct = sum(lotRows);
+    const palletsByProduct = sum(palletRows);
+
+    const mismatches = productIds
+      .map((id) => ({
+        productId: id,
+        stock: stockByProduct.get(id) ?? 0,
+        lots: lotsByProduct.get(id) ?? 0,
+        pallets: palletsByProduct.get(id) ?? 0,
+      }))
+      .filter((r) => r.stock !== r.lots || r.stock !== r.pallets);
+
+    const total = (m: Map<string, number>) => roundQuantity([...m.values()].reduce((s, v) => s + v, 0));
+    return {
+      stockTotal: total(stockByProduct),
+      lotsTotal: total(lotsByProduct),
+      palletsTotal: total(palletsByProduct),
+      consistent: mismatches.length === 0,
+      mismatches: mismatches.slice(0, 50),
     };
   }
 
@@ -1994,6 +2171,8 @@ export class MovementsService {
 
 export interface StockSnapshotRowIssue {
   file: 'ENTRADA' | 'SALIDA' | 'STOCK';
+  /** ERROR = la fila no se importa; WARNING = se importa pero requiere revisión. */
+  severity: 'ERROR' | 'WARNING';
   row: number;
   code?: string;
   reason: string;
@@ -2024,11 +2203,26 @@ export interface StockSnapshotRevertResult {
   items: StockSnapshotRevertItem[];
 }
 
+/** Código de la ubicación temporal donde entra el stock inicial sin ubicar. */
+export const INITIAL_STOCK_LOCATION_CODE = 'STOCK-INICIAL';
+
 export interface StockLotItem {
+  /** Lote interno — junto con el material forma la clave única del lote. */
   lotCode: string;
-  sapLot?: string;
+  /** Lote del proveedor — sólo trazabilidad, puede repetirse. */
+  supplierLot?: string;
   quantity: number;
   fechaVencimiento?: string | null;
+  /** Fila del Excel de origen, para poder rastrear el dato. */
+  row: number;
+}
+
+export interface StockConsistencyReport {
+  stockTotal: number;
+  lotsTotal: number;
+  palletsTotal: number;
+  consistent: boolean;
+  mismatches: { productId: string; stock: number; lots: number; pallets: number }[];
 }
 
 export interface StockLotSnapshotProductResult {
@@ -2046,9 +2240,20 @@ export interface StockLotSnapshotProductResult {
 
 export interface StockLotSnapshotResult {
   committed: boolean;
+  /** Filas de datos leídas del archivo (sin contar el encabezado). */
   sourceRows: number;
+  /** Cifras de la previsualización. */
+  totals: {
+    materials: number;
+    lots: number;
+    records: number;
+    warnings: number;
+    errors: number;
+  };
   rowIssues: StockSnapshotRowIssue[];
   products: StockLotSnapshotProductResult[];
+  /** Verificación Stock = Lotes = Palets. Sólo presente tras confirmar la carga. */
+  integrity?: StockConsistencyReport;
   summary: {
     adjusted: number;
     newProducts: number;

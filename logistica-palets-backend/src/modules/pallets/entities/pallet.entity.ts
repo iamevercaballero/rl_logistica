@@ -1,4 +1,5 @@
 import { Entity, PrimaryGeneratedColumn, Column, Index } from 'typeorm';
+import { numericTransformer } from '../../../common/numeric.transformer';
 
 @Index('idx_pallet_current_location', ['currentLocationId'])
 @Index('idx_pallet_lot', ['lotId'])
@@ -14,7 +15,7 @@ export class Pallet {
   @Column({ type: 'uuid' })
   lotId: string;
 
-  @Column('int')
+  @Column({ type: 'numeric', precision: 14, scale: 3, transformer: numericTransformer })
   quantity: number;
 
   @Column({ type: 'uuid', nullable: true })

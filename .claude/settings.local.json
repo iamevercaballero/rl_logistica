@@ -259,7 +259,25 @@
       "Bash(cp auditoria/res-all.json resultados-auditoria-final.json)",
       "Bash(rm -f tabla-comparativa.md resumen-modulos.md)",
       "Bash(node -e \"console.log\\('throttler', require\\('./node_modules/@nestjs/throttler/package.json'\\).version\\)\")",
-      "Bash(echo \"TSC=$?\")"
+      "Bash(echo \"TSC=$?\")",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 evercab@192.168.100.39 \"ls -la ~/rl_logistica_update.tar.gz\")",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 evercab@192.168.100.39 \"cd ~/rl_logistica && docker compose -f docker-compose.staging.yml --env-file .env.staging up -d --build backend frontend 2>&1 | tail -60\")",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 evercab@192.168.100.39 \"cd ~/rl_logistica && docker compose -f docker-compose.staging.yml logs backend 2>&1 | grep -i 'harden\\\\|migration' \")",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 evercab@192.168.100.39 \"cd ~/rl_logistica && docker compose -f docker-compose.staging.yml --env-file .env.staging exec -T db psql -U rl_staging -d logistica_palets -c \\\\\"SELECT name FROM migrations ORDER BY timestamp DESC LIMIT 5;\\\\\" -c \\\\\"SELECT indexname FROM pg_indexes WHERE indexname LIKE 'uq_%';\\\\\"\")",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 evercab@192.168.100.39 \"cd ~/rl_logistica && docker compose -f docker-compose.staging.yml --env-file .env.staging exec -T db psql -U rl_staging -d logistica_palets -c \\\\\"\\\\\\\\dt\\\\\" | grep -i migrat\")",
+      "Bash(curl -fsS -o /dev/null -w 'staging frontend: HTTP %{http_code}\\\\n' https://staging.rl-logistica.com/)",
+      "Bash(curl -fsS https://staging-api.rl-logistica.com/api/health)",
+      "Bash(cd /tmp)",
+      "Bash(npx jest *)",
+      "Bash(timeout 20 docker ps --format \"{{.Names}} {{.Status}}\")",
+      "Bash(git stash *)",
+      "Bash(break)",
+      "Bash(TEST_DB_PASSWORD=gXRrO6cvxMUZkty72zGtpiDmxAx2IOk0 npx jest --silent)",
+      "Bash(TEST_DB_PASSWORD=gXRrO6cvxMUZkty72zGtpiDmxAx2IOk0 npx ts-node --transpile-only scripts/_tmp-verify-frescura.ts)",
+      "Bash(TEST_DB_PASSWORD=gXRrO6cvxMUZkty72zGtpiDmxAx2IOk0 npx jest)",
+      "Bash(cp src/modules/movements/movements.service.ts /tmp/ms.bak)",
+      "Bash(TEST_DB_PASSWORD=gXRrO6cvxMUZkty72zGtpiDmxAx2IOk0 npx jest test/stock-engine.spec.ts -t \"residuo\")",
+      "Bash(DB_HOST=localhost DB_PORT=5434 DB_USERNAME=rl_test DB_PASSWORD=gXRrO6cvxMUZkty72zGtpiDmxAx2IOk0 DB_DATABASE=mig_check npx typeorm-ts-node-commonjs -d src/data-source.ts migration:revert)"
     ]
   }
 }

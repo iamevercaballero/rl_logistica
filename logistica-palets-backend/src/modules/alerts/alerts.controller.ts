@@ -7,6 +7,7 @@ import {
   Patch,
   Post,
   UseGuards,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles/roles.guard';
@@ -43,14 +44,14 @@ export class AlertsController {
   /** Update an existing rule (enable/disable, change threshold). */
   @Patch('rules/:id')
   @Roles('ADMIN', 'MANAGER')
-  updateRule(@Param('id') id: string, @Body() dto: Partial<CreateAlertRuleDto>) {
+  updateRule(@Param('id', ParseUUIDPipe) id: string, @Body() dto: Partial<CreateAlertRuleDto>) {
     return this.svc.updateRule(id, dto);
   }
 
   /** Delete a rule permanently. */
   @Delete('rules/:id')
   @Roles('ADMIN', 'MANAGER')
-  removeRule(@Param('id') id: string) {
+  removeRule(@Param('id', ParseUUIDPipe) id: string) {
     return this.svc.removeRule(id);
   }
 }

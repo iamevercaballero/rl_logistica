@@ -1,7 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { FriendlyThrottlerGuard } from './common/friendly-throttler.guard';
 import { ScheduleModule } from '@nestjs/schedule';
 import { LoggerModule } from 'nestjs-pino';
 import { APP_GUARD } from '@nestjs/core';
@@ -122,7 +123,7 @@ import { AppController } from './app.controller';
   controllers: [AppController],
   providers: [
     // Rate limiting global. Cada endpoint puede sobreescribir con @Throttle.
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: FriendlyThrottlerGuard },
   ],
 })
 export class AppModule {}

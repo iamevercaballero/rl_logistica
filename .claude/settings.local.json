@@ -235,7 +235,31 @@
       "Bash(grep -n '`F\\\\${r}`' logistica-palets-backend/src/modules/locations/locations.service.ts)",
       "Bash(git rev-list *)",
       "Bash(powershell -Command \"Test-NetConnection -ComputerName 192.168.100.39 -Port 22 -InformationLevel Quiet\")",
-      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 -o BatchMode=yes -o ConnectTimeout=8 evercab@192.168.100.39 \"ls -la ~/rl_logistica_update.tar.gz && tar -xzf ~/rl_logistica_update.tar.gz -C ~/rl_logistica && rm ~/rl_logistica_update.tar.gz && rm -f ~/rl_logistica/logistica-palets-frontend/src/pages/AdjustmentInForm.tsx ~/rl_logistica/logistica-palets-frontend/src/pages/AdjustmentOutForm.tsx && echo EXTRAIDO\")"
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 -o BatchMode=yes -o ConnectTimeout=8 evercab@192.168.100.39 \"ls -la ~/rl_logistica_update.tar.gz && tar -xzf ~/rl_logistica_update.tar.gz -C ~/rl_logistica && rm ~/rl_logistica_update.tar.gz && rm -f ~/rl_logistica/logistica-palets-frontend/src/pages/AdjustmentInForm.tsx ~/rl_logistica/logistica-palets-frontend/src/pages/AdjustmentOutForm.tsx && echo EXTRAIDO\")",
+      "Bash(grep -v \"^\\\\s*//\")",
+      "Bash(TEST_DB_HOST=localhost TEST_DB_PORT=5434 TEST_DB_USERNAME=rl_test TEST_DB_PASSWORD=gXRrO6cvxMUZkty72zGtpiDmxAx2IOk0 TEST_DB_DATABASE=logistica_palets_test npx jest)",
+      "Bash(DB_HOST=localhost DB_PORT=5434 DB_USERNAME=rl_test DB_PASSWORD=gXRrO6cvxMUZkty72zGtpiDmxAx2IOk0 DB_DATABASE=audit_db npx typeorm-ts-node-commonjs -d src/data-source.ts migration:run)",
+      "Bash(npx nest *)",
+      "Bash(echo \"BUILD_EXIT=$?\")",
+      "Bash(npx rimraf *)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(bash \"C:/Users/Usuario/AppData/Local/Temp/claude/C--Users-Usuario-Documents-cursos-rl-logistica/6e312bb0-c6dd-40b4-963d-3bea9272e867/scratchpad/start-audit-backend.sh\")",
+      "Bash(curl -s -m 10 http://localhost:3001/api/health)",
+      "Bash(bash reset.sh)",
+      "Bash(node p1-base.js)",
+      "Bash(node p2-entradas.js)",
+      "Bash(node p3-salidas.js)",
+      "Bash(node p4-ajustes.js)",
+      "Bash(node p5-probe.js)",
+      "Bash(python -)",
+      "Bash(node p6-reportes.js)",
+      "Bash(export AUDIT_DB_PASSWORD=gXRrO6cvxMUZkty72zGtpiDmxAx2IOk0)",
+      "Bash(powershell -NoProfile -Command \"Get-CimInstance Win32_Process -Filter 'ProcessId=29060' | Select-Object -ExpandProperty CommandLine\")",
+      "Bash(grep -rn \"delete\\(\\\\`/products\\\\|delete\\(\\\\`/users\\\\|delete\\(\\\\\"/products\\\\|delete\\('/products\" --include=\"*.ts\" --include=\"*.tsx\" .)",
+      "Bash(cp auditoria/res-all.json resultados-auditoria-final.json)",
+      "Bash(rm -f tabla-comparativa.md resumen-modulos.md)",
+      "Bash(node -e \"console.log\\('throttler', require\\('./node_modules/@nestjs/throttler/package.json'\\).version\\)\")",
+      "Bash(echo \"TSC=$?\")"
     ]
   }
 }

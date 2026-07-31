@@ -244,7 +244,7 @@ export default function UsersPage() {
     mutationFn: deleteUser,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
-      toast.success("Usuario eliminado.");
+      toast.success("Usuario desactivado. Ya no puede iniciar sesión.");
     },
     onError: (err) => toast.error(getFriendlyApiError(err)),
   });
@@ -255,10 +255,15 @@ export default function UsersPage() {
 
   function handleDelete(u: AppUser) {
     if (u.id === me?.userId) {
-      toast.error("No podés eliminar tu propio usuario.");
+      toast.error("No podés desactivar tu propio usuario.");
       return;
     }
-    if (!window.confirm(`¿Eliminar al usuario "${u.username}"? Esta acción no se puede deshacer.`)) return;
+    // Es una baja lógica: el usuario se conserva para no perder la autoría de los
+    // movimientos que registró.
+    const mensaje =
+      `¿Desactivar al usuario "${u.username}"?\n\n` +
+      `El usuario quedará inactivo y no podrá iniciar sesión. Podrá reactivarse posteriormente.`;
+    if (!window.confirm(mensaje)) return;
     deleteMut.mutate(u.id);
   }
 
@@ -361,12 +366,18 @@ export default function UsersPage() {
                         <button
                           className="btn btn--danger"
                           onClick={() => handleDelete(u)}
-                          disabled={saving || isSelf}
-                          title={isSelf ? "No podés eliminar tu propio usuario" : undefined}
-                          aria-label={`Eliminar usuario ${u.username}`}
+                          disabled={saving || isSelf || !u.active}
+                          title={
+                            isSelf
+                              ? "No podés desactivar tu propio usuario"
+                              : !u.active
+                                ? "El usuario ya está inactivo"
+                                : undefined
+                          }
+                          aria-label={`Desactivar usuario ${u.username}`}
                           style={{ fontSize: 12 }}
                         >
-                          Eliminar
+                          Desactivar
                         </button>
                       </div>
                     </td>

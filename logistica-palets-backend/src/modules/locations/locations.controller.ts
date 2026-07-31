@@ -8,6 +8,7 @@ import {
   Delete,
   Query,
   UseGuards,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { LocationsService } from './locations.service';
 import { CreateLocationDto } from './dto/create-location.dto';
@@ -25,8 +26,8 @@ export class LocationsController {
   // ✅ READ: todos
   @Get()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
-  findAll() {
-    return this.service.findAll();
+  findAll(@Query('warehouseId') warehouseId?: string) {
+    return this.service.findAll(warehouseId);
   }
 
   /** Disponibilidad por ubicación (ocupación vs capacidad) para el selector guiado. */
@@ -48,7 +49,7 @@ export class LocationsController {
 
   @Get(':id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.findOne(id);
   }
 
@@ -67,13 +68,14 @@ export class LocationsController {
 
   @Patch(':id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
-  update(@Param('id') id: string, @Body() dto: UpdateLocationDto) {
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateLocationDto) {
     return this.service.update(id, dto);
   }
 
+  /** Eliminar estructura del depósito es una operación de supervisión, no de piso. */
   @Delete(':id')
-  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
-  remove(@Param('id') id: string) {
+  @Roles('ADMIN', 'MANAGER')
+  remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.remove(id);
   }
 }

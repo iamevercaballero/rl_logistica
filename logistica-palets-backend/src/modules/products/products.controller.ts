@@ -11,6 +11,7 @@ import {
   UploadedFile,
   UseGuards,
   UseInterceptors,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
@@ -43,7 +44,7 @@ export class ProductsController {
 
   @Get(':id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.productsService.findOne(id);
   }
 
@@ -77,13 +78,14 @@ export class ProductsController {
 
   @Patch(':id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
-  update(@Param('id') id: string, @Body() dto: UpdateProductDto) {
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateProductDto) {
     return this.productsService.update(id, dto);
   }
 
+  /** Baja de material: operación de catálogo maestro, no de piso. */
   @Delete(':id')
-  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
-  remove(@Param('id') id: string) {
+  @Roles('ADMIN', 'MANAGER')
+  remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.productsService.remove(id);
   }
 }

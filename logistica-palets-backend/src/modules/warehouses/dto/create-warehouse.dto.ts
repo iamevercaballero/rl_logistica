@@ -1,7 +1,8 @@
-import { IsString, IsOptional, IsBoolean } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, Length } from 'class-validator';
 
 export class CreateWarehouseDto {
   @IsString()
+  @Length(2, 120)
   name: string;
 
   @IsOptional()

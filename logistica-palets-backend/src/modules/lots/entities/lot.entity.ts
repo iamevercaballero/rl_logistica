@@ -1,6 +1,7 @@
 import { Entity, PrimaryGeneratedColumn, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { Product } from '../../products/entities/product.entity';
 
+@Index('uq_lot_product_code', ['productId', 'lotCode'], { unique: true })
 @Index('idx_lot_status', ['status'])
 @Index('idx_lot_product', ['productId'])
 @Index('idx_lot_vencimiento', ['fechaVencimiento'])

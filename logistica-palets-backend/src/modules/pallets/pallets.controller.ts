@@ -12,6 +12,7 @@ import {
   HttpCode,
   HttpStatus,
   MethodNotAllowedException,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { IsUUID } from 'class-validator';
 import { Request } from 'express';
@@ -62,13 +63,13 @@ export class PalletsController {
 
   @Get(':id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.findOne(id);
   }
 
   @Get(':id/history')
   @Roles('ADMIN', 'MANAGER', 'AUDITOR')
-  history(@Param('id') id: string) {
+  history(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.history(id);
   }
 
@@ -84,7 +85,7 @@ export class PalletsController {
   @Post(':id/transfer')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   quickTransfer(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: QuickTransferDto,
     @Req() req: Request & { user: { userId: string } },
   ) {
@@ -93,7 +94,7 @@ export class PalletsController {
 
   @Patch(':id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
-  update(@Param('id') id: string, @Body() dto: UpdatePalletDto) {
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdatePalletDto) {
     return this.service.update(id, dto);
   }
 
@@ -101,7 +102,7 @@ export class PalletsController {
   @Delete(':id')
   @Roles('ADMIN', 'MANAGER')
   @HttpCode(HttpStatus.METHOD_NOT_ALLOWED)
-  remove(@Param('id') _id: string) {
+  remove(@Param('id', ParseUUIDPipe) _id: string) {
     throw new MethodNotAllowedException(
       'La eliminación de pallets está deshabilitada para preservar la trazabilidad',
     );

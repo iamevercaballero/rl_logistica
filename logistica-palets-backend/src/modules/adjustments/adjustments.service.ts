@@ -69,7 +69,7 @@ export class AdjustmentsService {
 
     void this.uploads.log('ADJUSTMENT', result.requestId, 'CREADO',
       `Solicitud ${result.code} creada como borrador — motivo: ${dto.reason}`,
-      undefined, undefined, undefined, result.code);
+      userId, undefined, undefined, result.code);
 
     return result;
   }
@@ -109,7 +109,7 @@ export class AdjustmentsService {
   //  ENVIAR A APROBACIÓN
   // ─────────────────────────────────────────────────────────
 
-  async submitForApproval(id: string, _userId: string) {
+  async submitForApproval(id: string, userId: string) {
     const result = await this.dataSource.transaction(async (manager) => {
       const req = await this.findOrFail(manager, id);
       if (req.status !== 'BORRADOR') {
@@ -128,7 +128,7 @@ export class AdjustmentsService {
 
     void this.uploads.log('ADJUSTMENT', result.requestId, 'ENVIADO_APROBACION',
       `Solicitud ${result.code} enviada para aprobación`,
-      undefined, undefined, undefined, result.code);
+      userId, undefined, undefined, result.code);
 
     return result;
   }
@@ -150,8 +150,12 @@ export class AdjustmentsService {
 
     // Ejecutar en una sola transacción: aprobar + crear movimientos + postear stock
     const result = await this.dataSource.transaction(async (manager) => {
-      // Re-leer con lock para evitar doble-aprobación concurrente
-      const locked = await manager.findOne(AdjustmentRequest, { where: { id } });
+      // Re-leer con lock pesimista: sin él, dos aprobaciones simultáneas de la misma
+      // solicitud pasan ambas el chequeo de estado y postean el stock dos veces.
+      const locked = await manager.findOne(AdjustmentRequest, {
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
       if (!locked || locked.status !== 'PENDIENTE_APROBACION') {
         throw new BadRequestException('El ajuste ya fue procesado por otra sesión.');
       }
@@ -241,6 +245,18 @@ export class AdjustmentsService {
       req.status = 'RECHAZADO';
       req.updatedAt = new Date();
       await manager.save(req);
+
+      // Si la solicitud era la compensación de una anulación, hay que liberar el
+      // movimiento original: de lo contrario queda en VOID_PENDING para siempre,
+      // ni anulado ni operable.
+      if (req.originalMovementId) {
+        await manager.query(
+          `UPDATE movements SET "voidStatus" = 'NONE', "voidAdjRequestId" = NULL
+           WHERE id = $1 AND "voidStatus" = 'VOID_PENDING'`,
+          [req.originalMovementId],
+        );
+      }
+
       return { requestId: req.id, code: req.code };
     });
   }

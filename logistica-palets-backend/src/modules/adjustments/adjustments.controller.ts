@@ -8,6 +8,7 @@ import {
   Query,
   Req,
   UseGuards,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { Request } from 'express';
 import { AdjustmentsService } from './adjustments.service';
@@ -40,7 +41,7 @@ export class AdjustmentsController {
   @Patch(':id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   updateDraft(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateAdjustmentDto,
     @Req() req: Request & { user: { userId: string } },
   ) {
@@ -51,7 +52,7 @@ export class AdjustmentsController {
   @Patch(':id/submit')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   submit(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Req() req: Request & { user: { userId: string } },
   ) {
     return this.service.submitForApproval(id, req.user.userId);
@@ -61,7 +62,7 @@ export class AdjustmentsController {
   @Patch(':id/approve')
   @Roles('ADMIN', 'MANAGER')
   approve(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Req() req: Request & { user: { userId: string } },
   ) {
     return this.service.approve(id, req.user.userId);
@@ -71,7 +72,7 @@ export class AdjustmentsController {
   @Patch(':id/reject')
   @Roles('ADMIN', 'MANAGER')
   reject(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RejectAdjustmentDto,
     @Req() req: Request & { user: { userId: string } },
   ) {
@@ -82,7 +83,7 @@ export class AdjustmentsController {
   @Patch(':id/cancel')
   @Roles('ADMIN', 'MANAGER')
   cancel(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Req() req: Request & { user: { userId: string } },
   ) {
     return this.service.cancel(id, req.user.userId);
@@ -98,7 +99,7 @@ export class AdjustmentsController {
   /** Detalle de una solicitud con sus líneas. */
   @Get(':id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.findOne(id);
   }
 }

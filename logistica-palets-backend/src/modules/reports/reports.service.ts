@@ -66,11 +66,50 @@ export class ReportsService {
       lotVsPallet: r.lotSum - r.palletSum,
     }));
 
+    // Un descuadre puede cerrar a nivel producto y estar mal repartido entre celdas
+    // (stock en una ubicación sin pallets que lo respalden). El total no lo delata,
+    // pero el operario va a buscar mercadería que no está ahí.
+    const cells = await this.dataSource.query<Array<{
+      productId: string; productCode: string; productDescription: string;
+      locationId: string | null; locationCode: string | null;
+      stockQuantity: number; palletQuantity: number;
+    }>>(`
+      SELECT
+        pr.id            AS "productId",
+        pr.code          AS "productCode",
+        pr.description   AS "productDescription",
+        s."locationId"   AS "locationId",
+        loc.code         AS "locationCode",
+        s."currentQuantity"::int AS "stockQuantity",
+        COALESCE(pa.total, 0)::int AS "palletQuantity"
+      FROM stocks s
+      JOIN products pr ON pr.id = s."productId"
+      LEFT JOIN locations loc ON loc.id = s."locationId"
+      LEFT JOIN (
+        SELECT lot."productId", p."currentLocationId" AS "locationId", SUM(p.quantity) AS total
+        FROM pallets p
+        JOIN lots lot ON lot.id = p."lotId"
+        WHERE p.status <> 'EXITED'
+        GROUP BY lot."productId", p."currentLocationId"
+      ) pa ON pa."productId" = s."productId"
+          AND pa."locationId" IS NOT DISTINCT FROM s."locationId"
+      WHERE s."currentQuantity" <> COALESCE(pa.total, 0)
+      ORDER BY pr.code, loc.code
+    `);
+
+    const divergentCells = cells.map((c) => ({
+      ...c,
+      stockVsPallet: c.stockQuantity - c.palletQuantity,
+      orphanLocation: c.locationId !== null && c.locationCode === null,
+    }));
+
     return {
-      ok: divergent.length === 0,
+      ok: divergent.length === 0 && divergentCells.length === 0,
       divergentCount: divergent.length,
+      divergentCellCount: divergentCells.length,
       checkedAt: new Date().toISOString(),
       divergent,
+      divergentCells,
     };
   }
 

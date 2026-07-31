@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Not, Repository } from 'typeorm';
 import { Location } from './entities/location.entity';
 import { Warehouse } from '../warehouses/entities/warehouse.entity';
 import { Pallet } from '../pallets/entities/pallet.entity';
@@ -34,8 +34,22 @@ export class LocationsService {
       throw new NotFoundException('Warehouse not found');
     }
 
+    // El código identifica la ubicación para el operario: duplicarlo dentro del mismo
+    // depósito parte el stock en dos celdas indistinguibles.
+    const code = dto.code.trim().toUpperCase();
+    if (!code) throw new BadRequestException('El código de ubicación es obligatorio');
+
+    const existing = await this.locationRepo.findOne({
+      where: { code, warehouse: { id: dto.warehouseId } },
+    });
+    if (existing) {
+      throw new BadRequestException(
+        `Ya existe la ubicación "${code}" en el depósito ${warehouse.name}`,
+      );
+    }
+
     const location = this.locationRepo.create({
-      code: dto.code,
+      code,
       type: dto.type ?? 'RACK',
       zone: dto.zone ?? null,
       aisle: dto.aisle ?? null,
@@ -141,8 +155,12 @@ export class LocationsService {
     };
   }
 
-  findAll() {
-    return this.locationRepo.find({ relations: ['warehouse'] });
+  /** Lista ubicaciones, opcionalmente acotadas a un depósito. */
+  findAll(warehouseId?: string) {
+    return this.locationRepo.find({
+      where: warehouseId ? { warehouse: { id: warehouseId } } : {},
+      relations: ['warehouse'],
+    });
   }
 
   /**
@@ -340,6 +358,25 @@ export class LocationsService {
 
   async remove(id: string) {
     const location = await this.findOne(id);
+
+    // stocks.locationId y pallets.currentLocationId son columnas uuid sin FK: si se
+    // borra una ubicación ocupada, el stock y los pallets quedan apuntando a un id
+    // inexistente — invisibles en el mapa del depósito pero sumando en los totales.
+    const pallets = await this.palletRepo.count({
+      where: { currentLocationId: id, status: Not(In(['EXITED', 'EMPTY'])) },
+    });
+    const [{ stock }] = (await this.locationRepo.query(
+      `SELECT COALESCE(SUM("currentQuantity"), 0)::int AS stock FROM stocks WHERE "locationId" = $1`,
+      [id],
+    )) as Array<{ stock: number }>;
+
+    if (pallets > 0 || stock !== 0) {
+      throw new BadRequestException(
+        `No se puede eliminar la ubicación ${location.code}: tiene ${pallets} palet(s) y ${stock} unidad(es) de stock. ` +
+        `Transferí el contenido antes de eliminarla.`,
+      );
+    }
+
     return this.locationRepo.remove(location);
   }
 }

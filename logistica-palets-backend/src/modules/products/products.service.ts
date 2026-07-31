@@ -103,9 +103,43 @@ export class ProductsService {
     return this.productRepo.save(product);
   }
 
+  /**
+   * Baja lógica cuando el material tiene historia. El DELETE físico rompía la FK de
+   * `lots.productId` con un 500 sin explicación, y hubiera dejado sin material a los
+   * movimientos ya registrados (`movements.productId` no tiene FK).
+   */
   async remove(id: string) {
     const product = await this.findOne(id);
-    return this.productRepo.remove(product);
+
+    const [{ lots, movements, stock }] = (await this.productRepo.query(
+      `SELECT
+         (SELECT COUNT(*) FROM lots WHERE "productId" = $1)::int              AS lots,
+         (SELECT COUNT(*) FROM movements WHERE "productId" = $1)::int         AS movements,
+         (SELECT COALESCE(SUM("currentQuantity"), 0) FROM stocks
+           WHERE "productId" = $1)::int                                       AS stock`,
+      [id],
+    )) as Array<{ lots: number; movements: number; stock: number }>;
+
+    if (stock !== 0) {
+      throw new BadRequestException(
+        `No se puede eliminar el material ${product.code}: tiene ${stock} unidad(es) en stock. ` +
+        `Despachá o ajustá el stock antes de darlo de baja.`,
+      );
+    }
+
+    if (lots > 0 || movements > 0) {
+      product.active = false;
+      await this.productRepo.save(product);
+      return {
+        deleted: true,
+        deactivated: true,
+        id: product.id,
+        reason: `El material tiene ${lots} lote(s) y ${movements} movimiento(s): se desactivó en lugar de eliminarse para preservar el histórico.`,
+      };
+    }
+
+    await this.productRepo.remove(product);
+    return { deleted: true, deactivated: false, id };
   }
 
   /** Productos con stock por debajo del mínimo configurado */

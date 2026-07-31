@@ -92,10 +92,24 @@ export class UsersService implements OnApplicationBootstrap {
     return { id: saved.id, username: saved.username, fullName: saved.fullName, role: saved.role, active: saved.active };
   }
 
+  /**
+   * Baja lógica. `movements.createdById` y `document_events.userId` son columnas uuid
+   * sin FK: un DELETE físico dejaría el histórico sin autor y rompería la trazabilidad
+   * de quién registró cada movimiento.
+   */
   async remove(id: string) {
     const user = await this.userRepo.findOne({ where: { id } });
     if (!user) throw new NotFoundException('Usuario no encontrado');
-    await this.userRepo.remove(user);
-    return { deleted: true };
+
+    if (user.role === 'ADMIN') {
+      const admins = await this.userRepo.count({ where: { role: 'ADMIN', active: true } });
+      if (admins <= 1) {
+        throw new BadRequestException('No se puede desactivar el último usuario ADMIN activo.');
+      }
+    }
+
+    user.active = false;
+    await this.userRepo.save(user);
+    return { deleted: true, deactivated: true, id: user.id };
   }
 }

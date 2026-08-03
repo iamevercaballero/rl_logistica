@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Not, Repository } from 'typeorm';
+import { DataSource, In, Not, Repository } from 'typeorm';
 import { Location } from './entities/location.entity';
 import { Warehouse } from '../warehouses/entities/warehouse.entity';
 import { Pallet } from '../pallets/entities/pallet.entity';
@@ -11,6 +11,142 @@ import { GenerateLocationsDto } from './dto/generate-locations.dto';
 
 /** Estado de disponibilidad de una ubicación para el selector guiado. */
 export type LocationAvailabilityStatus = 'FREE' | 'PARTIAL' | 'FULL' | 'BLOCKED';
+
+/** Días de anticipación con los que una ubicación se marca "próxima a vencer". */
+const EXPIRY_WARNING_DAYS = 30;
+
+/** Los pallets EXITED/EMPTY ya no ocupan lugar físico: nunca entran al mapa. */
+const LIVE_PALLET_STATUSES = `p.status NOT IN ('EXITED', 'EMPTY')`;
+
+/** stocks.currentQuantity es numeric(14,3): comparar con tolerancia, no con ===. */
+const UNIT_TOLERANCE = 0.001;
+
+/** Máximo de filas devueltas por el localizador (una fila = un pallet). */
+const SEARCH_ROW_LIMIT = 500;
+
+/**
+ * Estado visual de una celda del mapa. La precedencia es la del array
+ * (INACTIVE gana sobre todo, FREE es el fallback) y la define el backend para
+ * que el mapa, la leyenda y el listado de incidencias no puedan divergir.
+ */
+export type LocationMapState =
+  | 'INACTIVE'
+  | 'INCIDENT'
+  | 'EXPIRING'
+  | 'FULL'
+  | 'PROVISIONAL'
+  | 'OCCUPIED'
+  | 'FREE';
+
+/** Motivos por los que una ubicación aparece en la vista Incidencias. */
+export type LocationIssue =
+  | 'OVER_CAPACITY'
+  | 'BLOCKED_PALLETS'
+  | 'STOCK_MISMATCH'
+  | 'EXPIRED'
+  | 'EXPIRING'
+  | 'INACTIVE_WITH_STOCK';
+
+/** Una celda del mapa del depósito, con ocupación y diagnóstico. */
+export type LocationCell = {
+  id: string;
+  code: string;
+  type: string;
+  active: boolean;
+  zone: string | null;
+  aisle: string | null;
+  rack: string | null;
+  level: number | null;
+  position: number | null;
+  capacityPallets: number | null;
+  warehouseId: string | null;
+  warehouseName: string | null;
+  /** Pallets físicamente ubicados acá (excluye EXITED/EMPTY). */
+  pallets: number;
+  /** Unidades según los pallets ubicados. */
+  units: number;
+  /** Unidades según la tabla `stocks`. Si difiere de `units` hay descuadre. */
+  stockUnits: number;
+  blockedPallets: number;
+  expiredPallets: number;
+  expiringPallets: number;
+  nearestExpiry: string | null;
+  issues: LocationIssue[];
+  state: LocationMapState;
+};
+
+type RawCell = Omit<LocationCell, 'issues' | 'state'>;
+
+/** Una línea del localizador: un pallet con su lote, material y ubicación. */
+export type StockSearchRow = {
+  palletId: string;
+  palletCode: string;
+  palletStatus: string;
+  quantity: number;
+  lotId: string;
+  lotCode: string;
+  supplierLot: string | null;
+  sapLot: string | null;
+  fechaVencimiento: string | null;
+  lotStatus: string;
+  productId: string;
+  productCode: string;
+  productDescription: string;
+  unitOfMeasure: string | null;
+  locationId: string | null;
+  locationCode: string | null;
+  zone: string | null;
+  aisle: string | null;
+  rack: string | null;
+  level: number | null;
+  position: number | null;
+  locationActive: boolean | null;
+  warehouseId: string | null;
+  warehouseName: string | null;
+  /** Documento de entrada del pallet — permite reimprimir su etiqueta. */
+  entryDocumentId: string | null;
+};
+
+type LocationContentPallet = {
+  palletId: string;
+  palletCode: string;
+  palletStatus: string;
+  quantity: number;
+  createdAt: string | null;
+  lotId: string;
+  lotCode: string;
+  supplierLot: string | null;
+  sapLot: string | null;
+  fechaVencimiento: string | null;
+  lotStatus: string;
+  productId: string;
+  productCode: string;
+  productDescription: string;
+  unitOfMeasure: string | null;
+  entryDocumentId: string | null;
+};
+
+type UnlocatedPallet = {
+  palletId: string;
+  palletCode: string;
+  palletStatus: string;
+  quantity: number;
+  lotCode: string;
+  supplierLot: string | null;
+  fechaVencimiento: string | null;
+  productCode: string;
+  productDescription: string;
+  unitOfMeasure: string | null;
+};
+
+type UnlocatedStock = {
+  productId: string;
+  productCode: string;
+  productDescription: string;
+  unitOfMeasure: string | null;
+  warehouseName: string | null;
+  quantity: number;
+};
 
 @Injectable()
 export class LocationsService {
@@ -23,6 +159,7 @@ export class LocationsService {
     private readonly palletRepo: Repository<Pallet>,
     @InjectRepository(Product)
     private readonly productRepo: Repository<Product>,
+    private readonly dataSource: DataSource,
   ) {}
 
   async create(dto: CreateLocationDto) {
@@ -330,6 +467,500 @@ export class LocationsService {
       message: recommendations.length
         ? null
         : 'No hay ubicaciones factibles. Revisá temperatura, capacidad, peso o altura.',
+    };
+  }
+
+  /* ── Localizador visual de stock ───────────────────────────────────────── */
+
+  /**
+   * Mapa del depósito con ocupación y diagnóstico por celda. Es la base de las
+   * tres vistas del localizador (Buscar inventario / Ubicaciones libres /
+   * Incidencias): una sola consulta que cruza ubicaciones, pallets vigentes,
+   * vencimientos y la tabla `stocks`.
+   */
+  async map(warehouseId?: string): Promise<{
+    locations: LocationCell[];
+    summary: {
+      totalLocations: number;
+      activeLocations: number;
+      freeLocations: number;
+      occupiedLocations: number;
+      fullLocations: number;
+      incidentLocations: number;
+      totalPallets: number;
+      totalUnits: number;
+      byZone: { zone: string; locations: number; occupied: number; free: number; pallets: number; units: number }[];
+    };
+  }> {
+    const params: unknown[] = [EXPIRY_WARNING_DAYS];
+    let whereClause = '';
+    if (warehouseId) {
+      params.push(warehouseId);
+      whereClause = `WHERE loc."warehouseId"::text = $${params.length}`;
+    }
+
+    const rows = await this.dataSource.query<RawCell[]>(
+      `
+      WITH pal AS (
+        SELECT
+          p."currentLocationId"                                          AS "locationId",
+          COUNT(*)::int                                                  AS pallets,
+          COALESCE(SUM(p.quantity), 0)::float8                           AS units,
+          COUNT(*) FILTER (WHERE p.status IN ('BLOCKED', 'DAMAGED'))::int AS "blockedPallets",
+          COUNT(*) FILTER (
+            WHERE l."fechaVencimiento" IS NOT NULL
+              AND l."fechaVencimiento" < CURRENT_DATE
+          )::int                                                          AS "expiredPallets",
+          COUNT(*) FILTER (
+            WHERE l."fechaVencimiento" IS NOT NULL
+              AND l."fechaVencimiento" >= CURRENT_DATE
+              AND l."fechaVencimiento" <= CURRENT_DATE + $1::int
+          )::int                                                          AS "expiringPallets",
+          MIN(l."fechaVencimiento")::text                                 AS "nearestExpiry"
+        FROM pallets p
+        JOIN lots l ON l.id = p."lotId"
+        WHERE ${LIVE_PALLET_STATUSES}
+          AND p."currentLocationId" IS NOT NULL
+        GROUP BY p."currentLocationId"
+      ),
+      stk AS (
+        SELECT "locationId", COALESCE(SUM("currentQuantity"), 0)::float8 AS "stockUnits"
+        FROM stocks
+        WHERE "locationId" IS NOT NULL
+        GROUP BY "locationId"
+      )
+      SELECT
+        loc.id, loc.code, loc.type, loc.active, loc.zone, loc.aisle, loc.rack,
+        loc.level, loc.position, loc."capacityPallets",
+        w.id                                AS "warehouseId",
+        w.name                              AS "warehouseName",
+        COALESCE(pal.pallets, 0)            AS pallets,
+        COALESCE(pal.units, 0)              AS units,
+        COALESCE(stk."stockUnits", 0)       AS "stockUnits",
+        COALESCE(pal."blockedPallets", 0)   AS "blockedPallets",
+        COALESCE(pal."expiredPallets", 0)   AS "expiredPallets",
+        COALESCE(pal."expiringPallets", 0)  AS "expiringPallets",
+        pal."nearestExpiry"
+      FROM locations loc
+      LEFT JOIN warehouses w ON w.id = loc."warehouseId"
+      LEFT JOIN pal ON pal."locationId" = loc.id
+      LEFT JOIN stk ON stk."locationId" = loc.id
+      ${whereClause}
+      ORDER BY loc.zone NULLS LAST, loc.aisle NULLS LAST, loc.rack, loc.level, loc.position, loc.code
+      `,
+      params,
+    );
+
+    const locations = rows.map((r) => this.classifyCell(r));
+
+    const byZoneMap = new Map<string, { zone: string; locations: number; occupied: number; free: number; pallets: number; units: number }>();
+    for (const l of locations) {
+      const key = l.zone ?? 'SIN_ZONA';
+      const z = byZoneMap.get(key) ?? { zone: key, locations: 0, occupied: 0, free: 0, pallets: 0, units: 0 };
+      z.locations += 1;
+      if (l.pallets > 0) z.occupied += 1;
+      else if (l.active) z.free += 1;
+      z.pallets += l.pallets;
+      z.units += l.units;
+      byZoneMap.set(key, z);
+    }
+
+    return {
+      locations,
+      summary: {
+        totalLocations: locations.length,
+        activeLocations: locations.filter((l) => l.active).length,
+        freeLocations: locations.filter((l) => l.state === 'FREE').length,
+        occupiedLocations: locations.filter((l) => l.pallets > 0).length,
+        fullLocations: locations.filter((l) => l.state === 'FULL').length,
+        incidentLocations: locations.filter((l) => l.issues.length > 0).length,
+        totalPallets: locations.reduce((s, l) => s + l.pallets, 0),
+        totalUnits: locations.reduce((s, l) => s + l.units, 0),
+        byZone: [...byZoneMap.values()],
+      },
+    };
+  }
+
+  /**
+   * Traduce los contadores crudos de una celda a issues + estado visual.
+   * La precedencia va de lo más accionable a lo más informativo: una ubicación
+   * inactiva se muestra como inactiva aunque además esté llena.
+   */
+  private classifyCell(raw: RawCell): LocationCell {
+    const pallets = Number(raw.pallets);
+    const units = Number(raw.units);
+    const stockUnits = Number(raw.stockUnits);
+    const capacity = raw.capacityPallets ?? null;
+
+    const issues: LocationIssue[] = [];
+    if (capacity != null && pallets > capacity) issues.push('OVER_CAPACITY');
+    if (raw.blockedPallets > 0) issues.push('BLOCKED_PALLETS');
+    if (Math.abs(units - stockUnits) > UNIT_TOLERANCE) issues.push('STOCK_MISMATCH');
+    if (raw.expiredPallets > 0) issues.push('EXPIRED');
+    if (raw.expiringPallets > 0) issues.push('EXPIRING');
+    if (!raw.active && pallets > 0) issues.push('INACTIVE_WITH_STOCK');
+
+    // Una ubicación TEMPORAL —o de RECEPCION— con contenido es una entrada
+    // provisoria: mercadería que todavía no fue guardada en su hueco definitivo.
+    const provisional = pallets > 0 && (raw.type === 'TEMPORAL' || raw.zone === 'RECEPCION');
+    const hardIssue =
+      issues.includes('OVER_CAPACITY') ||
+      issues.includes('BLOCKED_PALLETS') ||
+      issues.includes('STOCK_MISMATCH') ||
+      issues.includes('INACTIVE_WITH_STOCK');
+
+    let state: LocationMapState;
+    if (!raw.active) state = 'INACTIVE';
+    else if (hardIssue) state = 'INCIDENT';
+    else if (raw.expiredPallets > 0 || raw.expiringPallets > 0) state = 'EXPIRING';
+    else if (capacity != null && pallets >= capacity && pallets > 0) state = 'FULL';
+    else if (provisional) state = 'PROVISIONAL';
+    else if (pallets > 0) state = 'OCCUPIED';
+    else state = 'FREE';
+
+    return {
+      ...raw,
+      pallets,
+      units,
+      stockUnits,
+      capacityPallets: capacity,
+      blockedPallets: Number(raw.blockedPallets),
+      expiredPallets: Number(raw.expiredPallets),
+      expiringPallets: Number(raw.expiringPallets),
+      issues,
+      state,
+    };
+  }
+
+  /**
+   * Localizador: "¿dónde está este material?". Busca por código o descripción
+   * de material, lote interno, lote del proveedor, lote SAP, código de pallet o
+   * código de ubicación, y devuelve las líneas de stock que coinciden más los
+   * totales por material y las ubicaciones a resaltar en el mapa.
+   */
+  async stockSearch(query: string, warehouseId?: string) {
+    const term = query?.trim() ?? '';
+    if (term.length < 2) {
+      throw new BadRequestException('Ingresá al menos 2 caracteres para buscar.');
+    }
+
+    const params: unknown[] = [`%${term}%`];
+    let warehouseFilter = '';
+    if (warehouseId) {
+      params.push(warehouseId);
+      warehouseFilter = `AND loc."warehouseId"::text = $${params.length}`;
+    }
+
+    const rows = await this.dataSource.query<StockSearchRow[]>(
+      `
+      SELECT
+        p.id                              AS "palletId",
+        p.code                            AS "palletCode",
+        p.status                          AS "palletStatus",
+        p.quantity::float8                AS quantity,
+        l.id                              AS "lotId",
+        l."lotCode",
+        l."supplierLot",
+        l."sapLot",
+        l."fechaVencimiento"::text        AS "fechaVencimiento",
+        l.status                          AS "lotStatus",
+        pr.id                             AS "productId",
+        pr.code                           AS "productCode",
+        pr.description                    AS "productDescription",
+        pr."unitOfMeasure",
+        loc.id                            AS "locationId",
+        loc.code                          AS "locationCode",
+        loc.zone,
+        loc.aisle,
+        loc.rack,
+        loc.level,
+        loc.position,
+        loc.active                        AS "locationActive",
+        w.id                              AS "warehouseId",
+        w.name                            AS "warehouseName",
+        ent."documentId"                  AS "entryDocumentId"
+      FROM pallets p
+      JOIN lots     l  ON l.id  = p."lotId"
+      JOIN products pr ON pr.id = l."productId"
+      LEFT JOIN locations  loc ON loc.id = p."currentLocationId"
+      LEFT JOIN warehouses w   ON w.id   = loc."warehouseId"
+      LEFT JOIN LATERAL (
+        SELECT m."documentId"
+        FROM movement_details md
+        JOIN movements m ON m.id = md."movementId"
+        WHERE md."palletId" = p.id
+          AND m."documentId" IS NOT NULL
+        ORDER BY (m.type IN ('ENTRY', 'ADJUSTMENT_IN')) DESC, m.date ASC
+        LIMIT 1
+      ) ent ON TRUE
+      WHERE ${LIVE_PALLET_STATUSES}
+        AND (
+          pr.code        ILIKE $1 OR
+          pr.description ILIKE $1 OR
+          l."lotCode"    ILIKE $1 OR
+          l."supplierLot" ILIKE $1 OR
+          l."sapLot"     ILIKE $1 OR
+          p.code         ILIKE $1 OR
+          loc.code       ILIKE $1
+        )
+        ${warehouseFilter}
+      ORDER BY pr.code, l."lotCode", loc.code NULLS LAST, p.code
+      LIMIT ${SEARCH_ROW_LIMIT}
+      `,
+      params,
+    );
+
+    // Agrupación por material: es la respuesta que espera el operario
+    // ("40004808 — 12.500 TS en 4 ubicaciones"), no la lista cruda de pallets.
+    const byProduct = new Map<string, {
+      productId: string;
+      productCode: string;
+      productDescription: string;
+      unitOfMeasure: string | null;
+      quantity: number;
+      pallets: number;
+      lots: Set<string>;
+      locations: Set<string>;
+      unlocated: number;
+    }>();
+
+    for (const r of rows) {
+      const g = byProduct.get(r.productId) ?? {
+        productId: r.productId,
+        productCode: r.productCode,
+        productDescription: r.productDescription,
+        unitOfMeasure: r.unitOfMeasure ?? null,
+        quantity: 0,
+        pallets: 0,
+        lots: new Set<string>(),
+        locations: new Set<string>(),
+        unlocated: 0,
+      };
+      g.quantity += Number(r.quantity);
+      g.pallets += 1;
+      g.lots.add(r.lotId);
+      if (r.locationId) g.locations.add(r.locationId);
+      else g.unlocated += 1;
+      byProduct.set(r.productId, g);
+    }
+
+    const products = [...byProduct.values()]
+      .map((g) => ({
+        productId: g.productId,
+        productCode: g.productCode,
+        productDescription: g.productDescription,
+        unitOfMeasure: g.unitOfMeasure,
+        quantity: g.quantity,
+        pallets: g.pallets,
+        lots: g.lots.size,
+        locations: g.locations.size,
+        unlocatedPallets: g.unlocated,
+      }))
+      .sort((a, b) => b.quantity - a.quantity);
+
+    const locationIds = [...new Set(rows.map((r) => r.locationId).filter((id): id is string => !!id))];
+
+    // Un material del catálogo que coincide pero no tiene stock vigente: sin
+    // esto la pantalla diría "sin resultados" cuando la respuesta real es
+    // "existe, pero no hay nada en depósito".
+    const emptyProducts = rows.length === 0
+      ? await this.dataSource.query<{ id: string; code: string; description: string; unitOfMeasure: string | null }[]>(
+          `SELECT id, code, description, "unitOfMeasure"
+           FROM products
+           WHERE (code ILIKE $1 OR description ILIKE $1) AND active = true
+           ORDER BY code
+           LIMIT 20`,
+          [`%${term}%`],
+        )
+      : [];
+
+    return {
+      query: term,
+      truncated: rows.length >= SEARCH_ROW_LIMIT,
+      summary: {
+        quantity: rows.reduce((s, r) => s + Number(r.quantity), 0),
+        pallets: rows.length,
+        lots: new Set(rows.map((r) => r.lotId)).size,
+        locations: locationIds.length,
+        unlocatedPallets: rows.filter((r) => !r.locationId).length,
+        products: products.length,
+      },
+      products,
+      locationIds,
+      rows: rows.map((r) => ({ ...r, quantity: Number(r.quantity) })),
+      emptyProducts,
+    };
+  }
+
+  /**
+   * Contenido de una ubicación para el panel lateral: capacidad, ocupación y
+   * el detalle de cada pallet (material, lote interno, lote proveedor,
+   * vencimiento, cantidad) con el documento de entrada para reimprimir etiqueta.
+   */
+  async content(id: string) {
+    const location = await this.findOne(id);
+
+    const pallets = await this.dataSource.query<LocationContentPallet[]>(
+      `
+      SELECT
+        p.id                        AS "palletId",
+        p.code                      AS "palletCode",
+        p.status                    AS "palletStatus",
+        p.quantity::float8          AS quantity,
+        p."createdAt"::text         AS "createdAt",
+        l.id                        AS "lotId",
+        l."lotCode",
+        l."supplierLot",
+        l."sapLot",
+        l."fechaVencimiento"::text  AS "fechaVencimiento",
+        l.status                    AS "lotStatus",
+        pr.id                       AS "productId",
+        pr.code                     AS "productCode",
+        pr.description              AS "productDescription",
+        pr."unitOfMeasure",
+        ent."documentId"            AS "entryDocumentId"
+      FROM pallets p
+      JOIN lots     l  ON l.id  = p."lotId"
+      JOIN products pr ON pr.id = l."productId"
+      LEFT JOIN LATERAL (
+        SELECT m."documentId"
+        FROM movement_details md
+        JOIN movements m ON m.id = md."movementId"
+        WHERE md."palletId" = p.id
+          AND m."documentId" IS NOT NULL
+        ORDER BY (m.type IN ('ENTRY', 'ADJUSTMENT_IN')) DESC, m.date ASC
+        LIMIT 1
+      ) ent ON TRUE
+      WHERE p."currentLocationId"::text = $1
+        AND ${LIVE_PALLET_STATUSES}
+      ORDER BY l."fechaVencimiento" NULLS LAST, p.code
+      `,
+      [id],
+    );
+
+    const [stockRow] = await this.dataSource.query<{ stockUnits: number }[]>(
+      `SELECT COALESCE(SUM("currentQuantity"), 0)::float8 AS "stockUnits"
+       FROM stocks WHERE "locationId"::text = $1`,
+      [id],
+    );
+
+    const units = pallets.reduce((s, p) => s + Number(p.quantity), 0);
+    const stockUnits = Number(stockRow?.stockUnits ?? 0);
+
+    return {
+      location: {
+        id: location.id,
+        code: location.code,
+        type: location.type,
+        active: location.active,
+        zone: location.zone ?? null,
+        aisle: location.aisle ?? null,
+        rack: location.rack ?? null,
+        level: location.level ?? null,
+        position: location.position ?? null,
+        capacityPallets: location.capacityPallets ?? null,
+        temperatureZone: location.temperatureZone,
+        warehouseId: location.warehouse?.id ?? null,
+        warehouseName: location.warehouse?.name ?? null,
+      },
+      occupancy: {
+        pallets: pallets.length,
+        capacity: location.capacityPallets ?? null,
+        units,
+        stockUnits,
+        mismatch: Math.abs(units - stockUnits) > UNIT_TOLERANCE ? stockUnits - units : 0,
+      },
+      pallets: pallets.map((p) => ({ ...p, quantity: Number(p.quantity) })),
+    };
+  }
+
+  /**
+   * Vista Incidencias: ubicaciones con diferencia de stock, sobrecapacidad,
+   * pallets bloqueados o vencimientos, más lo que no está en ninguna ubicación
+   * (pallets sin ubicar y stock a nivel depósito).
+   */
+  async incidents(warehouseId?: string) {
+    const { locations } = await this.map(warehouseId);
+    const flagged = locations.filter((l) => l.issues.length > 0);
+
+    const params: unknown[] = [];
+    let palletWarehouseFilter = '';
+    let stockWarehouseFilter = '';
+    if (warehouseId) {
+      params.push(warehouseId);
+      // Un pallet sin ubicación no tiene depósito propio: se acota por el
+      // depósito del stock de su material para no ocultarlo del todo.
+      palletWarehouseFilter = `AND EXISTS (
+        SELECT 1 FROM stocks s
+        WHERE s."productId" = l."productId" AND s."warehouseId"::text = $${params.length}
+      )`;
+      stockWarehouseFilter = `AND s."warehouseId"::text = $${params.length}`;
+    }
+
+    const palletsWithoutLocation = await this.dataSource.query<UnlocatedPallet[]>(
+      `
+      SELECT
+        p.id               AS "palletId",
+        p.code             AS "palletCode",
+        p.status           AS "palletStatus",
+        p.quantity::float8 AS quantity,
+        l."lotCode",
+        l."supplierLot",
+        l."fechaVencimiento"::text AS "fechaVencimiento",
+        pr.code            AS "productCode",
+        pr.description     AS "productDescription",
+        pr."unitOfMeasure"
+      FROM pallets p
+      JOIN lots     l  ON l.id  = p."lotId"
+      JOIN products pr ON pr.id = l."productId"
+      WHERE p."currentLocationId" IS NULL
+        AND ${LIVE_PALLET_STATUSES}
+        ${palletWarehouseFilter}
+      ORDER BY pr.code, p.code
+      LIMIT 200
+      `,
+      params,
+    );
+
+    const stockWithoutLocation = await this.dataSource.query<UnlocatedStock[]>(
+      `
+      SELECT
+        pr.id                        AS "productId",
+        pr.code                      AS "productCode",
+        pr.description               AS "productDescription",
+        pr."unitOfMeasure",
+        w.name                       AS "warehouseName",
+        s."currentQuantity"::float8  AS quantity
+      FROM stocks s
+      JOIN products pr ON pr.id = s."productId"
+      LEFT JOIN warehouses w ON w.id = s."warehouseId"
+      WHERE s."locationId" IS NULL
+        AND s."currentQuantity" <> 0
+        ${stockWarehouseFilter}
+      ORDER BY pr.code
+      LIMIT 200
+      `,
+      params,
+    );
+
+    const count = (issue: LocationIssue) => flagged.filter((l) => l.issues.includes(issue)).length;
+
+    return {
+      locations: flagged,
+      palletsWithoutLocation: palletsWithoutLocation.map((p) => ({ ...p, quantity: Number(p.quantity) })),
+      stockWithoutLocation: stockWithoutLocation.map((s) => ({ ...s, quantity: Number(s.quantity) })),
+      summary: {
+        locations: flagged.length,
+        overCapacity: count('OVER_CAPACITY'),
+        blockedPallets: count('BLOCKED_PALLETS'),
+        stockMismatch: count('STOCK_MISMATCH'),
+        expired: count('EXPIRED'),
+        expiring: count('EXPIRING'),
+        inactiveWithStock: count('INACTIVE_WITH_STOCK'),
+        palletsWithoutLocation: palletsWithoutLocation.length,
+        stockWithoutLocation: stockWithoutLocation.length,
+        expiryWarningDays: EXPIRY_WARNING_DAYS,
+      },
     };
   }
 

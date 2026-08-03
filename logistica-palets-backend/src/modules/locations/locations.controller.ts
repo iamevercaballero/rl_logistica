@@ -47,14 +47,43 @@ export class LocationsController {
     return this.service.recommend(productId, quantity ? Number(quantity) : 1);
   }
 
+  /** Mapa del depósito con ocupación y diagnóstico por celda (localizador). */
+  @Get('map')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  map(@Query('warehouseId') warehouseId?: string) {
+    return this.service.map(warehouseId);
+  }
+
+  /** Localizador: dónde está un material / lote / lote proveedor / pallet / ubicación. */
+  @Get('stock-search')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  stockSearch(@Query('q') q: string, @Query('warehouseId') warehouseId?: string) {
+    return this.service.stockSearch(q, warehouseId);
+  }
+
+  /** Ubicaciones con diferencias, sobrecapacidad, pallets bloqueados o stock sin ubicar. */
+  @Get('incidents')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  incidents(@Query('warehouseId') warehouseId?: string) {
+    return this.service.incidents(warehouseId);
+  }
+
+  /** Contenido de una ubicación para el panel lateral del localizador. */
+  @Get(':id/content')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  content(@Param('id', ParseUUIDPipe) id: string) {
+    return this.service.content(id);
+  }
+
   @Get(':id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.findOne(id);
   }
 
+  /** Crear estructura del depósito es de supervisión, igual que generar y eliminar. */
   @Post()
-  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
+  @Roles('ADMIN', 'MANAGER')
   create(@Body() dto: CreateLocationDto) {
     return this.service.create(dto);
   }
@@ -66,8 +95,9 @@ export class LocationsController {
     return this.service.generate(dto);
   }
 
+  /** Modificar o desactivar una ubicación: ídem, no es una acción de piso. */
   @Patch(':id')
-  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
+  @Roles('ADMIN', 'MANAGER')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateLocationDto) {
     return this.service.update(id, dto);
   }

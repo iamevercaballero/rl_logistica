@@ -100,6 +100,250 @@ export async function getLocationRecommendations(productId: string, quantity = 1
   return data;
 }
 
+/* ── Localizador visual de stock ──────────────────────────────────────────── */
+
+/** Estado visual de una celda del mapa. Lo decide el backend. */
+export type LocationMapState =
+  | "INACTIVE"
+  | "INCIDENT"
+  | "EXPIRING"
+  | "FULL"
+  | "PROVISIONAL"
+  | "OCCUPIED"
+  | "FREE";
+
+export type LocationIssue =
+  | "OVER_CAPACITY"
+  | "BLOCKED_PALLETS"
+  | "STOCK_MISMATCH"
+  | "EXPIRED"
+  | "EXPIRING"
+  | "INACTIVE_WITH_STOCK";
+
+export const MAP_STATE_META: Record<LocationMapState, { label: string; bg: string; border: string; text: string }> = {
+  FREE:        { label: "Libre",              bg: "var(--bg)",              border: "1px solid var(--border)",       text: "var(--muted)" },
+  OCCUPIED:    { label: "Ocupada",            bg: "var(--primary-light)",   border: "1.5px solid var(--primary)",    text: "var(--primary-text)" },
+  FULL:        { label: "Llena",              bg: "var(--badge-adjout-bg)", border: "1.5px solid var(--warning)",    text: "var(--badge-adjout-text)" },
+  EXPIRING:    { label: "Próxima a vencer",   bg: "var(--badge-exit-bg)",   border: "1.5px solid var(--danger)",     text: "var(--badge-exit-text)" },
+  PROVISIONAL: { label: "Entrada provisoria", bg: "rgba(168,85,247,0.14)",  border: "1.5px solid #a855f7",           text: "#c084fc" },
+  INCIDENT:    { label: "Con incidencia",     bg: "rgba(234,179,8,0.16)",   border: "1.5px solid #eab308",           text: "#eab308" },
+  INACTIVE:    { label: "Inactiva",           bg: "var(--panel)",           border: "1px dashed var(--border)",      text: "var(--muted)" },
+};
+
+export const ISSUE_META: Record<LocationIssue, { label: string; hint: string }> = {
+  OVER_CAPACITY:       { label: "Sobrecapacidad",   hint: "Tiene más pallets que su capacidad declarada." },
+  BLOCKED_PALLETS:     { label: "Pallets bloqueados", hint: "Contiene pallets en estado BLOCKED o DAMAGED." },
+  STOCK_MISMATCH:      { label: "Diferencia",       hint: "El stock registrado no coincide con los pallets ubicados." },
+  EXPIRED:             { label: "Lote vencido",     hint: "Contiene lotes con vencimiento pasado." },
+  EXPIRING:            { label: "Próximo a vencer", hint: "Contiene lotes que vencen dentro de 30 días." },
+  INACTIVE_WITH_STOCK: { label: "Inactiva con stock", hint: "La ubicación está desactivada pero todavía tiene pallets." },
+};
+
+/** Celda del mapa: estructura + ocupación + diagnóstico. */
+export type LocationCell = {
+  id: string;
+  code: string;
+  type: string;
+  active: boolean;
+  zone: string | null;
+  aisle: string | null;
+  rack: string | null;
+  level: number | null;
+  position: number | null;
+  capacityPallets: number | null;
+  warehouseId: string | null;
+  warehouseName: string | null;
+  pallets: number;
+  units: number;
+  stockUnits: number;
+  blockedPallets: number;
+  expiredPallets: number;
+  expiringPallets: number;
+  nearestExpiry: string | null;
+  issues: LocationIssue[];
+  state: LocationMapState;
+};
+
+export type LocationMap = {
+  locations: LocationCell[];
+  summary: {
+    totalLocations: number;
+    activeLocations: number;
+    freeLocations: number;
+    occupiedLocations: number;
+    fullLocations: number;
+    incidentLocations: number;
+    totalPallets: number;
+    totalUnits: number;
+    byZone: { zone: string; locations: number; occupied: number; free: number; pallets: number; units: number }[];
+  };
+};
+
+export async function getLocationMap(warehouseId?: string): Promise<LocationMap> {
+  const { data } = await api.get<LocationMap>("/locations/map", {
+    params: warehouseId ? { warehouseId } : undefined,
+  });
+  return data;
+}
+
+export type StockSearchRow = {
+  palletId: string;
+  palletCode: string;
+  palletStatus: string;
+  quantity: number;
+  lotId: string;
+  lotCode: string;
+  supplierLot: string | null;
+  sapLot: string | null;
+  fechaVencimiento: string | null;
+  lotStatus: string;
+  productId: string;
+  productCode: string;
+  productDescription: string;
+  unitOfMeasure: string | null;
+  locationId: string | null;
+  locationCode: string | null;
+  zone: string | null;
+  aisle: string | null;
+  rack: string | null;
+  level: number | null;
+  position: number | null;
+  locationActive: boolean | null;
+  warehouseId: string | null;
+  warehouseName: string | null;
+  entryDocumentId: string | null;
+};
+
+export type StockSearchProduct = {
+  productId: string;
+  productCode: string;
+  productDescription: string;
+  unitOfMeasure: string | null;
+  quantity: number;
+  pallets: number;
+  lots: number;
+  locations: number;
+  unlocatedPallets: number;
+};
+
+export type StockSearchResult = {
+  query: string;
+  truncated: boolean;
+  summary: {
+    quantity: number;
+    pallets: number;
+    lots: number;
+    locations: number;
+    unlocatedPallets: number;
+    products: number;
+  };
+  products: StockSearchProduct[];
+  locationIds: string[];
+  rows: StockSearchRow[];
+  emptyProducts: { id: string; code: string; description: string; unitOfMeasure: string | null }[];
+};
+
+/** Busca por material, descripción, lote interno, lote proveedor, pallet o ubicación. */
+export async function searchStock(q: string, warehouseId?: string): Promise<StockSearchResult> {
+  const { data } = await api.get<StockSearchResult>("/locations/stock-search", {
+    params: warehouseId ? { q, warehouseId } : { q },
+  });
+  return data;
+}
+
+export type LocationContentPallet = {
+  palletId: string;
+  palletCode: string;
+  palletStatus: string;
+  quantity: number;
+  createdAt: string | null;
+  lotId: string;
+  lotCode: string;
+  supplierLot: string | null;
+  sapLot: string | null;
+  fechaVencimiento: string | null;
+  lotStatus: string;
+  productId: string;
+  productCode: string;
+  productDescription: string;
+  unitOfMeasure: string | null;
+  entryDocumentId: string | null;
+};
+
+export type LocationContent = {
+  location: {
+    id: string;
+    code: string;
+    type: string;
+    active: boolean;
+    zone: string | null;
+    aisle: string | null;
+    rack: string | null;
+    level: number | null;
+    position: number | null;
+    capacityPallets: number | null;
+    temperatureZone: string;
+    warehouseId: string | null;
+    warehouseName: string | null;
+  };
+  occupancy: {
+    pallets: number;
+    capacity: number | null;
+    units: number;
+    stockUnits: number;
+    mismatch: number;
+  };
+  pallets: LocationContentPallet[];
+};
+
+export async function getLocationContent(id: string): Promise<LocationContent> {
+  const { data } = await api.get<LocationContent>(`/locations/${id}/content`);
+  return data;
+}
+
+export type LocationIncidents = {
+  locations: LocationCell[];
+  palletsWithoutLocation: {
+    palletId: string;
+    palletCode: string;
+    palletStatus: string;
+    quantity: number;
+    lotCode: string;
+    supplierLot: string | null;
+    fechaVencimiento: string | null;
+    productCode: string;
+    productDescription: string;
+    unitOfMeasure: string | null;
+  }[];
+  stockWithoutLocation: {
+    productId: string;
+    productCode: string;
+    productDescription: string;
+    unitOfMeasure: string | null;
+    warehouseName: string | null;
+    quantity: number;
+  }[];
+  summary: {
+    locations: number;
+    overCapacity: number;
+    blockedPallets: number;
+    stockMismatch: number;
+    expired: number;
+    expiring: number;
+    inactiveWithStock: number;
+    palletsWithoutLocation: number;
+    stockWithoutLocation: number;
+    expiryWarningDays: number;
+  };
+};
+
+export async function getLocationIncidents(warehouseId?: string): Promise<LocationIncidents> {
+  const { data } = await api.get<LocationIncidents>("/locations/incidents", {
+    params: warehouseId ? { warehouseId } : undefined,
+  });
+  return data;
+}
+
 export async function createLocation(payload: {
   code: string;
   warehouseId: string;

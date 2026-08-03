@@ -43,10 +43,12 @@ export const PERMS: Record<ModuleKey, ModulePermissions> = {
     remove: ["ADMIN", "MANAGER"],
   },
   locations: {
+    // Ubicaciones es el localizador de stock: leerlo es de piso. Crear,
+    // modificar, desactivar o borrar es administrar la estructura del depósito
+    // —vive en Depósitos y es de supervisión— igual que en el backend.
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
-    create: ["ADMIN", "MANAGER", "OPERATOR"],
-    update: ["ADMIN", "MANAGER", "OPERATOR"],
-    // Ídem: borrar estructura del depósito es de supervisión.
+    create: ["ADMIN", "MANAGER"],
+    update: ["ADMIN", "MANAGER"],
     remove: ["ADMIN", "MANAGER"],
   },
   pallets: {

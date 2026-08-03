@@ -112,7 +112,7 @@ const modules = [
   { key: "dashboard" as const, label: "Dashboard", path: "/" },
   { key: "products" as const, label: "Materiales", path: "/products" },
   { key: "warehouses" as const, label: "Depósitos", path: "/warehouses" },
-  { key: "locations" as const, label: "Ubicaciones", path: "/locations" },
+  { key: "locations" as const, label: "Localizador", path: "/locations" },
   { key: "lots" as const, label: "Lotes", path: "/lots" },
   { key: "pallets" as const, label: "Palets", path: "/pallets" },
   { key: "movements" as const, label: "Movimientos", path: "/movements" },

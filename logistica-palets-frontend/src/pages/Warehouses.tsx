@@ -8,7 +8,15 @@ import {
   type LayoutLocation,
   type Warehouse,
 } from "../api/warehouses";
-import { generateLocations, updateLocation, zoneMeta, LOCATION_ZONES, type LocationZone } from "../api/locations";
+import {
+  createLocation,
+  deleteLocation,
+  generateLocations,
+  updateLocation,
+  zoneMeta,
+  LOCATION_ZONES,
+  type LocationZone,
+} from "../api/locations";
 import { listPallets } from "../api/pallets";
 import { useAuth } from "../auth/AuthContext";
 import { canCreate, canDelete } from "../auth/rbac";
@@ -34,7 +42,10 @@ export default function WarehousesPage() {
   const role = user?.role;
   const allowCreate = role ? canCreate("warehouses", role) : false;
   const allowDelete = role ? canDelete("warehouses", role) : false;
+  // Administrar estructura (generar, crear, desactivar, eliminar ubicaciones)
+  // es ADMIN/MANAGER: el localizador de stock no la expone.
   const allowStructure = role ? canCreate("locations", role) : false;
+  const allowStructureDelete = role ? canDelete("locations", role) : false;
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const nameId = useId();
@@ -80,6 +91,20 @@ export default function WarehousesPage() {
     enabled: !!locDetail,
     staleTime: 10_000,
   });
+
+  /* ── Alta manual de una ubicación suelta ── */
+  const [showNewLoc, setShowNewLoc] = useState(false);
+  const [newLocCode, setNewLocCode] = useState("");
+  const [newLocZone, setNewLocZone] = useState<LocationZone>("ALMACENAMIENTO");
+  const [newLocType, setNewLocType] = useState("RACK");
+  const [newLocCapacity, setNewLocCapacity] = useState("1");
+
+  const newLocError = useMemo(() => {
+    const value = newLocCode.trim();
+    if (!value) return "Ingresá un código.";
+    if (value.length < 2 || value.length > 80) return "El código debe tener entre 2 y 80 caracteres.";
+    return "";
+  }, [newLocCode]);
 
   /* ── Generador de estructura ── */
   const [showGen, setShowGen] = useState(false);
@@ -141,6 +166,27 @@ export default function WarehousesPage() {
     onError: (err) => toast.error(getFriendlyApiError(err)),
   });
 
+  const createLocMut = useMutation({
+    mutationFn: createLocation,
+    onSuccess: (created) => {
+      toast.success(`Ubicación ${created.code} creada`);
+      invalidateLayout();
+      setShowNewLoc(false);
+      setNewLocCode("");
+    },
+    onError: (err) => toast.error(getFriendlyApiError(err)),
+  });
+
+  const deleteLocMut = useMutation({
+    mutationFn: (id: string) => deleteLocation(id),
+    onSuccess: () => {
+      toast.success("Ubicación eliminada");
+      invalidateLayout();
+      setLocDetail(null);
+    },
+    onError: (err) => toast.error(getFriendlyApiError(err)),
+  });
+
   const toggleLocMut = useMutation({
     mutationFn: ({ id, active }: { id: string; active: boolean }) => updateLocation(id, { active }),
     onSuccess: (loc) => {
@@ -164,6 +210,24 @@ export default function WarehousesPage() {
     if (!allowDelete) return;
     if (!window.confirm(`Eliminar depósito ${item.name}?`)) return;
     deleteMut.mutate(item.id);
+  }
+
+  function handleCreateLocation(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedId || newLocError) return;
+    createLocMut.mutate({
+      warehouseId: selectedId,
+      code: newLocCode.trim(),
+      type: newLocType,
+      zone: newLocZone,
+      capacityPallets: Number(newLocCapacity) > 0 ? Number(newLocCapacity) : undefined,
+    });
+  }
+
+  function handleDeleteLocation() {
+    if (!locDetail || !allowStructureDelete) return;
+    if (!window.confirm(`Eliminar la ubicación ${locDetail.code}? Debe estar vacía.`)) return;
+    deleteLocMut.mutate(locDetail.id);
   }
 
   function handleGenerate(e: React.FormEvent) {
@@ -346,9 +410,14 @@ export default function WarehousesPage() {
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
                 <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>{layout.warehouse.name}</h3>
                 {allowStructure && (
-                  <button type="button" className="btn btn--primary" style={{ fontSize: 13 }} onClick={() => setShowGen(true)}>
-                    ⚙ Generar estructura
-                  </button>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button type="button" className="btn" style={{ fontSize: 13 }} onClick={() => setShowNewLoc(true)}>
+                      ＋ Nueva ubicación
+                    </button>
+                    <button type="button" className="btn btn--primary" style={{ fontSize: 13 }} onClick={() => setShowGen(true)}>
+                      ⚙ Generar estructura
+                    </button>
+                  </div>
                 )}
               </div>
 
@@ -529,15 +598,29 @@ export default function WarehousesPage() {
               </div>
 
               {allowStructure && (
-                <button
-                  type="button"
-                  className="btn"
-                  style={{ justifySelf: "start", fontSize: 12, color: locDetail.active ? "var(--danger)" : "var(--success)" }}
-                  disabled={toggleLocMut.isPending}
-                  onClick={() => toggleLocMut.mutate({ id: locDetail.id, active: !locDetail.active })}
-                >
-                  {toggleLocMut.isPending ? "Guardando..." : locDetail.active ? "Desactivar ubicación" : "Activar ubicación"}
-                </button>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className="btn"
+                    style={{ fontSize: 12, color: locDetail.active ? "var(--danger)" : "var(--success)" }}
+                    disabled={toggleLocMut.isPending}
+                    onClick={() => toggleLocMut.mutate({ id: locDetail.id, active: !locDetail.active })}
+                  >
+                    {toggleLocMut.isPending ? "Guardando..." : locDetail.active ? "Desactivar ubicación" : "Activar ubicación"}
+                  </button>
+                  {allowStructureDelete && (
+                    <button
+                      type="button"
+                      className="btn btn--danger"
+                      style={{ fontSize: 12 }}
+                      disabled={deleteLocMut.isPending || locDetail.pallets > 0}
+                      title={locDetail.pallets > 0 ? "Transferí el contenido antes de eliminarla" : "Eliminar ubicación"}
+                      onClick={handleDeleteLocation}
+                    >
+                      {deleteLocMut.isPending ? "Eliminando..." : "Eliminar ubicación"}
+                    </button>
+                  )}
+                </div>
               )}
 
               <div>
@@ -570,6 +653,72 @@ export default function WarehousesPage() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Modal: nueva ubicación suelta ── */}
+      {showNewLoc && selectedId && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => setShowNewLoc(false)}
+        >
+          <form
+            className="card"
+            style={{ width: "min(440px, 100%)", display: "grid", gap: 12 }}
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={handleCreateLocation}
+            aria-label="Nueva ubicación"
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>＋ Nueva ubicación</h3>
+              <button type="button" onClick={() => setShowNewLoc(false)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "var(--muted)" }} aria-label="Cerrar">×</button>
+            </div>
+            <p style={{ margin: 0, fontSize: 12, color: "var(--muted)" }}>
+              Para cargar varias posiciones de una vez usá <strong>⚙ Generar estructura</strong>.
+            </p>
+
+            <div>
+              <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Código *</label>
+              <input
+                className="input"
+                value={newLocCode}
+                onChange={(e) => setNewLocCode(e.target.value)}
+                placeholder="Ej: A1-F1-N1-P2"
+                aria-label="Código de ubicación"
+                aria-invalid={!!newLocError}
+              />
+              {newLocError && newLocCode ? <p className="form-error" role="alert" style={{ margin: "4px 0 0" }}>{newLocError}</p> : null}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Zona</label>
+                <select className="input" value={newLocZone} onChange={(e) => setNewLocZone(e.target.value as LocationZone)}>
+                  {LOCATION_ZONES.map((z) => <option key={z.value} value={z.value}>{z.icon} {z.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Tipo</label>
+                <select className="input" value={newLocType} onChange={(e) => setNewLocType(e.target.value)}>
+                  <option value="RACK">Rack</option>
+                  <option value="PISO">Piso</option>
+                  <option value="TEMPORAL">Temporal / provisoria</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Capacidad (pallets)</label>
+              <input className="input" type="number" min={0} value={newLocCapacity} onChange={(e) => setNewLocCapacity(e.target.value)} placeholder="0 = sin límite" />
+            </div>
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button className="btn btn--primary" type="submit" disabled={createLocMut.isPending || !!newLocError}>
+                {createLocMut.isPending ? "Guardando..." : "Crear ubicación"}
+              </button>
+              <button type="button" className="btn" onClick={() => setShowNewLoc(false)}>Cancelar</button>
+            </div>
+          </form>
         </div>
       )}
 

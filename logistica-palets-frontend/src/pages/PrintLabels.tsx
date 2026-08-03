@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import QRCode from "qrcode";
 import { getDocumentForPrint, type PrintProduct, type PrintLot, type PrintPallet, type RawMovement } from "../api/movements";
@@ -157,6 +157,10 @@ function PalletLabel({ label }: { label: LabelData }) {
 
 export default function PrintLabelsPage() {
   const { documentId } = useParams<{ documentId: string }>();
+  // ?pallet=<id> imprime una sola etiqueta: es lo que necesita el localizador
+  // cuando se reimprime la etiqueta de un pallet puntual, no del remito entero.
+  const [searchParams] = useSearchParams();
+  const onlyPalletId = searchParams.get("pallet");
   const { data, isLoading, isError } = useQuery({
     queryKey: ["print-labels", documentId],
     queryFn: () => getDocumentForPrint(documentId!),
@@ -173,7 +177,7 @@ export default function PrintLabelsPage() {
     const movMap = Object.fromEntries((data.movements as RawMovement[]).map((m) => [m.id, m]));
 
     return data.details
-      .filter((d) => d.palletId)
+      .filter((d) => d.palletId && (!onlyPalletId || d.palletId === onlyPalletId))
       .map((detail) => {
         const pallet = palletMap[detail.palletId!] ?? { code: detail.palletId!.slice(0, 8), quantity: detail.quantity, lotId: "" };
         const movement = movMap[detail.movementId];
@@ -220,7 +224,11 @@ export default function PrintLabelsPage() {
     return (
       <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", height: "100vh", fontFamily: "sans-serif", gap: 12 }}>
         <div style={{ fontSize: 18, fontWeight: 700 }}>Sin pallets registrados</div>
-        <div style={{ color: "#666" }}>Este documento no tiene pallets con etiquetas para imprimir.</div>
+        <div style={{ color: "#666" }}>
+          {onlyPalletId
+            ? "El pallet solicitado no pertenece a este documento."
+            : "Este documento no tiene pallets con etiquetas para imprimir."}
+        </div>
         <button onClick={() => window.close()} style={{ padding: "8px 20px", background: "#1a1a2e", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 700 }}>Cerrar</button>
       </div>
     );

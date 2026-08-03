@@ -51,6 +51,7 @@ beforeAll(async () => {
     ds.getRepository(Warehouse),
     ds.getRepository(Pallet),
     ds.getRepository(Product),
+    ds,
   );
 }, 60_000);
 

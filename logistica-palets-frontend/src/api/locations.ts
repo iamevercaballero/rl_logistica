@@ -387,3 +387,14 @@ export async function generateLocations(payload: {
 export async function deleteLocation(id: string) {
   await api.delete(`/locations/${id}`);
 }
+
+/**
+ * Elimina un pasillo completo. Todo-o-nada: si alguna ubicación tiene
+ * contenido, el backend rechaza sin borrar nada e indica cuáles.
+ */
+export async function deleteAisle(warehouseId: string, aisle: string): Promise<{ aisle: string; deleted: number }> {
+  const { data } = await api.delete<{ aisle: string; deleted: number }>("/locations/aisle", {
+    params: { warehouseId, aisle },
+  });
+  return data;
+}

@@ -102,6 +102,20 @@ export class LocationsController {
     return this.service.update(id, dto);
   }
 
+  /**
+   * Elimina un pasillo completo. Va declarada ANTES de `@Delete(':id')`: Nest
+   * resuelve por orden de declaración y 'aisle' entraría como :id, fallando en
+   * el ParseUUIDPipe.
+   */
+  @Delete('aisle')
+  @Roles('ADMIN', 'MANAGER')
+  removeAisle(
+    @Query('warehouseId', ParseUUIDPipe) warehouseId: string,
+    @Query('aisle') aisle: string,
+  ) {
+    return this.service.removeAisle(warehouseId, aisle);
+  }
+
   /** Eliminar estructura del depósito es una operación de supervisión, no de piso. */
   @Delete(':id')
   @Roles('ADMIN', 'MANAGER')

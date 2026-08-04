@@ -116,7 +116,7 @@ export class ProductsService {
          (SELECT COUNT(*) FROM lots WHERE "productId" = $1)::int              AS lots,
          (SELECT COUNT(*) FROM movements WHERE "productId" = $1)::int         AS movements,
          (SELECT COALESCE(SUM("currentQuantity"), 0) FROM stocks
-           WHERE "productId" = $1)::int                                       AS stock`,
+           WHERE "productId" = $1)::float8                                    AS stock`,
       [id],
     )) as Array<{ lots: number; movements: number; stock: number }>;
 

@@ -11,6 +11,7 @@ import {
 import {
   createLocation,
   deleteLocation,
+  deleteAisle,
   generateLocations,
   updateLocation,
   zoneMeta,
@@ -125,7 +126,7 @@ export default function WarehousesPage() {
   const genExample = [
     genPrefix.trim().toUpperCase() || null,
     genIsRack ? genAisleList[0] : null,
-    genIsRack ? "R1" : null,
+    genIsRack ? "F1" : null,
     genIsRack ? "N1" : null,
     "P1",
   ].filter(Boolean).join("-");
@@ -187,6 +188,16 @@ export default function WarehousesPage() {
     onError: (err) => toast.error(getFriendlyApiError(err)),
   });
 
+  const deleteAisleMut = useMutation({
+    mutationFn: ({ warehouseId, aisle }: { warehouseId: string; aisle: string }) => deleteAisle(warehouseId, aisle),
+    onSuccess: (res) => {
+      toast.success(`Pasillo ${res.aisle} eliminado (${res.deleted} ubicaciones)`);
+      invalidateLayout();
+      setLocDetail(null);
+    },
+    onError: (err) => toast.error(getFriendlyApiError(err)),
+  });
+
   const toggleLocMut = useMutation({
     mutationFn: ({ id, active }: { id: string; active: boolean }) => updateLocation(id, { active }),
     onSuccess: (loc) => {
@@ -228,6 +239,15 @@ export default function WarehousesPage() {
     if (!locDetail || !allowStructureDelete) return;
     if (!window.confirm(`Eliminar la ubicación ${locDetail.code}? Debe estar vacía.`)) return;
     deleteLocMut.mutate(locDetail.id);
+  }
+
+  function handleDeleteAisle(aisle: string, cells: number) {
+    if (!selectedId || !allowStructureDelete) return;
+    if (!window.confirm(
+      `Eliminar el pasillo ${aisle} completo? Se borran sus ${cells} ubicaciones.\n\n` +
+      `Si alguna tiene stock o pallets, no se borra ninguna.`,
+    )) return;
+    deleteAisleMut.mutate({ warehouseId: selectedId, aisle });
   }
 
   function handleGenerate(e: React.FormEvent) {
@@ -491,11 +511,30 @@ export default function WarehousesPage() {
                   {/* Pasillos estructurados */}
                   {aisleGroups.map((g) => (
                     <div key={g.aisle} style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
-                      <div style={{ background: "var(--bg)", padding: "7px 12px", fontSize: 13, fontWeight: 800, borderBottom: "1px solid var(--border)" }}>
-                        Pasillo {g.aisle}
-                        <span style={{ fontWeight: 400, color: "var(--muted)", marginLeft: 8, fontSize: 12 }}>
+                      <div style={{ background: "var(--bg)", padding: "7px 12px", fontSize: 13, fontWeight: 800, borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}>
+                        <span>Pasillo {g.aisle}</span>
+                        <span style={{ fontWeight: 400, color: "var(--muted)", fontSize: 12 }}>
                           {g.racks.length} rack{g.racks.length !== 1 ? "s" : ""}
                         </span>
+                        {allowStructureDelete && (() => {
+                          const cells = g.racks.reduce((s, r) => s + r.cells.length, 0);
+                          const ocupadas = g.racks.reduce((s, r) => s + r.cells.filter((c) => c.pallets > 0).length, 0);
+                          return (
+                            <button
+                              type="button"
+                              className="btn btn--danger"
+                              onClick={() => handleDeleteAisle(g.aisle, cells)}
+                              disabled={deleteAisleMut.isPending || ocupadas > 0}
+                              title={ocupadas > 0
+                                ? `No se puede eliminar: ${ocupadas} ubicación(es) con contenido. Transferí el stock antes.`
+                                : `Eliminar el pasillo ${g.aisle} y sus ${cells} ubicaciones`}
+                              style={{ marginLeft: "auto", fontSize: 11, padding: "2px 8px", lineHeight: 1.6 }}
+                              aria-label={`Eliminar pasillo ${g.aisle}`}
+                            >
+                              ✕ Eliminar pasillo
+                            </button>
+                          );
+                        })()}
                       </div>
                       <div style={{ display: "flex", gap: 14, padding: 12, flexWrap: "wrap" }}>
                         {g.racks.map((r) => {

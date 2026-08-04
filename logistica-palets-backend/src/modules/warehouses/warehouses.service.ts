@@ -72,7 +72,7 @@ export class WarehousesService {
         loc.position,
         loc."capacityPallets",
         COUNT(p.id)::int                  AS "pallets",
-        COALESCE(SUM(p.quantity), 0)::int AS "units"
+        COALESCE(SUM(p.quantity), 0)::float8 AS "units"
       FROM locations loc
       LEFT JOIN pallets p
         ON p."currentLocationId" = loc.id
@@ -124,7 +124,7 @@ export class WarehousesService {
       `SELECT
          (SELECT COUNT(*) FROM locations WHERE "warehouseId" = $1)::int AS locations,
          (SELECT COALESCE(SUM("currentQuantity"), 0) FROM stocks
-           WHERE "warehouseId" = $1)::int                               AS stock`,
+           WHERE "warehouseId" = $1)::float8                            AS stock`,
       [id],
     )) as Array<{ locations: number; stock: number }>;
 

@@ -38,9 +38,9 @@ export class ReportsService {
         pr.id                         AS "productId",
         pr.code                       AS "productCode",
         pr.description                AS "productDescription",
-        COALESCE(s.total, 0)::int     AS "stockSum",
-        COALESCE(l.total, 0)::int     AS "lotSum",
-        COALESCE(p.total, 0)::int     AS "palletSum"
+        COALESCE(s.total, 0)::float8  AS "stockSum",
+        COALESCE(l.total, 0)::float8  AS "lotSum",
+        COALESCE(p.total, 0)::float8  AS "palletSum"
       FROM products pr
       LEFT JOIN (
         SELECT "productId", SUM("currentQuantity") AS total FROM stocks GROUP BY "productId"
@@ -80,8 +80,8 @@ export class ReportsService {
         pr.description   AS "productDescription",
         s."locationId"   AS "locationId",
         loc.code         AS "locationCode",
-        s."currentQuantity"::int AS "stockQuantity",
-        COALESCE(pa.total, 0)::int AS "palletQuantity"
+        s."currentQuantity"::float8 AS "stockQuantity",
+        COALESCE(pa.total, 0)::float8 AS "palletQuantity"
       FROM stocks s
       JOIN products pr ON pr.id = s."productId"
       LEFT JOIN locations loc ON loc.id = s."locationId"
@@ -193,8 +193,8 @@ export class ReportsService {
         pr.id          AS "productId",
         pr.code        AS "productCode",
         pr.description AS "productDescription",
-        COALESCE(ex.units, 0)::int AS "exitUnits",
-        COALESCE(st.stock, 0)::int AS "currentStock"
+        COALESCE(ex.units, 0)::float8 AS "exitUnits",
+        COALESCE(st.stock, 0)::float8 AS "currentStock"
       FROM products pr
       LEFT JOIN (
         SELECT "productId", SUM(quantity) AS units
@@ -453,7 +453,7 @@ export class ReportsService {
                   dl2."lotCode"                                                                 AS "lotCode",
                   dl2."sapLot"                                                                  AS "sapLot",
                   COUNT(DISTINCT md2."palletId") FILTER (WHERE md2."palletId" IS NOT NULL)::int AS "pallets",
-                  SUM(md2.quantity)::int                                                        AS "quantity"
+                  SUM(md2.quantity)::float8                                                     AS "quantity"
                 FROM movement_details md2
                 INNER JOIN lots dl2 ON dl2.id = md2."lotId"
                 WHERE md2."movementId" = md."movementId"

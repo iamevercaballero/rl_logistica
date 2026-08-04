@@ -997,7 +997,9 @@ export class LocationsService {
       where: { currentLocationId: id, status: Not(In(['EXITED', 'EMPTY'])) },
     });
     const [{ stock }] = (await this.locationRepo.query(
-      `SELECT COALESCE(SUM("currentQuantity"), 0)::int AS stock FROM stocks WHERE "locationId" = $1`,
+      // float8, no int: con ::int una ubicación con 0.4 unidades daría stock = 0
+      // y se dejaría borrar, dejando ese stock huérfano apuntando a un id inexistente.
+      `SELECT COALESCE(SUM("currentQuantity"), 0)::float8 AS stock FROM stocks WHERE "locationId" = $1`,
       [id],
     )) as Array<{ stock: number }>;
 
@@ -1009,5 +1011,60 @@ export class LocationsService {
     }
 
     return this.locationRepo.remove(location);
+  }
+
+  /**
+   * Elimina un pasillo completo — el caso real es un sector generado con
+   * parámetros equivocados, donde borrar posición por posición son decenas de
+   * clics.
+   *
+   * Es todo-o-nada a propósito: si alguna posición tiene contenido, no borra
+   * nada y devuelve cuáles son. Un borrado parcial dejaría media estructura en
+   * pie, que es más difícil de entender (y de deshacer) que un rechazo claro.
+   */
+  async removeAisle(warehouseId: string, aisle: string) {
+    const normalized = aisle.trim().toUpperCase();
+    if (!normalized) throw new BadRequestException('Indicá el pasillo a eliminar.');
+
+    const warehouse = await this.warehouseRepo.findOne({ where: { id: warehouseId } });
+    if (!warehouse) throw new NotFoundException('Warehouse not found');
+
+    const locations = await this.locationRepo.find({
+      where: { aisle: normalized, warehouse: { id: warehouseId } },
+    });
+    if (locations.length === 0) {
+      throw new NotFoundException(`El pasillo ${normalized} no tiene ubicaciones en este depósito.`);
+    }
+
+    const ids = locations.map((l) => l.id);
+    const occupied = (await this.locationRepo.query(
+      `SELECT l.id,
+              l.code,
+              COALESCE(pal.pallets, 0)::int     AS pallets,
+              COALESCE(st.stock, 0)::float8     AS stock
+         FROM locations l
+         LEFT JOIN (SELECT "currentLocationId" AS loc, COUNT(*) AS pallets
+                      FROM pallets
+                     WHERE status NOT IN ('EXITED', 'EMPTY')
+                     GROUP BY "currentLocationId") pal ON pal.loc = l.id
+         LEFT JOIN (SELECT "locationId" AS loc, SUM("currentQuantity") AS stock
+                      FROM stocks GROUP BY "locationId") st ON st.loc = l.id
+        WHERE l.id = ANY($1)
+          AND (COALESCE(pal.pallets, 0) > 0 OR COALESCE(st.stock, 0) <> 0)
+        ORDER BY l.code`,
+      [ids],
+    )) as Array<{ code: string; pallets: number; stock: number }>;
+
+    if (occupied.length > 0) {
+      const detalle = occupied.slice(0, 5).map((o) => `${o.code} (${o.pallets} palet/s, ${o.stock} unid.)`).join(', ');
+      const resto = occupied.length > 5 ? ` y ${occupied.length - 5} más` : '';
+      throw new BadRequestException(
+        `No se puede eliminar el pasillo ${normalized}: ${occupied.length} ubicación(es) con contenido — ${detalle}${resto}. ` +
+        `Transferí el contenido antes de eliminarlo.`,
+      );
+    }
+
+    await this.locationRepo.remove(locations);
+    return { aisle: normalized, deleted: locations.length };
   }
 }

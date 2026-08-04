@@ -38,6 +38,7 @@ type LabelData = {
   lotFabricacion: string | null | undefined;
   lotExpiry: string | null | undefined;
   quantity: number;
+  weightKg: number | null | undefined;
   qrValue: string;
 };
 
@@ -119,7 +120,7 @@ function PalletLabel({ label }: { label: LabelData }) {
             <td className="lbl-td-key">Lote prov:</td>
             <td className="lbl-td-val">{label.sapLot ?? "—"}</td>
             <td className="lbl-td-key" style={{ borderLeft: "2px solid #000" }}>Peso Paleta (kg):</td>
-            <td className="lbl-td-val">—</td>
+            <td className="lbl-td-val">{label.weightKg != null ? label.weightKg.toLocaleString("es-PY") : "—"}</td>
           </tr>
           <tr>
             <td className="lbl-td-key">Cantidad:</td>
@@ -203,6 +204,7 @@ export default function PrintLabelsPage() {
           lotFabricacion: lot?.fechaFabricacion ?? null,
           lotExpiry: lot?.fechaVencimiento ?? null,
           quantity: detail.quantity,
+          weightKg: pallet.weightKg,
           qrValue,
         };
       });

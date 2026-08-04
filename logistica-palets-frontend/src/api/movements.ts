@@ -21,6 +21,7 @@ export type PalletItem = {
   fechaFabricacion?: string;
   sapLot?: string;
   proveedor?: string;
+  weightKg?: number;
 };
 
 export type VoidStatus = 'NONE' | 'VOID_PENDING' | 'VOIDED';
@@ -172,7 +173,7 @@ export async function getDocument(id: string): Promise<{
 export type PrintProduct = { id: string; code: string; description: string; unitOfMeasure?: string | null };
 export type PrintLot = { id: string; lotCode: string; productId: string; fechaVencimiento?: string | null; fechaFabricacion?: string | null; sapLot?: string | null };
 export type PrintWarehouse = { id: string; name: string };
-export type PrintPallet = { id: string; code: string; quantity: number; lotId: string };
+export type PrintPallet = { id: string; code: string; quantity: number; lotId: string; weightKg?: number | null };
 export type PrintDetail = { id: string; movementId: string; palletId?: string | null; lotId?: string | null; locationId?: string | null; quantity: number };
 
 /** Movimiento tal como lo devuelve la entidad (sin enriquecer). Usado en respuestas de impresión. */

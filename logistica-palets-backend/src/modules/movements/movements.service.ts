@@ -518,6 +518,7 @@ export class MovementsService {
               quantity: item.quantity,
               currentLocationId: resolved.locationId ?? null,
               status: 'AVAILABLE',
+              weightKg: item.weightKg ?? null,
             });
             const savedPallet = await manager.save(pallet);
             resolvedPalletId = savedPallet.id;

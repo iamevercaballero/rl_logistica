@@ -1783,11 +1783,15 @@ export class MovementsService {
     };
 
     type Group = { description: string; unitOfMeasure: string; lots: StockLotItem[] };
+    type ParsedRow = {
+      rowNumber: number; code: string; description: string; unitOfMeasure: string;
+      qty: number; fechaVencimiento: string | null; lotCode: string; sapLot: string;
+    };
     const groups = new Map<string, Group>();
-    /** (material|loteProveedor) → vencimientos vistos, para detectar contradicciones. */
-    const supplierLotDates = new Map<string, { date: string; row: number; lotCode: string }[]>();
     const hoy = new Date().toISOString().slice(0, 10);
-    let validRecords = 0;
+
+    // ── Pasada 1: parseo y validaciones de fila ──────────────────────────────
+    const parsed: ParsedRow[] = [];
 
     raw.forEach((entry, index) => {
       const rowNumber = index + 2; // fila 1 = encabezado
@@ -1797,13 +1801,15 @@ export class MovementsService {
       let qty: number | null = null;
       let fechaVencimiento: string | null | undefined;
       let lotCode = '';
-      let supplierLot = '';
+      let sapLot = '';
 
       for (const [header, value] of Object.entries(entry)) {
         const norm = normalize(header);
         if (CODE_ALIASES.includes(norm)) code = String(value ?? '').trim().toUpperCase();
-        else if (SUPPLIER_LOT_ALIASES.includes(norm)) supplierLot = String(value ?? '').trim().toUpperCase();
-        else if (LOT_ALIASES.includes(norm)) lotCode = normalizeLotCode(String(value ?? ''));
+        // El lote del proveedor es el que identifica al lote — misma convención
+        // que usa el operador al registrar una entrada.
+        else if (SUPPLIER_LOT_ALIASES.includes(norm)) lotCode = normalizeLotCode(String(value ?? ''));
+        else if (LOT_ALIASES.includes(norm)) sapLot = String(value ?? '').trim().toUpperCase();
         else if (UM_ALIASES.includes(norm)) unitOfMeasure = String(value ?? '').trim().toUpperCase();
         else if (QTY_ALIASES.includes(norm)) qty = parseQty(value);
         else if (FECHA_VTO_ALIASES.includes(norm)) fechaVencimiento = parseDate(value);
@@ -1813,24 +1819,9 @@ export class MovementsService {
       // ── Errores: la fila no se puede importar ──────────────────────────────
       if (!code) return addIssue('ERROR', rowNumber, 'Código de material vacío');
       if (!/\d/.test(code)) return addIssue('ERROR', rowNumber, 'Código de material inválido (no contiene dígitos)', code);
-      if (!lotCode) return addIssue('ERROR', rowNumber, 'Lote interno vacío — es la clave del lote', code);
+      if (!lotCode) return addIssue('ERROR', rowNumber, 'Lote de proveedor vacío — es la clave del lote', code);
       if (qty === null) return addIssue('ERROR', rowNumber, 'Cantidad no numérica', code);
       if (qty <= 0) return addIssue('ERROR', rowNumber, `Cantidad inválida (${qty}): debe ser mayor a cero`, code);
-
-      const group = groups.get(code) ?? { description, unitOfMeasure, lots: [] };
-      if (!group.description && description) group.description = description;
-      if (!group.unitOfMeasure && unitOfMeasure) group.unitOfMeasure = unitOfMeasure;
-
-      // Duplicado real = mismo material + mismo lote interno. No se fusiona: es
-      // un error de datos y sumar a ciegas ocultaría el problema.
-      const duplicate = group.lots.find((l) => l.lotCode === lotCode);
-      if (duplicate) {
-        return addIssue(
-          'ERROR', rowNumber,
-          `Lote interno "${lotCode}" duplicado para este material (ya venía en la fila ${duplicate.row}) — fila omitida`,
-          code,
-        );
-      }
 
       // ── Advertencias: la fila se importa igual ────────────────────────────
       if (fechaVencimiento === null) {
@@ -1841,38 +1832,66 @@ export class MovementsService {
         addIssue('WARNING', rowNumber, `Lote ya vencido (${fechaVencimiento})`, code);
       }
 
-      if (supplierLot) {
-        const key = `${code}|${supplierLot}`;
-        const seen = supplierLotDates.get(key) ?? [];
-        seen.push({ date: fechaVencimiento ?? '(sin fecha)', row: rowNumber, lotCode });
-        supplierLotDates.set(key, seen);
-      }
-
-      group.lots.push({
-        lotCode,
-        supplierLot: supplierLot || undefined,
-        quantity: qty,
-        fechaVencimiento: fechaVencimiento ?? null,
-        row: rowNumber,
+      parsed.push({
+        rowNumber, code, description, unitOfMeasure,
+        qty, fechaVencimiento: fechaVencimiento ?? null, lotCode, sapLot,
       });
-      groups.set(code, group);
-      validRecords++;
     });
 
-    // Lote de proveedor repetido con vencimientos distintos: no impide importar
-    // (son lotes internos distintos), pero casi siempre delata un error de carga
-    // en la planilla de origen.
-    for (const [key, entries] of supplierLotDates) {
-      const distinctDates = new Set(entries.map((e) => e.date));
-      if (entries.length > 1 && distinctDates.size > 1) {
-        const [code, supplierLot] = key.split('|');
-        const detail = entries.map((e) => `${e.lotCode}→${e.date} (fila ${e.row})`).join(', ');
+    // ── Pasada 2: resolver filas que comparten (material, lote de proveedor) ──
+    // La clave del lote es (material, lotCode), así que dos filas con el mismo
+    // par son el mismo lote. Se resuelven según el vencimiento:
+    //   · misma fecha  → es el mismo lote partido en varias filas: se suman.
+    //   · fechas distintas → no hay forma de saber cuál corresponde al lote, y
+    //     elegir una arbitrariamente haría que FEFO despache con la fecha
+    //     equivocada. Ninguna de esas filas se importa; se reportan como error.
+    const byLot = new Map<string, ParsedRow[]>();
+    for (const row of parsed) {
+      const key = `${row.code}|${row.lotCode}`;
+      byLot.set(key, [...(byLot.get(key) ?? []), row]);
+    }
+
+    let validRecords = 0;
+    for (const rows of byLot.values()) {
+      const { code, lotCode } = rows[0];
+      const fechas = [...new Set(rows.map((r) => r.fechaVencimiento ?? '(sin fecha)'))];
+
+      if (rows.length > 1 && fechas.length > 1) {
+        const detalle = rows.map((r) => `fila ${r.rowNumber}: ${r.fechaVencimiento ?? 'sin fecha'} (${r.qty})`).join(', ');
+        for (const r of rows) {
+          addIssue(
+            'ERROR', r.rowNumber,
+            `Lote de proveedor "${lotCode}" repetido para este material con ${fechas.length} vencimientos distintos ` +
+            `— ${detalle}. No se puede determinar cuál corresponde al lote: ninguna de estas filas se importa.`,
+            code,
+          );
+        }
+        continue;
+      }
+
+      if (rows.length > 1) {
         addIssue(
-          'WARNING', entries[0].row,
-          `Lote de proveedor "${supplierLot}" aparece con ${distinctDates.size} vencimientos distintos: ${detail}`,
+          'WARNING', rows[0].rowNumber,
+          `Lote de proveedor "${lotCode}" repetido en ${rows.length} filas (${rows.map((r) => r.rowNumber).join(', ')}) ` +
+          `con el mismo vencimiento — se suman las cantidades en un solo lote.`,
           code,
         );
       }
+
+      const first = rows[0];
+      const group = groups.get(code) ?? { description: first.description, unitOfMeasure: first.unitOfMeasure, lots: [] };
+      if (!group.description && first.description) group.description = first.description;
+      if (!group.unitOfMeasure && first.unitOfMeasure) group.unitOfMeasure = first.unitOfMeasure;
+
+      group.lots.push({
+        lotCode,
+        sapLot: rows.find((r) => r.sapLot)?.sapLot || undefined,
+        quantity: roundQuantity(rows.reduce((s, r) => s + r.qty, 0)),
+        fechaVencimiento: first.fechaVencimiento,
+        row: first.rowNumber,
+      });
+      groups.set(code, group);
+      validRecords += rows.length;
     }
 
     const products = await this.dataSource.getRepository(Product).find();
@@ -1976,7 +1995,7 @@ export class MovementsService {
               lotCode: l.lotCode,
               quantity: l.quantity,
               fechaVencimiento: l.fechaVencimiento ?? undefined,
-              supplierLot: l.supplierLot,
+              sapLot: l.sapLot,
             })),
           },
           userId,
@@ -2207,10 +2226,10 @@ export interface StockSnapshotRevertResult {
 export const INITIAL_STOCK_LOCATION_CODE = 'STOCK-INICIAL';
 
 export interface StockLotItem {
-  /** Lote interno — junto con el material forma la clave única del lote. */
+  /** Lote del proveedor — junto con el material forma la clave única del lote. */
   lotCode: string;
-  /** Lote del proveedor — sólo trazabilidad, puede repetirse. */
-  supplierLot?: string;
+  /** Lote SAP del origen — informativo, se comparte entre lotes del mismo día. */
+  sapLot?: string;
   quantity: number;
   fechaVencimiento?: string | null;
   /** Fila del Excel de origen, para poder rastrear el dato. */

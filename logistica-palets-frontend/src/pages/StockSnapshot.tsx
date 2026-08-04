@@ -136,10 +136,11 @@ export default function StockSnapshotPage() {
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
       <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.5, marginBottom: 8 }}>Carga inicial de inventario</h1>
       <p style={{ color: "var(--muted)", marginBottom: 28, fontSize: 14 }}>
-        Una fila = un lote de un material. La identidad del lote es <strong>material + lote interno</strong>;
-        el lote de proveedor se guarda sólo como trazabilidad y puede repetirse. Cada lote genera su palet
-        lógico en la ubicación temporal <code>STOCK-INICIAL</code>, pendiente de ubicar. Si un material no
-        existe en el catálogo, se crea automáticamente (apilable por defecto).
+        Una fila = un lote de un material. La identidad del lote es <strong>material + lote de proveedor</strong>,
+        igual que al registrar una entrada; el lote SAP se guarda como dato informativo. Si un mismo lote de
+        proveedor aparece repetido con <strong>vencimientos distintos</strong>, esas filas no se importan y se
+        listan como error. Cada lote genera su palet lógico en la ubicación temporal <code>STOCK-INICIAL</code>,
+        pendiente de ubicar. Si un material no existe en el catálogo, se crea automáticamente.
       </p>
 
       <div className="card" style={{ marginBottom: 20, borderColor: "var(--badge-exit-border)" }}>
@@ -331,7 +332,7 @@ export default function StockSnapshotPage() {
                             {p.lots.map((l, i) => (
                               <li key={i}>
                                 <strong>{l.lotCode}</strong>
-                                {l.supplierLot ? ` · prov. ${l.supplierLot}` : ""} — {l.quantity.toLocaleString("es-PY")}
+                                {l.sapLot ? ` · SAP ${l.sapLot}` : ""} — {l.quantity.toLocaleString("es-PY")}
                                 {l.fechaVencimiento ? ` — vto. ${l.fechaVencimiento}` : " — sin vto."}
                               </li>
                             ))}

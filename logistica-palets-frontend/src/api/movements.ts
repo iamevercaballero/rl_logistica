@@ -348,10 +348,10 @@ export type StockSnapshotProductStatus =
 
 
 export type StockLotItem = {
-  /** Lote interno — junto con el material forma la clave única del lote. */
+  /** Lote del proveedor — junto con el material forma la clave única del lote. */
   lotCode: string;
-  /** Lote del proveedor — sólo trazabilidad, puede repetirse. */
-  supplierLot?: string;
+  /** Lote SAP del origen — informativo. */
+  sapLot?: string;
   quantity: number;
   fechaVencimiento?: string | null;
   /** Fila del Excel de origen. */

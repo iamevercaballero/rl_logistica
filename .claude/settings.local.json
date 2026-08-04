@@ -277,7 +277,31 @@
       "Bash(TEST_DB_PASSWORD=gXRrO6cvxMUZkty72zGtpiDmxAx2IOk0 npx jest)",
       "Bash(cp src/modules/movements/movements.service.ts /tmp/ms.bak)",
       "Bash(TEST_DB_PASSWORD=gXRrO6cvxMUZkty72zGtpiDmxAx2IOk0 npx jest test/stock-engine.spec.ts -t \"residuo\")",
-      "Bash(DB_HOST=localhost DB_PORT=5434 DB_USERNAME=rl_test DB_PASSWORD=gXRrO6cvxMUZkty72zGtpiDmxAx2IOk0 DB_DATABASE=mig_check npx typeorm-ts-node-commonjs -d src/data-source.ts migration:revert)"
+      "Bash(DB_HOST=localhost DB_PORT=5434 DB_USERNAME=rl_test DB_PASSWORD=gXRrO6cvxMUZkty72zGtpiDmxAx2IOk0 DB_DATABASE=mig_check npx typeorm-ts-node-commonjs -d src/data-source.ts migration:revert)",
+      "Bash(xargs md5sum)",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 evercab@192.168.100.39 \"cd ~/rl_logistica && find logistica-palets-backend/src logistica-palets-frontend/src -type f \\\\\\( -name '*.ts' -o -name '*.tsx' \\\\\\) | sort | xargs md5sum | md5sum\")",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 evercab@192.168.100.39 \"cd ~/rl_logistica && find logistica-palets-backend/src logistica-palets-frontend/src -type f \\\\\\( -name '*.ts' -o -name '*.tsx' \\\\\\) | sort | xargs md5sum | tr -d ' *' | md5sum\")",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 evercab@192.168.100.39 \"cd ~/rl_logistica && find logistica-palets-backend/src logistica-palets-frontend/src -type f \\\\\\( -name '*.ts' -o -name '*.tsx' \\\\\\) | sort | xargs md5sum\")",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 evercab@192.168.100.39 \"cd ~/rl_logistica && find logistica-palets-backend/src logistica-palets-frontend/src -type f \\\\\\( -name '*.ts' -o -name '*.tsx' \\\\\\) | LC_ALL=C sort | xargs md5sum | tr -d ' *' | md5sum\")",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 evercab@192.168.100.39 \"cd ~/rl_logistica && docker compose -f docker-compose.staging.yml --env-file .env.staging exec -T db psql -U rl_staging -d logistica_palets -c \\\\\"SELECT table_name, column_name, data_type, numeric_precision, numeric_scale FROM information_schema.columns WHERE \\(table_name,column_name\\) IN \\(\\('stocks','currentQuantity'\\),\\('lots','stockActual'\\),\\('pallets','quantity'\\),\\('movements','quantity'\\),\\('movement_details','quantity'\\),\\('logistics_documents','totalQuantity'\\),\\('adjustment_requests','totalQuantity'\\),\\('adjustment_request_lines','totalQuantity'\\),\\('sap_stock_snapshots','sapQuantity'\\)\\) ORDER BY table_name;\\\\\" -c \\\\\"SELECT column_name FROM information_schema.columns WHERE table_name='lots' AND column_name='supplierLot';\\\\\"\")",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 evercab@192.168.100.39 \"cd ~/rl_logistica && docker compose -f docker-compose.test.yml up -d db-test 2>&1 | tail -5 && sleep 6 && docker network ls | grep -i test\")",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 evercab@192.168.100.39 \"cd ~/rl_logistica/logistica-palets-backend && docker run --rm --network rl_logistica_test_network -v ~/rl_logistica/logistica-palets-backend:/app -w /app -e DB_HOST=db-test -e DB_PORT=5432 -e DB_USERNAME=test -e DB_PASSWORD=test -e DB_DATABASE=logistica_test -e NODE_ENV=test node:20-alpine npx jest --config jest.config.cjs --runInBand 2>&1 | tail -40\")",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 evercab@192.168.100.39 \"cd ~/rl_logistica && docker compose -f docker-compose.test.yml down -v 2>&1 | tail -3\")",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 evercab@192.168.100.39 \"cd ~/rl_logistica && cp docker-compose.staging.yml docker-compose.staging.yml.bak && sed -i '72s|.*|      ALLOW_SEED:        \\\\\"true\\\\\"      # TEMPORAL — volver a \\\\\"false\\\\\" al terminar|' docker-compose.staging.yml && sed -n '70,74p' docker-compose.staging.yml\")",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 evercab@192.168.100.39 \"cd ~/rl_logistica && docker compose -f docker-compose.staging.yml --env-file .env.staging up -d backend 2>&1 | tail -6 && sleep 12 && echo '--- ALLOW_SEED dentro del contenedor ---' && docker compose -f docker-compose.staging.yml exec -T backend printenv ALLOW_SEED NODE_ENV\")",
+      "Bash(curl -fsS -o /dev/null -w 'frontend staging: HTTP %{http_code}\\\\n' https://staging.rl-logistica.com/)",
+      "Bash(grep -n 'F\\\\${r}\\\\|physicalType')",
+      "Bash(git commit -m '@ *)",
+      "Bash(TEST_DB_PASSWORD=gXRrO6cvxMUZkty72zGtpiDmxAx2IOk0 npx ts-node --transpile-only scripts/_tmp-verify-frescura2.ts)",
+      "Bash(git push *)",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 evercab@192.168.100.39 \"cd ~/rl_logistica && tar -xzf ~/rl_logistica_update.tar.gz -C ~/rl_logistica && rm ~/rl_logistica_update.tar.gz && echo '--- ALLOW_SEED tras extraer \\(deberia volver a false\\) ---' && grep -n ALLOW_SEED docker-compose.staging.yml\")",
+      "Bash(ssh -i ~/.ssh/rl_staging_ed25519 evercab@192.168.100.39 \"cd ~/rl_logistica && docker compose -f docker-compose.staging.yml --env-file .env.staging up -d --build backend frontend 2>&1 | tail -20\")",
+      "Bash(curl -fsSI https://staging.rl-logistica.com/)",
+      "Bash(curl -fsS https://staging.rl-logistica.com/)",
+      "Bash(powershell -Command \"Stop-Process -Id 16368 -Force\")",
+      "Bash(curl -sS -X POST http://localhost:3000/api/auth/login -H \"Content-Type: application/json\" -d '{\"username\":\"admin\",\"password\":\"changeme-on-first-login\"}')",
+      "Bash(powershell -Command 'Get-CimInstance Win32_Process -Filter \"Name='\\\\''node.exe'\\\\''\" | Where-Object { $_.CommandLine -like '\\\\''*dist\\\\main*'\\\\'' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }')",
+      "Bash(node --enable-source-maps dist/main)"
     ]
   }
 }

@@ -30,4 +30,8 @@ export class Pallet {
 
   @Column({ type: 'timestamp', nullable: true })
   exitedAt?: Date | null;
+
+  /** Peso físico del pallet (kg) — informativo, cargado por lote en la entrada e impreso en la etiqueta. */
+  @Column({ type: 'numeric', precision: 10, scale: 2, nullable: true, transformer: numericTransformer })
+  weightKg?: number | null;
 }

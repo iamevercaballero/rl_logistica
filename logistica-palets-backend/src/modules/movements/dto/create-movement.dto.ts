@@ -21,6 +21,8 @@ import { adjustmentReasons, movementTypes, MovementType } from '../entities/move
 const QUANTITY_OPTIONS = { maxDecimalPlaces: 3 } as const;
 /** Mínimo positivo representable con 3 decimales — descarta 0 y negativos. */
 const MIN_QUANTITY = 0.001;
+/** Alineado con `pallets.weightKg` numeric(10,2). */
+const WEIGHT_OPTIONS = { maxDecimalPlaces: 2 } as const;
 
 export class PalletItemDto {
   /** SALIDA: ID de palet físico existente (marca palet como EXITED) */
@@ -62,6 +64,13 @@ export class PalletItemDto {
   @IsString()
   @MaxLength(120)
   proveedor?: string;
+
+  /** Peso físico del pallet (kg) — informativo, se imprime en la etiqueta. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber(WEIGHT_OPTIONS)
+  @Min(0)
+  weightKg?: number;
 }
 
 export class CreateMovementDto {

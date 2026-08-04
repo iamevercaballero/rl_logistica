@@ -61,6 +61,8 @@ type LotGroup = {
   id: number; lotCode: string; quantity: string; palletCount: string;
   palletLines: PalletLine[];
   fechaVencimiento: string; fechaFabricacion: string;
+  /** Peso por pallet (kg) — mismo valor para todos los pallets de este lote. */
+  weightKg: string;
 };
 
 // ── Tipo fila FEFO (salida y transferencia)
@@ -139,6 +141,7 @@ const newLotGroup = (): LotGroup => ({
   id: ++_gid, lotCode: "", quantity: "", palletCount: "",
   palletLines: [],
   fechaVencimiento: "", fechaFabricacion: "",
+  weightKg: "",
 });
 
 export default function MovementsPage() {
@@ -569,6 +572,7 @@ export default function MovementsPage() {
           fechaVencimiento: g.fechaVencimiento || undefined,
           fechaFabricacion: g.fechaFabricacion || undefined,
           sapLot: entrySapLot.trim() || undefined,
+          weightKg: g.weightKg ? Number(g.weightKg) : undefined,
         };
         if (g.palletLines.length > 0) {
           return g.palletLines.map((l) => ({ ...base, quantity: Number(l.qty) }));
@@ -1455,8 +1459,8 @@ export default function MovementsPage() {
                       <button type="button" onClick={() => removeLotGroup(group.id)} disabled={lotGroups.length === 1}
                         style={{ background: "none", border: "none", cursor: "pointer", color: "var(--danger)", fontSize: 18, padding: 0, alignSelf: "center" }}>×</button>
                     </div>
-                    {/* Cantidad y pallets */}
-                    <div style={{ padding: "8px 10px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, alignItems: "end" }}>
+                    {/* Cantidad, pallets y peso */}
+                    <div style={{ padding: "8px 10px", display: "grid", gridTemplateColumns: "1fr 1fr 90px", gap: 8, alignItems: "end" }}>
                       <div>
                         <div style={{ fontSize: 10, fontWeight: 700, color: "var(--danger)", textTransform: "uppercase", marginBottom: 2 }}>Cantidad *</div>
                         <input className="input" type="number" min={1} placeholder="Unidades recibidas"
@@ -1467,6 +1471,13 @@ export default function MovementsPage() {
                         <div style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 2 }}>Cant. pallets</div>
                         <input className="input" type="number" min={0} placeholder="Distribuye automático"
                           value={group.palletCount} onChange={(e) => updateGroup(group.id, "palletCount", e.target.value)}
+                          style={{ fontSize: 13 }} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 2 }}>Peso/pallet (kg)</div>
+                        <input className="input" type="number" min={0} step="0.01" placeholder="—"
+                          value={group.weightKg} onChange={(e) => updateGroup(group.id, "weightKg", e.target.value)}
+                          title="Peso por pallet en kg — igual para todos los pallets de este lote. Se imprime en la etiqueta."
                           style={{ fontSize: 13 }} />
                       </div>
                     </div>

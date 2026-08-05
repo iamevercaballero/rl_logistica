@@ -82,8 +82,8 @@ function MapCell({ cell, label, highlighted, dimmed, selected, onSelect, size = 
   const title = [
     cell.code,
     `${meta.label}`,
-    `${cell.pallets} pallet(s)${cell.capacityPallets ? ` de ${cell.capacityPallets}` : ""}`,
-    `${fmtQty(cell.units)} unid.`,
+    `${cell.basesUsed} base(s)${cell.capacityBases ? ` de ${cell.capacityBases}` : ""}`,
+    `${cell.pallets} pallet(s) · ${fmtQty(cell.units)} unid.`,
     ...cell.issues.map((i) => ISSUE_META[i].label),
   ].join(" · ");
 
@@ -140,22 +140,17 @@ function WarehouseMap({
   onSelect: (cell: LocationCell) => void;
   emptyMessage: string;
 }) {
-  /** Pasillo → Rack → celdas (misma jerarquía que el mapa de Depósitos). */
+  /** Sector → Subsectores (cada Subsector es ya una celda única — sin niveles/posiciones). */
   const aisleGroups = useMemo(() => {
-    const byAisle = new Map<string, Map<string, LocationCell[]>>();
+    const byAisle = new Map<string, LocationCell[]>();
     for (const c of cells.filter((c) => c.aisle)) {
-      const racks = byAisle.get(c.aisle!) ?? new Map<string, LocationCell[]>();
-      const key = c.rack ?? "—";
-      racks.set(key, [...(racks.get(key) ?? []), c]);
-      byAisle.set(c.aisle!, racks);
+      byAisle.set(c.aisle!, [...(byAisle.get(c.aisle!) ?? []), c]);
     }
     return [...byAisle.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([aisle, racks]) => ({
+      .map(([aisle, list]) => ({
         aisle,
-        racks: [...racks.entries()]
-          .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
-          .map(([rack, list]) => ({ rack, cells: list })),
+        cells: [...list].sort((a, b) => (a.rack ?? "").localeCompare(b.rack ?? "", undefined, { numeric: true })),
       }));
   }, [cells]);
 
@@ -180,41 +175,25 @@ function WarehouseMap({
       {aisleGroups.map((g) => (
         <div key={g.aisle} style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
           <div style={{ background: "var(--bg)", padding: "7px 12px", fontSize: 13, fontWeight: 800, borderBottom: "1px solid var(--border)" }}>
-            Pasillo {g.aisle}
+            Sector {g.aisle}
             <span style={{ fontWeight: 400, color: "var(--muted)", marginLeft: 8, fontSize: 12 }}>
-              {g.racks.length} rack{g.racks.length !== 1 ? "s" : ""}
+              {g.cells.length} subsector{g.cells.length !== 1 ? "es" : ""}
             </span>
           </div>
-          <div style={{ display: "flex", gap: 14, padding: 12, flexWrap: "wrap" }}>
-            {g.racks.map((r) => {
-              const levels = [...new Set(r.cells.map((c) => c.level ?? 1))].sort((a, b) => b - a);
-              return (
-                <div key={r.rack}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", marginBottom: 4, textAlign: "center" }}>{r.rack}</div>
-                  <div style={{ display: "grid", gap: 3 }}>
-                    {levels.map((lvl) => (
-                      <div key={lvl} style={{ display: "flex", gap: 3, alignItems: "center" }}>
-                        <span style={{ fontSize: 9, color: "var(--muted)", width: 20, fontFamily: "monospace" }}>N{lvl}</span>
-                        {r.cells
-                          .filter((c) => (c.level ?? 1) === lvl)
-                          .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-                          .map((c) => (
-                            <MapCell
-                              key={c.id}
-                              cell={c}
-                              label={cellLabel(c)}
-                              highlighted={!!highlight?.has(c.id)}
-                              dimmed={!!highlight && !highlight.has(c.id)}
-                              selected={selectedId === c.id}
-                              onSelect={onSelect}
-                            />
-                          ))}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
+          <div style={{ display: "flex", gap: 8, padding: 12, flexWrap: "wrap" }}>
+            {g.cells.map((c) => (
+              <div key={c.id} style={{ textAlign: "center" }}>
+                <MapCell
+                  cell={c}
+                  label={cellLabel(c)}
+                  highlighted={!!highlight?.has(c.id)}
+                  dimmed={!!highlight && !highlight.has(c.id)}
+                  selected={selectedId === c.id}
+                  onSelect={onSelect}
+                />
+                <div style={{ fontSize: 9, color: "var(--muted)", marginTop: 2, fontFamily: "monospace" }}>{c.rack ?? c.code}</div>
+              </div>
+            ))}
           </div>
         </div>
       ))}
@@ -379,10 +358,8 @@ function LocationDrawer({
             </h3>
             <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--muted)" }}>
               {zoneMeta(loc?.zone) ? `${zoneMeta(loc?.zone)!.icon} ${zoneMeta(loc?.zone)!.label}` : "Sin zona"}
-              {loc?.aisle && <> · Pasillo {loc.aisle}</>}
+              {loc?.aisle && <> · Sector {loc.aisle}</>}
               {loc?.rack && <> · {loc.rack}</>}
-              {loc?.level != null && <> · Nivel {loc.level}</>}
-              {loc?.position != null && <> · Pos. {loc.position}</>}
               {loc?.warehouseName && <> · {loc.warehouseName}</>}
             </p>
           </div>
@@ -402,7 +379,8 @@ function LocationDrawer({
             <>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 8 }}>
                 <Kpi label="Estado" value={loc.active ? "Activa" : "Inactiva"} accent={loc.active ? "var(--success)" : "var(--danger)"} />
-                <Kpi label="Capacidad" value={occ.capacity != null ? `${occ.pallets} / ${occ.capacity}` : `${occ.pallets} pallets`} />
+                <Kpi label="Bases" value={occ.basesCapacity != null ? `${occ.basesUsed} / ${occ.basesCapacity}` : `${occ.basesUsed}`} />
+                <Kpi label="Pallets" value={occ.pallets} />
                 <Kpi label="Unidades" value={fmtQty(occ.units)} />
               </div>
 
@@ -418,13 +396,19 @@ function LocationDrawer({
 
               <div>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 8 }}>
-                  Contenido ({data.pallets.length})
+                  Contenido ({data.pallets.length} pallet{data.pallets.length !== 1 ? "s" : ""} en {data.piles.length} pila{data.piles.length !== 1 ? "s" : ""})
                 </div>
                 {data.pallets.length === 0 ? (
                   <p style={{ fontSize: 13, color: "var(--muted)" }}>Ubicación libre — sin pallets.</p>
                 ) : (
-                  <div style={{ display: "grid", gap: 8 }}>
-                    {data.pallets.map((p) => {
+                  <div style={{ display: "grid", gap: 14 }}>
+                    {data.piles.map((pile) => (
+                      <div key={pile.pilaId ?? "sin-pila"} style={{ display: "grid", gap: 8 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", display: "flex", alignItems: "center", gap: 6 }}>
+                          {pile.sequence != null ? `Pila ${String(pile.sequence).padStart(2, "0")}` : "Sin pila asignada"}
+                          <span style={{ fontWeight: 400 }}>· {pile.pallets.length} nivel{pile.pallets.length !== 1 ? "es" : ""}</span>
+                        </div>
+                        {[...pile.pallets].sort((a, b) => (a.stackPosition ?? 0) - (b.stackPosition ?? 0)).map((p) => {
                       const dLeft = daysUntil(p.fechaVencimiento);
                       const expiryColor =
                         dLeft == null ? undefined : dLeft < 0 ? "var(--danger)" : dLeft <= 30 ? "var(--warning)" : undefined;
@@ -539,6 +523,8 @@ function LocationDrawer({
                         </div>
                       );
                     })}
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -632,9 +618,9 @@ export default function LocationsPage() {
     return cells.filter((c) => (c.zone ?? "SIN_ZONA") === zoneFilter);
   }, [cells, zoneFilter]);
 
-  /** Vista "Ubicaciones libres": solo huecos activos con lugar disponible. */
+  /** Vista "Ubicaciones libres": solo sectores activos con bases disponibles. */
   const freeCells = useMemo(
-    () => zoneFiltered.filter((c) => c.active && (c.state === "FREE" || (c.capacityPallets != null && c.pallets < c.capacityPallets))),
+    () => zoneFiltered.filter((c) => c.active && (c.state === "FREE" || (c.capacityBases != null && c.basesUsed < c.capacityBases))),
     [zoneFiltered],
   );
 
@@ -1026,7 +1012,7 @@ export default function LocationsPage() {
                             {c.issues.map((i) => <IssueBadge key={i} issue={i} />)}
                           </td>
                           <td style={{ textAlign: "right" }}>
-                            {c.pallets}{c.capacityPallets != null ? ` / ${c.capacityPallets}` : ""}
+                            {c.basesUsed}{c.capacityBases != null ? ` / ${c.capacityBases}` : ""} base{c.basesUsed !== 1 ? "s" : ""}
                           </td>
                           <td style={{ textAlign: "right" }}>{fmtQty(c.units)}</td>
                           <td style={{ textAlign: "right", color: Math.abs(c.units - c.stockUnits) > 0.001 ? "#eab308" : undefined, fontWeight: Math.abs(c.units - c.stockUnits) > 0.001 ? 800 : 400 }}>

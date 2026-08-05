@@ -24,10 +24,14 @@ export const temperatureZones = ['AMBIENT', 'CHILLED', 'FROZEN'] as const;
 export type TemperatureZone = (typeof temperatureZones)[number];
 
 /**
- * Ubicación física del depósito. Es la unidad que referencian stock, pallets
- * y movimientos (locationId). La jerarquía Zona → Pasillo → Rack → Nivel →
- * Posición se modela como atributos de la misma fila: el código sigue siendo
- * el identificador operativo y nada del resto del sistema cambia.
+ * Ubicación física del depósito — es el Sector-Subsector que elige el
+ * operario (ej. "B-B1"), la unidad que referencian stock, pallets y
+ * movimientos (locationId). `aisle`/`rack` guardan Sector/Subsector (nombres
+ * de columna sin cambiar por menor superficie de cambio); `level`/`position`
+ * quedan sin usar — todo el depósito es apilado en piso, no hay estantería de
+ * niveles fijos direccionables. La capacidad real ya no se mide en pallets
+ * sino en bases (`capacityBases`): cada base es una pila, y una pila puede
+ * alojar varios pallets apilables. Ver entidad `Pila`.
  */
 @Index('uq_location_warehouse_code', ['warehouse', 'code'], { unique: true })
 @Index('idx_location_zone', ['zone'])
@@ -37,7 +41,7 @@ export class Location {
   id: string;
 
   @Column()
-  code: string; // ej: A-R1-N2-P3
+  code: string; // ej: B-B1 (Sector-Subsector)
 
   @Column({ default: 'RACK' })
   type: string; // RACK, PISO, TEMPORAL
@@ -46,25 +50,37 @@ export class Location {
   @Column({ type: 'varchar', length: 30, nullable: true })
   zone?: string | null;
 
-  /** Pasillo (ej: "A") */
+  /** Sector (ej: "B") */
   @Column({ type: 'varchar', length: 20, nullable: true })
   aisle?: string | null;
 
-  /** Rack dentro del pasillo (ej: "R2") */
+  /** Subsector dentro del sector (ej: "B1") */
   @Column({ type: 'varchar', length: 20, nullable: true })
   rack?: string | null;
 
-  /** Nivel del rack (1 = piso) */
+  /** @deprecated Sin uso — el depósito es 100% apilado en piso, no hay niveles direccionables. */
   @Column({ type: 'int', nullable: true })
   level?: number | null;
 
-  /** Posición dentro del nivel */
+  /** @deprecated Sin uso — reemplazado por Pila (agrupación de pallets apilados). */
   @Column({ type: 'int', nullable: true })
   position?: number | null;
 
-  /** Capacidad en pallets (null = sin límite definido) */
+  /** @deprecated Reemplazado por `capacityBases` — la capacidad real es en pilas, no en pallets sueltos. */
   @Column({ type: 'int', nullable: true })
   capacityPallets?: number | null;
+
+  /** Capacidad en bases (pilas) que caben en este Sector-Subsector. null = sin límite definido. */
+  @Column({ type: 'int', nullable: true })
+  capacityBases?: number | null;
+
+  /**
+   * Techo de niveles de apilamiento propio del Sector-Subsector (ej. limitado
+   * por altura física del sector), independiente del `maxStackLevel` del
+   * producto — el motor de colocación usa el menor de los dos.
+   */
+  @Column({ type: 'int', nullable: true })
+  defaultMaxStackLevel?: number | null;
 
   /* ── Restricciones para slotting (ubicación recomendada) ───────────────── */
 

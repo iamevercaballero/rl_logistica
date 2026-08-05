@@ -14,9 +14,11 @@ import {
 import { locationZones } from '../entities/location.entity';
 
 /**
- * Generador masivo de estructura: crea las posiciones de una zona en lote.
- * Código resultante: [prefijo-]PASILLO-F{rack}-N{nivel}-P{posición}
- * (las partes ausentes se omiten; una zona plana genera [prefijo-]P{n}).
+ * Generador masivo de estructura: crea los Sector-Subsector de una zona en
+ * lote. Código resultante: [prefijo-]SECTOR-SECTOR{n} (ej: "B-B1"), o
+ * [prefijo-]S{n} si no se indican sectores (subsectores planos, sin letra).
+ * Todo el depósito es apilado en piso — no hay racks/niveles/posiciones que
+ * generar acá; la capacidad real la da `capacityBases` (bases/pilas).
  */
 export class GenerateLocationsDto {
   @IsUUID()
@@ -31,40 +33,43 @@ export class GenerateLocationsDto {
   @MaxLength(10)
   codePrefix?: string;
 
-  /** Pasillos a crear (ej: ["A","B"]). Omitido = zona plana sin pasillos. */
+  /** Sectores a crear (ej: ["A","B"]). Omitido = subsectores planos sin letra de sector. */
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(26)
   @IsString({ each: true })
-  aisles?: string[];
+  sectors?: string[];
 
-  /** Racks por pasillo. */
+  /**
+   * Número del primer subsector a crear (ej: 4 → arranca en B4). Permite
+   * correr el generador varias veces sobre el mismo sector con capacidades
+   * distintas por tramo (ej: B1-B3 con una capacidad, B4-B13 con otra) sin
+   * pisar lo ya creado — es idempotente por código, igual que antes.
+   */
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(50)
-  racks?: number;
+  subsectorStart?: number;
 
-  /** Niveles por rack (1 = piso). */
+  /** Cantidad de subsectores a crear a partir de `subsectorStart` (ej: 10 → B4..B13 si arranca en 4). */
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  subsectorsPerSector: number;
+
+  /** Capacidad en bases (pilas) de cada Sector-Subsector creado. */
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(10)
-  levels?: number;
+  capacityBases?: number;
 
-  /** Posiciones por nivel (o posiciones totales en zona plana). */
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(100)
-  positions: number;
-
-  /** Capacidad en pallets de cada posición creada. */
+  /** Techo de niveles de apilamiento propio de estos Sector-Subsector. */
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  capacityPallets?: number;
+  defaultMaxStackLevel?: number;
 }

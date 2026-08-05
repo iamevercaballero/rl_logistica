@@ -12,12 +12,16 @@
 import { DataSource } from 'typeorm';
 import { MovementsService } from '../src/modules/movements/movements.service';
 import { DocumentSequenceService } from '../src/modules/movements/document-sequence.service';
+import { PilasService } from '../src/modules/pilas/pilas.service';
 import { ReportsService } from '../src/modules/reports/reports.service';
 import { Product } from '../src/modules/products/entities/product.entity';
 import { Stock } from '../src/modules/stocks/entities/stock.entity';
 import { Lot } from '../src/modules/lots/entities/lot.entity';
 import { Pallet } from '../src/modules/pallets/entities/pallet.entity';
+import { Location } from '../src/modules/locations/entities/location.entity';
+import { Pila } from '../src/modules/pilas/entities/pila.entity';
 import { Movement } from '../src/modules/movements/entities/movement.entity';
+import { MovementDetail } from '../src/modules/movements/entities/movement-detail.entity';
 import { AdjustmentRequest } from '../src/modules/adjustments/entities/adjustment-request.entity';
 import { SapStockSnapshot } from '../src/modules/reports/entities/sap-stock.entity';
 import type { EventsGateway } from '../src/modules/events/events.gateway';
@@ -52,7 +56,7 @@ beforeAll(async () => {
     `CREATE UNIQUE INDEX IF NOT EXISTS "uq_stock_cell" ON stocks ` +
     `("productId", COALESCE("warehouseId", ${NIL}), COALESCE("locationId", ${NIL}))`,
   );
-  service = new MovementsService(ds, noopEvents, noopCache, new DocumentSequenceService(), noopUploads);
+  service = new MovementsService(ds, noopEvents, noopCache, new DocumentSequenceService(), noopUploads, new PilasService());
   reports = new ReportsService(ds, ds.getRepository(SapStockSnapshot), noopCache);
 }, 60_000);
 
@@ -67,7 +71,7 @@ beforeEach(async () => {
 
 describe('motor de stock — flujo básico', () => {
   it('una ENTRADA crea stock, lote y palet con la cantidad correcta', async () => {
-    await service.create({
+    const result = await service.create({
       type: 'ENTRY',
       productId: base.product.id,
       warehouseId: base.warehouse.id,
@@ -83,6 +87,18 @@ describe('motor de stock — flujo básico', () => {
     expect(lot!.stockActual).toBe(100);
     expect(pallets).toHaveLength(1);
     expect(pallets[0].quantity).toBe(100);
+
+    // El motor de colocación asigna pila/nivel al crear el pallet.
+    expect(pallets[0].currentLocationId).toBe(base.location.id);
+    expect(pallets[0].pilaId).toBeTruthy();
+    expect(pallets[0].stackPosition).toBe(1);
+    const pila = await ds.getRepository(Pila).findOne({ where: { id: pallets[0].pilaId! } });
+    expect(pila!.locationId).toBe(base.location.id);
+    expect(pila!.productId).toBe(base.product.id);
+
+    const detail = await ds.getRepository(MovementDetail).findOne({ where: { movementId: result.movementId } });
+    expect(detail!.locationId).toBe(base.location.id);
+    expect(detail!.pilaId).toBe(pallets[0].pilaId);
   });
 
   it('una SALIDA bulk consume primero el lote de menor vencimiento (FEFO)', async () => {
@@ -400,5 +416,85 @@ describe('motor de stock — cantidades decimales', () => {
 
     const codes = (await ds.getRepository(Pallet).find()).map((p) => p.code);
     expect(new Set(codes).size).toBe(2);
+  });
+});
+
+describe('motor de stock — colocación en pilas', () => {
+  it('un lote apilable hasta 3 arma 2 pilas para 6 pallets', async () => {
+    await ds.getRepository(Product).update(base.product.id, { stackable: true, maxStackLevel: 3 });
+
+    const palletItems = Array.from({ length: 6 }, (_, i) => ({ lotCode: `LP-${i}`, quantity: 10 }));
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      palletItems,
+    }, USER_ID);
+
+    const pallets = await ds.getRepository(Pallet).find({ where: { currentLocationId: base.location.id } });
+    expect(pallets).toHaveLength(6);
+    const pilaIds = new Set(pallets.map((p) => p.pilaId));
+    expect(pilaIds.size).toBe(2);
+
+    for (const pilaId of pilaIds) {
+      const members = pallets.filter((p) => p.pilaId === pilaId).sort((a, b) => a.stackPosition! - b.stackPosition!);
+      expect(members.map((p) => p.stackPosition)).toEqual(members.map((_, i) => i + 1));
+      expect(members.length).toBeLessThanOrEqual(3);
+    }
+  });
+
+  it('un producto no apilable abre una pila por pallet', async () => {
+    await ds.getRepository(Product).update(base.product.id, { stackable: false });
+
+    const palletItems = Array.from({ length: 3 }, (_, i) => ({ lotCode: `LNS-${i}`, quantity: 10 }));
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      palletItems,
+    }, USER_ID);
+
+    const pallets = await ds.getRepository(Pallet).find({ where: { currentLocationId: base.location.id } });
+    expect(pallets).toHaveLength(3);
+    expect(new Set(pallets.map((p) => p.pilaId)).size).toBe(3);
+    expect(pallets.every((p) => p.stackPosition === 1)).toBe(true);
+  });
+
+  it('una segunda entrada del mismo producto consolida en la pila ya abierta', async () => {
+    await ds.getRepository(Product).update(base.product.id, { stackable: true, maxStackLevel: 5 });
+
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      palletItems: [{ lotCode: 'LC-1', quantity: 10 }],
+    }, USER_ID);
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      palletItems: [{ lotCode: 'LC-2', quantity: 10 }],
+    }, USER_ID);
+
+    const pallets = await ds.getRepository(Pallet).find({ where: { currentLocationId: base.location.id } });
+    expect(pallets).toHaveLength(2);
+    expect(pallets[0].pilaId).toBe(pallets[1].pilaId);
+    expect(new Set(pallets.map((p) => p.stackPosition))).toEqual(new Set([1, 2]));
+
+    const pilaCount = await ds.getRepository(Pila).count({ where: { locationId: base.location.id } });
+    expect(pilaCount).toBe(1);
+  });
+
+  it('rechaza la entrada si el sector no tiene bases libres', async () => {
+    const tight = await ds.getRepository(Location).save(
+      ds.getRepository(Location).create({ code: 'TIGHT-1', type: 'PISO', warehouse: base.warehouse, active: true, capacityBases: 1 }),
+    );
+    await ds.getRepository(Product).update(base.product.id, { stackable: false });
+
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: tight.id,
+      palletItems: [{ lotCode: 'LT-1', quantity: 10 }],
+    }, USER_ID);
+
+    await expect(service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: tight.id,
+      palletItems: [{ lotCode: 'LT-2', quantity: 10 }],
+    }, USER_ID)).rejects.toThrow(/bases libres/);
+
+    // El rechazo no debe dejar stock/pallet a medio escribir.
+    const pallets = await ds.getRepository(Pallet).find({ where: { currentLocationId: tight.id } });
+    expect(pallets).toHaveLength(1);
   });
 });

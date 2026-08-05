@@ -10,6 +10,7 @@ import { RegularizeMovementDto } from './dto/regularize-movement.dto';
 import { RequestQuantityEditDto } from './dto/request-quantity-edit.dto';
 import { TransferBatchDto } from './dto/transfer-batch.dto';
 import { MovementsQueryDto } from './dto/movements-query.dto';
+import { PreviewPlacementDto } from './dto/preview-placement.dto';
 import { Movement, MovementType } from './entities/movement.entity';
 import { MovementDetail } from './entities/movement-detail.entity';
 import { LogisticsDocument } from './entities/logistics-document.entity';
@@ -26,6 +27,7 @@ import { DeepPartial } from 'typeorm/common/DeepPartial';
 import { EventsGateway } from '../events/events.gateway';
 import { CacheService } from '../cache/cache.service';
 import { roundQuantity } from '../../common/quantity';
+import { PilasService, PlacementItem } from '../pilas/pilas.service';
 
 @Injectable()
 export class MovementsService {
@@ -35,6 +37,7 @@ export class MovementsService {
     private readonly cache: CacheService,
     private readonly sequences: DocumentSequenceService,
     private readonly uploads: UploadsService,
+    private readonly pilas: PilasService,
   ) {}
 
   /**
@@ -232,6 +235,20 @@ export class MovementsService {
   }
 
   /**
+   * Vista previa de colocación: cómo van a quedar armadas las pilas para
+   * `palletCount` pallets de `productId` entrando a `locationId`. No
+   * confirma nada — la colocación real se decide de nuevo (y ahí sí se
+   * confirma) cuando se envía la entrada.
+   */
+  async previewPlacement(dto: PreviewPlacementDto) {
+    const items: PlacementItem[] = Array.from({ length: dto.palletCount }, (_, i) => ({
+      key: String(i),
+      productId: dto.productId,
+    }));
+    return this.pilas.placePallets(this.dataSource.manager, dto.locationId, items, { commit: false });
+  }
+
+  /**
    * Transferencia multi-producto: mueve los pallets seleccionados (de distintos
    * productos) de una ubicación a otra en UNA sola transacción. Genera un
    * movimiento TRANSFER por producto; si una línea falla se revierte todo.
@@ -393,11 +410,46 @@ export class MovementsService {
         await this.autoFefoExit(manager, dto.productId, resolved.locationId, resolved.warehouseId, totalQty, movement.id);
       }
 
+      // ENTRADA: resolver los lotes de antemano y armar el plan de pilas para
+      // todo el lote de una vez — el motor de colocación necesita ver todos
+      // los pallets juntos para decidir cómo se agrupan (no tiene sentido
+      // llamarlo palet a palet, perdería la posibilidad de consolidar).
+      const lotByItemIndex = new Map<number, Lot>();
+      let placementByKey: Map<string, { pilaId: string; stackPosition: number }> | null = null;
+
+      if (dto.type === 'ENTRY' && resolved.locationId && dto.palletItems?.length) {
+        const placementItems: PlacementItem[] = [];
+        for (let idx = 0; idx < dto.palletItems.length; idx++) {
+          const item = dto.palletItems[idx];
+          if (!item.lotCode) continue;
+          const lot = await this.findOrCreateLot(
+            manager, dto.productId, item.lotCode,
+            item.fechaVencimiento, item.proveedor,
+            item.fechaFabricacion, item.sapLot,
+            dto.isProvisional ? 'PENDING_REGULARIZATION' : 'NORMAL',
+            item.supplierLot,
+          );
+          lotByItemIndex.set(idx, lot);
+          placementItems.push({ key: String(idx), productId: dto.productId, lotId: lot.id });
+        }
+        if (placementItems.length > 0) {
+          const plan = await this.pilas.placePallets(manager, resolved.locationId, placementItems, { commit: true });
+          placementByKey = new Map();
+          for (const pile of plan.piles) {
+            for (const pileItem of pile.items) {
+              placementByKey.set(pileItem.key, { pilaId: pile.pilaId, stackPosition: pileItem.stackPosition });
+            }
+          }
+        }
+      }
+
       // Loop palet a palet
       if (dto.palletItems?.length) {
-        for (const item of dto.palletItems) {
+        for (let itemIdx = 0; itemIdx < dto.palletItems.length; itemIdx++) {
+          const item = dto.palletItems[itemIdx];
           let resolvedLotId: string | undefined;
           let resolvedPalletId: string | undefined = item.palletId;
+          let resolvedPilaId: string | undefined;
           // locationId para MovementDetail — ubicación física del palet en este movimiento
           let detailLocationId: string | null = null;
 
@@ -484,6 +536,23 @@ export class MovementsService {
               await this.applyIncrease(manager, dto.productId, resolved.toWarehouseId, dto.toLocationId ?? null, item.quantity);
               pallet.currentLocationId = dto.toLocationId ?? null;
 
+              // El palet necesita una pila en el sector destino — la de origen
+              // ya no aplica (puede estar en otro Sector-Subsector entero).
+              if (dto.toLocationId) {
+                const destPlan = await this.pilas.placePallets(
+                  manager, dto.toLocationId,
+                  [{ key: 'x', productId: dto.productId, lotId: pallet.lotId }],
+                  { commit: true },
+                );
+                const destPile = destPlan.piles[0];
+                pallet.pilaId = destPile?.pilaId ?? null;
+                pallet.stackPosition = destPile?.items[0]?.stackPosition ?? null;
+                resolvedPilaId = pallet.pilaId ?? undefined;
+              } else {
+                pallet.pilaId = null;
+                pallet.stackPosition = null;
+              }
+
             } else if (dto.type === 'ADJUSTMENT_IN') {
               // Corrección de salida: devolver cantidad a un palet ya existente (posiblemente
               // EXITED). El stock agregado ya se sumó arriba (isEntry → applyIncrease con el
@@ -498,8 +567,8 @@ export class MovementsService {
             await manager.save(pallet);
 
           } else if (item.lotCode) {
-            // ENTRADA: crear/encontrar lote y registrar nuevo palet
-            const lot = await this.findOrCreateLot(
+            // ENTRADA: lote ya resuelto arriba (junto con el plan de colocación).
+            const lot = lotByItemIndex.get(itemIdx) ?? await this.findOrCreateLot(
               manager, dto.productId, item.lotCode,
               item.fechaVencimiento, item.proveedor,
               item.fechaFabricacion, item.sapLot,
@@ -508,6 +577,7 @@ export class MovementsService {
             );
             resolvedLotId = lot.id;
             const existingCount = await manager.getRepository(Pallet).count({ where: { lotId: lot.id } });
+            const placement = placementByKey?.get(String(itemIdx));
             // El código incluye el material porque `pallets.code` es único global
             // y el código de lote NO lo es: los lotes SAP se numeran por fecha
             // (Z011008201), así que dos materiales recibidos el mismo día comparten
@@ -519,9 +589,12 @@ export class MovementsService {
               currentLocationId: resolved.locationId ?? null,
               status: 'AVAILABLE',
               weightKg: item.weightKg ?? null,
+              pilaId: placement?.pilaId ?? null,
+              stackPosition: placement?.stackPosition ?? null,
             });
             const savedPallet = await manager.save(pallet);
             resolvedPalletId = savedPallet.id;
+            resolvedPilaId = placement?.pilaId;
             // Para ENTRADA: la ubicación de destino es donde queda el palet
             detailLocationId = resolved.locationId ?? null;
           } else {
@@ -538,6 +611,7 @@ export class MovementsService {
               palletId: resolvedPalletId ?? undefined,
               quantity: item.quantity,
               locationId: detailLocationId ?? undefined,  // ← FIX 1: guardar ubicación física
+              pilaId: resolvedPilaId ?? undefined,
             });
             await manager.save(detail);
             // TRANSFER only moves pallets between locations; lot.stockActual must NOT change

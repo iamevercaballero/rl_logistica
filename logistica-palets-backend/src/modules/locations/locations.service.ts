@@ -8,6 +8,8 @@ import { Product } from '../products/entities/product.entity';
 import { CreateLocationDto } from './dto/create-location.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
 import { GenerateLocationsDto } from './dto/generate-locations.dto';
+import { Pila } from '../pilas/entities/pila.entity';
+import { PilasService } from '../pilas/pilas.service';
 
 /** Estado de disponibilidad de una ubicación para el selector guiado. */
 export type LocationAvailabilityStatus = 'FREE' | 'PARTIAL' | 'FULL' | 'BLOCKED';
@@ -56,12 +58,14 @@ export type LocationCell = {
   zone: string | null;
   aisle: string | null;
   rack: string | null;
-  level: number | null;
-  position: number | null;
+  /** @deprecated Sin uso — depósito 100% apilado en piso. */
   capacityPallets: number | null;
+  /** Bases (pilas) ocupadas — la capacidad real. */
+  basesUsed: number;
+  capacityBases: number | null;
   warehouseId: string | null;
   warehouseName: string | null;
-  /** Pallets físicamente ubicados acá (excluye EXITED/EMPTY). */
+  /** Pallets físicamente ubicados acá (excluye EXITED/EMPTY). Informativo. */
   pallets: number;
   /** Unidades según los pallets ubicados. */
   units: number;
@@ -159,6 +163,9 @@ export class LocationsService {
     private readonly palletRepo: Repository<Pallet>,
     @InjectRepository(Product)
     private readonly productRepo: Repository<Product>,
+    @InjectRepository(Pila)
+    private readonly pilaRepo: Repository<Pila>,
+    private readonly pilas: PilasService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -194,6 +201,8 @@ export class LocationsService {
       level: dto.level ?? null,
       position: dto.position ?? null,
       capacityPallets: dto.capacityPallets ?? null,
+      capacityBases: dto.capacityBases ?? null,
+      defaultMaxStackLevel: dto.defaultMaxStackLevel ?? null,
       temperatureZone: dto.temperatureZone ?? 'AMBIENT',
       maxWeightKg: dto.maxWeightKg ?? null,
       maxHeightCm: dto.maxHeightCm ?? null,
@@ -205,56 +214,47 @@ export class LocationsService {
   }
 
   /**
-   * Genera la estructura de una zona en lote:
-   * pasillos × racks × niveles × posiciones → una Location por posición.
+   * Genera la estructura de una zona en lote: sectores × subsectores → una
+   * Location (Sector-Subsector) por combinación. Todo el depósito es apilado
+   * en piso — no hay racks/niveles/posiciones que generar, la capacidad real
+   * la da `capacityBases` (bases/pilas), no la cantidad de Location rows.
    * Los códigos ya existentes en el depósito se saltean (idempotente).
    */
   async generate(dto: GenerateLocationsDto) {
     const warehouse = await this.warehouseRepo.findOne({ where: { id: dto.warehouseId } });
     if (!warehouse) throw new NotFoundException('Warehouse not found');
 
-    const aisles = (dto.aisles ?? []).map((a) => a.trim().toUpperCase()).filter(Boolean);
-    const racks = aisles.length > 0 ? (dto.racks ?? 1) : 0;
-    const levels = aisles.length > 0 ? (dto.levels ?? 1) : 0;
+    const sectors = (dto.sectors ?? []).map((s) => s.trim().toUpperCase()).filter(Boolean);
 
-    const total = (aisles.length || 1) * (racks || 1) * (levels || 1) * dto.positions;
+    const total = (sectors.length || 1) * dto.subsectorsPerSector;
     if (total > 2000) {
       throw new BadRequestException(
-        `La estructura generaría ${total} ubicaciones (máximo 2000 por tanda). Reducí pasillos/racks/niveles/posiciones.`,
+        `La estructura generaría ${total} ubicaciones (máximo 2000 por tanda). Reducí sectores o subsectores.`,
       );
     }
 
     const prefix = dto.codePrefix?.trim().toUpperCase() || null;
-    const isRack = aisles.length > 0;
-    // El tipo físico depende de si hay más de 1 nivel real (rack de verdad),
-    // no de si la ubicación usa la jerarquía pasillo/fila/nivel/posición —
-    // un sector de piso con varias filas (isRack=true, levels=1) sigue siendo PISO.
-    const physicalType = isRack && levels > 1 ? 'RACK' : 'PISO';
+    const start = dto.subsectorStart ?? 1;
+    const end = start + dto.subsectorsPerSector - 1;
 
-    type NewLoc = {
-      code: string; zone: string; aisle: string | null; rack: string | null;
-      level: number | null; position: number | null;
-    };
+    type NewLoc = { code: string; zone: string; aisle: string | null; rack: string | null };
     const wanted: NewLoc[] = [];
 
-    if (isRack) {
-      for (const aisle of aisles) {
-        for (let r = 1; r <= racks; r++) {
-          for (let n = 1; n <= levels; n++) {
-            for (let p = 1; p <= dto.positions; p++) {
-              wanted.push({
-                code: [prefix, aisle, `F${r}`, `N${n}`, `P${p}`].filter(Boolean).join('-'),
-                zone: dto.zone, aisle, rack: `F${r}`, level: n, position: p,
-              });
-            }
-          }
+    if (sectors.length > 0) {
+      for (const sector of sectors) {
+        for (let s = start; s <= end; s++) {
+          const subsector = `${sector}${s}`;
+          wanted.push({
+            code: [prefix, sector, subsector].filter(Boolean).join('-'),
+            zone: dto.zone, aisle: sector, rack: subsector,
+          });
         }
       }
     } else {
-      for (let p = 1; p <= dto.positions; p++) {
+      for (let s = start; s <= end; s++) {
         wanted.push({
-          code: [prefix, `P${p}`].filter(Boolean).join('-'),
-          zone: dto.zone, aisle: null, rack: null, level: null, position: p,
+          code: [prefix, `S${s}`].filter(Boolean).join('-'),
+          zone: dto.zone, aisle: null, rack: `S${s}`,
         });
       }
     }
@@ -271,13 +271,12 @@ export class LocationsService {
     const entities = toCreate.map((w) =>
       this.locationRepo.create({
         code: w.code,
-        type: physicalType,
+        type: 'PISO',
         zone: w.zone,
         aisle: w.aisle,
         rack: w.rack,
-        level: w.level,
-        position: w.position,
-        capacityPallets: dto.capacityPallets ?? null,
+        capacityBases: dto.capacityBases ?? null,
+        defaultMaxStackLevel: dto.defaultMaxStackLevel ?? null,
         warehouse,
       }),
     );
@@ -301,28 +300,27 @@ export class LocationsService {
   }
 
   /**
-   * Disponibilidad por ubicación para el selector guiado de Entrada/Transferencia.
-   * Devuelve, por cada ubicación, los pallets ocupados vs capacidad y un estado:
-   * BLOCKED (inactiva), FULL (sin lugar), PARTIAL (con lugar pero ocupada), FREE.
+   * Disponibilidad por Sector-Subsector para el selector guiado de Entrada/
+   * Transferencia. Devuelve, por cada uno, las bases (pilas) ocupadas vs
+   * capacidad y un estado: BLOCKED (inactiva), FULL (sin bases libres),
+   * PARTIAL (con lugar pero con alguna base ocupada), FREE.
    */
   async availability() {
     const locations = await this.locationRepo.find({ relations: ['warehouse'] });
 
-    // Conteo de pallets vigentes (no despachados ni vacíos) por ubicación
-    const counts = await this.palletRepo
+    // Bases (pilas) por Sector-Subsector.
+    const counts = await this.pilaRepo
       .createQueryBuilder('p')
-      .select('p."currentLocationId"', 'locationId')
-      .addSelect('COUNT(*)', 'occupied')
-      .where("p.status NOT IN ('EXITED', 'EMPTY')")
-      .andWhere('p."currentLocationId" IS NOT NULL')
-      .groupBy('p."currentLocationId"')
-      .getRawMany<{ locationId: string; occupied: string }>();
+      .select('p."locationId"', 'locationId')
+      .addSelect('COUNT(*)', 'bases')
+      .groupBy('p."locationId"')
+      .getRawMany<{ locationId: string; bases: string }>();
 
-    const occByLoc = new Map(counts.map((c) => [c.locationId, Number(c.occupied)]));
+    const basesByLoc = new Map(counts.map((c) => [c.locationId, Number(c.bases)]));
 
     return locations.map((loc) => {
-      const occupied = occByLoc.get(loc.id) ?? 0;
-      const capacity = loc.capacityPallets ?? null;
+      const occupied = basesByLoc.get(loc.id) ?? 0;
+      const capacity = loc.capacityBases ?? null;
       let status: LocationAvailabilityStatus;
       if (!loc.active) status = 'BLOCKED';
       else if (capacity != null && occupied >= capacity) status = 'FULL';
@@ -334,8 +332,6 @@ export class LocationsService {
         zone: loc.zone ?? null,
         aisle: loc.aisle ?? null,
         rack: loc.rack ?? null,
-        level: loc.level ?? null,
-        position: loc.position ?? null,
         warehouseId: loc.warehouse?.id ?? null,
         warehouseName: loc.warehouse?.name ?? null,
         active: loc.active,
@@ -347,11 +343,16 @@ export class LocationsService {
   }
 
   /**
-   * Slotting: recomienda dónde guardar un pallet de `productId`.
-   * Filtra ubicaciones factibles (temperatura, peso, altura, capacidad,
-   * apilamiento) y las puntúa (consolidación con el mismo producto, zona de
-   * almacenamiento, frágil al piso, llenar huecos abiertos). Devuelve top 3 con
-   * el motivo de cada recomendación.
+   * Slotting: recomienda en qué Sector-Subsector guardar un pallet de
+   * `productId`. Filtra sectores factibles (temperatura, peso, altura,
+   * bases libres) y los puntúa (consolidación con el mismo producto ya
+   * apilado, zona de almacenamiento, bases libres). Devuelve top 3 con el
+   * motivo de cada recomendación.
+   *
+   * La factibilidad dura (temperatura/peso/altura) reusa
+   * `PilasService.feasibility()` — la misma lógica que aplica de verdad el
+   * motor de colocación al confirmar una entrada; acá es solo una sugerencia
+   * ligera (no reserva nada, no toma locks).
    */
   async recommend(productId: string, quantity = 1) {
     const product = await this.productRepo.findOne({ where: { id: productId } });
@@ -359,64 +360,42 @@ export class LocationsService {
 
     const locations = await this.locationRepo.find({ relations: ['warehouse'] });
 
-    // Ocupación vigente por ubicación.
-    const counts = await this.palletRepo
+    // Bases (pilas) ocupadas por Sector-Subsector.
+    const baseCounts = await this.pilaRepo
       .createQueryBuilder('p')
-      .select('p."currentLocationId"', 'locationId')
-      .addSelect('COUNT(*)', 'occupied')
-      .where("p.status NOT IN ('EXITED', 'EMPTY')")
-      .andWhere('p."currentLocationId" IS NOT NULL')
-      .groupBy('p."currentLocationId"')
-      .getRawMany<{ locationId: string; occupied: string }>();
-    const occByLoc = new Map(counts.map((c) => [c.locationId, Number(c.occupied)]));
+      .select('p."locationId"', 'locationId')
+      .addSelect('COUNT(*)', 'bases')
+      .groupBy('p."locationId"')
+      .getRawMany<{ locationId: string; bases: string }>();
+    const basesByLoc = new Map(baseCounts.map((c) => [c.locationId, Number(c.bases)]));
 
-    // Ubicaciones que ya contienen el mismo producto (para consolidar).
-    const sameProductRows = await this.palletRepo
+    // Sectores con una pila abierta del mismo producto (para consolidar sin abrir base nueva).
+    const sameProductRows = await this.pilaRepo
       .createQueryBuilder('p')
-      .innerJoin('lots', 'lot', 'lot.id = p."lotId"')
-      .select('DISTINCT p."currentLocationId"', 'locationId')
-      .where('lot."productId" = :productId', { productId })
-      .andWhere("p.status NOT IN ('EXITED', 'EMPTY')")
-      .andWhere('p."currentLocationId" IS NOT NULL')
+      .select('DISTINCT p."locationId"', 'locationId')
+      .where('p."productId" = :productId', { productId })
+      .andWhere("p.status = 'OPEN'")
       .getRawMany<{ locationId: string }>();
     const sameProductLocs = new Set(sameProductRows.map((r) => r.locationId));
-
-    const pWeight = product.weightKg ?? null;
-    const pTemp = product.temperatureZone ?? 'AMBIENT';
 
     const scored = locations
       .filter((loc) => loc.active)
       .map((loc) => {
-        const occupied = occByLoc.get(loc.id) ?? 0;
-        const capacity = loc.capacityPallets ?? null;
+        const basesUsed = basesByLoc.get(loc.id) ?? 0;
+        const capacity = loc.capacityBases ?? null;
+        const consolidates = sameProductLocs.has(loc.id);
         const reasons: string[] = [];
-        const blockers: string[] = [];
 
-        // ── Restricciones duras (factibilidad) ──
-        const hasRoom = capacity == null || occupied < capacity;
-        if (!hasRoom) blockers.push('sin lugar (llena)');
-
-        const locTemp = loc.temperatureZone ?? 'AMBIENT';
-        const tempOk = locTemp === pTemp;
-        if (!tempOk) blockers.push(`temperatura ${locTemp} ≠ ${pTemp}`);
-
-        const maxW = loc.maxWeightKg ?? null;
-        const weightOk = maxW == null || pWeight == null || pWeight <= maxW;
-        if (!weightOk) blockers.push('excede peso máximo');
-
-        const heightOk =
-          loc.maxHeightCm == null || product.heightCm == null || product.heightCm <= loc.maxHeightCm;
-        if (!heightOk) blockers.push('excede altura máxima');
-
-        // No apilable (producto o ubicación) → requiere celda vacía.
-        const stackOk = (product.stackable && loc.allowsStacking) || occupied === 0;
-        if (!stackOk) blockers.push('no apilable y celda ocupada');
-
-        const feasible = hasRoom && tempOk && weightOk && heightOk && stackOk;
+        // Consolidar en una pila ya abierta del mismo producto no exige base
+        // nueva; si no hay dónde consolidar, hace falta lugar para una.
+        const hasRoom = consolidates || capacity == null || basesUsed < capacity;
+        const { feasible: tempWeightHeightOk, blockers } = this.pilas.feasibility(loc, product);
+        if (!hasRoom) blockers.push('sin bases libres');
+        const feasible = hasRoom && tempWeightHeightOk;
 
         // ── Puntaje (mayor = mejor) ──
         let score = 0;
-        if (sameProductLocs.has(loc.id)) {
+        if (consolidates) {
           score += 50;
           reasons.push('mismo producto ya almacenado aquí');
         }
@@ -424,18 +403,10 @@ export class LocationsService {
           score += 20;
           reasons.push('zona de almacenamiento');
         }
-        if (product.fragile && loc.level === 1) {
-          score += 10;
-          reasons.push('producto frágil → nivel piso');
-        }
-        if (occupied > 0 && product.stackable && loc.allowsStacking) {
-          score += 10;
-          reasons.push('aprovecha hueco abierto');
-        }
-        // Desempate suave: preferir más espacio libre.
-        if (capacity != null) score += Math.max(0, capacity - occupied);
+        // Desempate suave: preferir más bases libres.
+        if (capacity != null) score += Math.max(0, capacity - basesUsed);
 
-        return { loc, occupied, capacity, feasible, score, reasons, blockers };
+        return { loc, occupied: basesUsed, capacity, feasible, score, reasons, blockers };
       });
 
     const recommendations = scored
@@ -459,14 +430,14 @@ export class LocationsService {
       product: {
         code: product.code,
         description: product.description,
-        temperatureZone: pTemp,
+        temperatureZone: product.temperatureZone ?? 'AMBIENT',
         fragile: product.fragile,
         rotationPolicy: product.rotationPolicy,
       },
       recommendations,
       message: recommendations.length
         ? null
-        : 'No hay ubicaciones factibles. Revisá temperatura, capacidad, peso o altura.',
+        : 'No hay sectores factibles. Revisá temperatura, capacidad, peso o altura.',
     };
   }
 
@@ -528,10 +499,15 @@ export class LocationsService {
         FROM stocks
         WHERE "locationId" IS NOT NULL
         GROUP BY "locationId"
+      ),
+      pil AS (
+        SELECT "locationId", COUNT(*)::int AS bases
+        FROM pilas
+        GROUP BY "locationId"
       )
       SELECT
         loc.id, loc.code, loc.type, loc.active, loc.zone, loc.aisle, loc.rack,
-        loc.level, loc.position, loc."capacityPallets",
+        loc."capacityPallets", loc."capacityBases",
         w.id                                AS "warehouseId",
         w.name                              AS "warehouseName",
         COALESCE(pal.pallets, 0)            AS pallets,
@@ -540,13 +516,15 @@ export class LocationsService {
         COALESCE(pal."blockedPallets", 0)   AS "blockedPallets",
         COALESCE(pal."expiredPallets", 0)   AS "expiredPallets",
         COALESCE(pal."expiringPallets", 0)  AS "expiringPallets",
-        pal."nearestExpiry"
+        pal."nearestExpiry",
+        COALESCE(pil.bases, 0)              AS "basesUsed"
       FROM locations loc
       LEFT JOIN warehouses w ON w.id = loc."warehouseId"
       LEFT JOIN pal ON pal."locationId" = loc.id
       LEFT JOIN stk ON stk."locationId" = loc.id
+      LEFT JOIN pil ON pil."locationId" = loc.id
       ${whereClause}
-      ORDER BY loc.zone NULLS LAST, loc.aisle NULLS LAST, loc.rack, loc.level, loc.position, loc.code
+      ORDER BY loc.zone NULLS LAST, loc.aisle NULLS LAST, loc.rack, loc.code
       `,
       params,
     );
@@ -590,10 +568,11 @@ export class LocationsService {
     const pallets = Number(raw.pallets);
     const units = Number(raw.units);
     const stockUnits = Number(raw.stockUnits);
-    const capacity = raw.capacityPallets ?? null;
+    const basesUsed = Number(raw.basesUsed);
+    const basesCapacity = raw.capacityBases ?? null;
 
     const issues: LocationIssue[] = [];
-    if (capacity != null && pallets > capacity) issues.push('OVER_CAPACITY');
+    if (basesCapacity != null && basesUsed > basesCapacity) issues.push('OVER_CAPACITY');
     if (raw.blockedPallets > 0) issues.push('BLOCKED_PALLETS');
     if (Math.abs(units - stockUnits) > UNIT_TOLERANCE) issues.push('STOCK_MISMATCH');
     if (raw.expiredPallets > 0) issues.push('EXPIRED');
@@ -613,7 +592,7 @@ export class LocationsService {
     if (!raw.active) state = 'INACTIVE';
     else if (hardIssue) state = 'INCIDENT';
     else if (raw.expiredPallets > 0 || raw.expiringPallets > 0) state = 'EXPIRING';
-    else if (capacity != null && pallets >= capacity && pallets > 0) state = 'FULL';
+    else if (basesCapacity != null && basesUsed >= basesCapacity && basesUsed > 0) state = 'FULL';
     else if (provisional) state = 'PROVISIONAL';
     else if (pallets > 0) state = 'OCCUPIED';
     else state = 'FREE';
@@ -623,7 +602,8 @@ export class LocationsService {
       pallets,
       units,
       stockUnits,
-      capacityPallets: capacity,
+      basesUsed,
+      capacityBases: basesCapacity,
       blockedPallets: Number(raw.blockedPallets),
       expiredPallets: Number(raw.expiredPallets),
       expiringPallets: Number(raw.expiringPallets),
@@ -800,7 +780,7 @@ export class LocationsService {
   async content(id: string) {
     const location = await this.findOne(id);
 
-    const pallets = await this.dataSource.query<LocationContentPallet[]>(
+    const pallets = await this.dataSource.query<(LocationContentPallet & { pilaId: string | null; stackPosition: number | null })[]>(
       `
       SELECT
         p.id                        AS "palletId",
@@ -808,6 +788,8 @@ export class LocationsService {
         p.status                    AS "palletStatus",
         p.quantity::float8          AS quantity,
         p."createdAt"::text         AS "createdAt",
+        p."pilaId",
+        p."stackPosition",
         l.id                        AS "lotId",
         l."lotCode",
         l."supplierLot",
@@ -847,6 +829,28 @@ export class LocationsService {
     const units = pallets.reduce((s, p) => s + Number(p.quantity), 0);
     const stockUnits = Number(stockRow?.stockUnits ?? 0);
 
+    // Agrupar por pila (base) para el panel — a los pallets sin pilaId
+    // (legado, o restaurados sin volver a pasar por el motor) se los agrupa
+    // aparte, no se los pierde.
+    const pilaIds = [...new Set(pallets.map((p) => p.pilaId).filter((v): v is string => !!v))];
+    const pilaRows = pilaIds.length
+      ? await this.pilaRepo.find({ where: { id: In(pilaIds) } })
+      : [];
+    const pilaById = new Map(pilaRows.map((p) => [p.id, p]));
+
+    const pileGroups = new Map<string, { pilaId: string | null; sequence: number | null; pallets: typeof pallets }>();
+    for (const p of pallets) {
+      const key = p.pilaId ?? '__sin_pila__';
+      const group = pileGroups.get(key) ?? {
+        pilaId: p.pilaId,
+        sequence: p.pilaId ? pilaById.get(p.pilaId)?.sequence ?? null : null,
+        pallets: [],
+      };
+      group.pallets.push(p);
+      pileGroups.set(key, group);
+    }
+    const piles = [...pileGroups.values()].sort((a, b) => (a.sequence ?? Infinity) - (b.sequence ?? Infinity));
+
     return {
       location: {
         id: location.id,
@@ -856,20 +860,24 @@ export class LocationsService {
         zone: location.zone ?? null,
         aisle: location.aisle ?? null,
         rack: location.rack ?? null,
-        level: location.level ?? null,
-        position: location.position ?? null,
-        capacityPallets: location.capacityPallets ?? null,
+        capacityBases: location.capacityBases ?? null,
         temperatureZone: location.temperatureZone,
         warehouseId: location.warehouse?.id ?? null,
         warehouseName: location.warehouse?.name ?? null,
       },
       occupancy: {
         pallets: pallets.length,
-        capacity: location.capacityPallets ?? null,
+        basesUsed: piles.length,
+        basesCapacity: location.capacityBases ?? null,
         units,
         stockUnits,
         mismatch: Math.abs(units - stockUnits) > UNIT_TOLERANCE ? stockUnits - units : 0,
       },
+      piles: piles.map((g) => ({
+        pilaId: g.pilaId,
+        sequence: g.sequence,
+        pallets: g.pallets.map((p) => ({ ...p, quantity: Number(p.quantity) })),
+      })),
       pallets: pallets.map((p) => ({ ...p, quantity: Number(p.quantity) })),
     };
   }
@@ -1010,6 +1018,12 @@ export class LocationsService {
       );
     }
 
+    // Sin pallets/stock vivos, cualquier pila que quede acá es residual (vacía
+    // o con solo pallets EXITED) — limpiarla ahora evita que quede colgada
+    // apuntando a un locationId que está a punto de dejar de existir (mismo
+    // riesgo de huérfano que ya se evita arriba para pallets/stocks).
+    await this.pilaRepo.delete({ locationId: id });
+
     return this.locationRepo.remove(location);
   }
 
@@ -1063,6 +1077,11 @@ export class LocationsService {
         `Transferí el contenido antes de eliminarlo.`,
       );
     }
+
+    // Igual que en remove(): sin pallets/stock vivos en ninguna ubicación del
+    // pasillo, cualquier pila residual (vacía o con solo EXITED) se limpia
+    // antes de borrar para no dejarla colgada.
+    await this.pilaRepo.delete({ locationId: In(ids) });
 
     await this.locationRepo.remove(locations);
     return { aisle: normalized, deleted: locations.length };

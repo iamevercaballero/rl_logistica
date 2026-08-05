@@ -4,6 +4,7 @@ import { numericTransformer } from '../../../common/numeric.transformer';
 @Index('idx_pallet_current_location', ['currentLocationId'])
 @Index('idx_pallet_lot', ['lotId'])
 @Index('idx_pallet_status', ['status'])
+@Index('idx_pallet_pila', ['pilaId'])
 @Entity('pallets')
 export class Pallet {
   @PrimaryGeneratedColumn('uuid')
@@ -34,4 +35,12 @@ export class Pallet {
   /** Peso físico del pallet (kg) — informativo, cargado por lote en la entrada e impreso en la etiqueta. */
   @Column({ type: 'numeric', precision: 10, scale: 2, nullable: true, transformer: numericTransformer })
   weightKg?: number | null;
+
+  /** Pila (base física) a la que pertenece este pallet. Null en pallets EXITED/sin pila asignada. */
+  @Column({ type: 'uuid', nullable: true })
+  pilaId?: string | null;
+
+  /** Nivel dentro de la pila — 1 = base (apoya en el piso), 2 = siguiente encima, etc. */
+  @Column({ type: 'int', nullable: true })
+  stackPosition?: number | null;
 }

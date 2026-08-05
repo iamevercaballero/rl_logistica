@@ -11,11 +11,13 @@ import {
   getDocuments,
   regularizeMovement,
   transferBatch,
+  previewPlacement,
   type Movement,
   type MovementType,
   type PalletItem,
   type CreateDocumentPayload,
   type LogisticsDocument,
+  type PlacementPlan,
 } from "../api/movements";
 import { fefoLots, generateSapLot, type Lot } from "../api/lots";
 import { uploadAttachment, ATTACHMENT_CATEGORIES, type AttachmentCategory } from "../api/attachments";
@@ -333,6 +335,20 @@ export default function MovementsPage() {
     staleTime: 15_000,
   });
   const fefoLoading = fefoQ.isFetching;
+
+  // Vista previa de colocación (Entrada): cuántas pilas se van a formar en el
+  // sector elegido, antes de confirmar. Se recalcula solo con la cantidad de
+  // pallets físicos — no hace falta lote/vencimiento resuelto todavía.
+  const previewPalletCount = lotGroups
+    .filter((g) => g.lotCode.trim() && Number(g.quantity) > 0)
+    .reduce((s, g) => s + (g.palletLines.length > 0 ? g.palletLines.length : 1), 0);
+  const placementPreviewQ = useQuery({
+    queryKey: ["placement-preview", locationId, product?.id, previewPalletCount],
+    queryFn: () => previewPlacement({ locationId, productId: product!.id, palletCount: previewPalletCount }),
+    enabled: isEntry && !!product && !!locationId && previewPalletCount > 0,
+    staleTime: 5_000,
+    retry: false,
+  });
 
   useEffect(() => {
     if (!fefoEnabled) { setFefoRows([]); return; }
@@ -1534,6 +1550,44 @@ export default function MovementsPage() {
                   <span style={{ color: "var(--muted)", marginLeft: 10 }}>
                     · {lotGroups.filter((g) => g.lotCode.trim() && Number(g.quantity) > 0).length} lote(s)
                   </span>
+                </div>
+              )}
+
+              {/* Vista previa de colocación — cómo van a quedar armadas las pilas en el sector elegido */}
+              {isEntry && product && locationId && previewPalletCount > 0 && (
+                <div style={{ border: "1.5px solid var(--primary)", borderRadius: 8, padding: "8px 12px", fontSize: 13, background: "var(--primary-light, rgba(0,0,0,0.03))" }}>
+                  {placementPreviewQ.isFetching ? (
+                    <span style={{ color: "var(--muted)" }}>Calculando pilas…</span>
+                  ) : placementPreviewQ.isError ? (
+                    <span style={{ color: "var(--danger)", fontWeight: 700 }}>
+                      {(placementPreviewQ.error as { response?: { data?: { message?: string } } })?.response?.data?.message
+                        ?? "No se pudo calcular la colocación en ese sector."}
+                    </span>
+                  ) : placementPreviewQ.data ? (
+                    <>
+                      <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                        📍 {placementPreviewQ.data.locationCode}: se {placementPreviewQ.data.piles.filter((p) => p.isNew).length > 0 ? "van a formar" : "usan"}{" "}
+                        {placementPreviewQ.data.piles.length} pila{placementPreviewQ.data.piles.length !== 1 ? "s" : ""}
+                        {placementPreviewQ.data.basesTotal != null && (
+                          <span style={{ fontWeight: 500, color: "var(--muted)" }}>
+                            {" "}· {placementPreviewQ.data.basesUsed}/{placementPreviewQ.data.basesTotal} bases ocupadas
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {placementPreviewQ.data.piles.map((p) => (
+                          <span key={p.sequence} style={{
+                            padding: "3px 8px", borderRadius: 6, fontSize: 12, fontWeight: 600,
+                            background: p.isNew ? "var(--bg)" : "var(--success-light, rgba(34,197,94,0.12))",
+                            border: `1px solid ${p.isNew ? "var(--border)" : "var(--success)"}`,
+                          }}>
+                            Pila {String(p.sequence).padStart(2, "0")} · {p.items.length} nivel{p.items.length !== 1 ? "es" : ""}
+                            {!p.isNew && " (consolida)"}
+                          </span>
+                        ))}
+                      </div>
+                    </>
+                  ) : null}
                 </div>
               )}
 

@@ -30,22 +30,20 @@ const STATUS_META: Record<LocationAvailabilityStatus, { label: string; color: st
 function statusText(l: LocationAvailability) {
   const meta = STATUS_META[l.status];
   if (l.status === "PARTIAL" || l.status === "FULL") {
-    return `${meta.label}${l.capacity != null ? ` ${l.occupied}/${l.capacity}` : ` · ${l.occupied} pallet(s)`}`;
+    return `${meta.label}${l.capacity != null ? ` ${l.occupied}/${l.capacity} bases` : ` · ${l.occupied} base(s)`}`;
   }
   return meta.label;
 }
 
 /**
- * Selector de ubicación guiado: Depósito → Zona → Pasillo → Rack → Nivel → Posición,
- * con disponibilidad (Libre / Parcial / Llena / Bloqueada). Incluye modo "Buscar"
- * para elegir escribiendo el código.
+ * Selector de ubicación guiado: Depósito → Zona → Sector → Subsector, con
+ * disponibilidad en bases (Libre / Parcial / Llena / Bloqueada). Incluye modo
+ * "Buscar" para elegir escribiendo el código directamente.
  */
 export default function LocationPicker({ value, onChange, warehouseId, placeholder = "Ubicación", excludeUnavailable, productId }: Props) {
   const [mode, setMode] = useState<"guided" | "search">("guided");
   const [zone, setZone] = useState("");
-  const [aisle, setAisle] = useState("");
-  const [rack, setRack] = useState("");
-  const [level, setLevel] = useState("");
+  const [sector, setSector] = useState("");
 
   const { data: all = [], isLoading } = useQuery({
     queryKey: ["location-availability"],
@@ -53,7 +51,7 @@ export default function LocationPicker({ value, onChange, warehouseId, placehold
     staleTime: 30_000,
   });
 
-  // Slotting: ubicaciones recomendadas para el producto (si se pasó productId).
+  // Slotting: sectores recomendados para el producto (si se pasó productId).
   const { data: slotting } = useQuery({
     queryKey: ["location-recommendations", productId, warehouseId],
     queryFn: () => getLocationRecommendations(productId!),
@@ -83,15 +81,9 @@ export default function LocationPicker({ value, onChange, warehouseId, placehold
 
   const zones = useMemo(() => uniq(base.map((l) => l.zone)), [base]);
   const afterZone = useMemo(() => base.filter((l) => !zone || l.zone === zone), [base, zone]);
-  const aisles = useMemo(() => uniq(afterZone.map((l) => l.aisle)), [afterZone]);
-  const afterAisle = useMemo(() => afterZone.filter((l) => !aisle || l.aisle === aisle), [afterZone, aisle]);
-  const racks = useMemo(() => uniq(afterAisle.map((l) => l.rack)), [afterAisle]);
-  const afterRack = useMemo(() => afterAisle.filter((l) => !rack || l.rack === rack), [afterAisle, rack]);
-  const levels = useMemo(() => uniq(afterRack.map((l) => (l.level != null ? String(l.level) : null))), [afterRack]);
-  const finalList = useMemo(
-    () => afterRack.filter((l) => !level || String(l.level) === level),
-    [afterRack, level],
-  );
+  const sectors = useMemo(() => uniq(afterZone.map((l) => l.aisle)), [afterZone]);
+  // Subsectores del sector elegido — son las filas finales, se listan directo (no hay un nivel más abajo).
+  const subsectors = useMemo(() => afterZone.filter((l) => !sector || l.aisle === sector), [afterZone, sector]);
 
   const selectStyle: React.CSSProperties = { minWidth: 120, flex: 1 };
 
@@ -116,7 +108,7 @@ export default function LocationPicker({ value, onChange, warehouseId, placehold
       {productId && recommendations.length > 0 && (
         <div style={{ display: "grid", gap: 6, padding: 8, border: "1px solid var(--border)", borderRadius: 8, background: "var(--primary-light, rgba(0,0,0,0.03))" }}>
           <span style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", letterSpacing: 0.3 }}>
-            ✨ UBICACIONES RECOMENDADAS
+            ✨ SECTORES RECOMENDADOS
           </span>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {recommendations.map((r) => (
@@ -135,7 +127,7 @@ export default function LocationPicker({ value, onChange, warehouseId, placehold
                 <span style={{ fontWeight: 700, fontSize: 13 }}>
                   {r.code}
                   {r.capacity != null && (
-                    <span style={{ fontWeight: 500, color: "var(--muted)" }}> · {r.occupied}/{r.capacity}</span>
+                    <span style={{ fontWeight: 500, color: "var(--muted)" }}> · {r.occupied}/{r.capacity} bases</span>
                   )}
                 </span>
                 <span style={{ fontSize: 11, color: "var(--muted)" }}>{r.reasons[0]}</span>
@@ -162,32 +154,22 @@ export default function LocationPicker({ value, onChange, warehouseId, placehold
         <>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <select className="input" style={selectStyle} value={zone}
-              onChange={(e) => { setZone(e.target.value); setAisle(""); setRack(""); setLevel(""); }}>
+              onChange={(e) => { setZone(e.target.value); setSector(""); }}>
               <option value="">Zona</option>
               {zones.map((z) => <option key={z} value={z}>{z}</option>)}
             </select>
-            <select className="input" style={selectStyle} value={aisle} disabled={aisles.length === 0}
-              onChange={(e) => { setAisle(e.target.value); setRack(""); setLevel(""); }}>
-              <option value="">Pasillo</option>
-              {aisles.map((a) => <option key={a} value={a}>{a}</option>)}
-            </select>
-            <select className="input" style={selectStyle} value={rack} disabled={racks.length === 0}
-              onChange={(e) => { setRack(e.target.value); setLevel(""); }}>
-              <option value="">Rack</option>
-              {racks.map((r) => <option key={r} value={r}>{r}</option>)}
-            </select>
-            <select className="input" style={selectStyle} value={level} disabled={levels.length === 0}
-              onChange={(e) => setLevel(e.target.value)}>
-              <option value="">Nivel</option>
-              {levels.map((n) => <option key={n} value={n}>N{n}</option>)}
+            <select className="input" style={selectStyle} value={sector} disabled={sectors.length === 0}
+              onChange={(e) => setSector(e.target.value)}>
+              <option value="">Sector</option>
+              {sectors.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
 
           <div style={{ maxHeight: 200, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
-            {finalList.length === 0 ? (
-              <p style={{ color: "var(--muted)", fontSize: 13, padding: 10, margin: 0 }}>Sin ubicaciones con ese filtro</p>
+            {subsectors.length === 0 ? (
+              <p style={{ color: "var(--muted)", fontSize: 13, padding: 10, margin: 0 }}>Sin subsectores con ese filtro</p>
             ) : (
-              finalList.map((l) => {
+              subsectors.map((l) => {
                 const meta = STATUS_META[l.status];
                 const disabled = l.status === "BLOCKED" || (excludeUnavailable && l.status === "FULL");
                 return (
@@ -203,7 +185,7 @@ export default function LocationPicker({ value, onChange, warehouseId, placehold
                       cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.55 : 1, textAlign: "left",
                     }}
                   >
-                    <span style={{ fontWeight: 700, fontSize: 13 }}>{l.code}</span>
+                    <span style={{ fontWeight: 700, fontSize: 13 }}>{l.rack ?? l.code}</span>
                     <span style={{ fontSize: 12, fontWeight: 600, color: meta.color }}>● {statusText(l)}</span>
                   </button>
                 );

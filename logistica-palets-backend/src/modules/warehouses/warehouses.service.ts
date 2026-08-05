@@ -13,9 +13,8 @@ export type LayoutLocation = {
   zone: string | null;
   aisle: string | null;
   rack: string | null;
-  level: number | null;
-  position: number | null;
-  capacityPallets: number | null;
+  capacityBases: number | null;
+  basesUsed: number;
   pallets: number;
   units: number;
 };
@@ -68,18 +67,19 @@ export class WarehousesService {
         loc.zone,
         loc.aisle,
         loc.rack,
-        loc.level,
-        loc.position,
-        loc."capacityPallets",
-        COUNT(p.id)::int                  AS "pallets",
-        COALESCE(SUM(p.quantity), 0)::float8 AS "units"
+        loc."capacityBases",
+        COUNT(DISTINCT pil.id)::int           AS "basesUsed",
+        COUNT(p.id)::int                      AS "pallets",
+        COALESCE(SUM(p.quantity), 0)::float8  AS "units"
       FROM locations loc
       LEFT JOIN pallets p
         ON p."currentLocationId" = loc.id
        AND p.status NOT IN ('EXITED', 'EMPTY')
+      LEFT JOIN pilas pil
+        ON pil."locationId" = loc.id
       WHERE loc."warehouseId" = $1
       GROUP BY loc.id
-      ORDER BY loc.zone NULLS LAST, loc.aisle NULLS LAST, loc.rack, loc.level, loc.position, loc.code
+      ORDER BY loc.zone NULLS LAST, loc.aisle NULLS LAST, loc.rack, loc.code
       `,
       [id],
     );
@@ -89,7 +89,7 @@ export class WarehousesService {
       const key = l.zone ?? 'SIN_ZONA';
       const z = byZoneMap.get(key) ?? { zone: key, locations: 0, occupied: 0, pallets: 0, units: 0 };
       z.locations += 1;
-      if (l.pallets > 0) z.occupied += 1;
+      if (l.basesUsed > 0) z.occupied += 1;
       z.pallets += l.pallets;
       z.units += l.units;
       byZoneMap.set(key, z);
@@ -98,7 +98,7 @@ export class WarehousesService {
     const summary = {
       totalLocations: locations.length,
       activeLocations: locations.filter((l) => l.active).length,
-      occupied: locations.filter((l) => l.pallets > 0).length,
+      occupied: locations.filter((l) => l.basesUsed > 0).length,
       totalPallets: locations.reduce((s, l) => s + l.pallets, 0),
       totalUnits: locations.reduce((s, l) => s + l.units, 0),
       byZone: [...byZoneMap.values()],

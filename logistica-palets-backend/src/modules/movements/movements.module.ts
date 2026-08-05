@@ -17,10 +17,12 @@ import { Pallet } from '../pallets/entities/pallet.entity';
 import { AdjustmentRequest } from '../adjustments/entities/adjustment-request.entity';
 import { AdjustmentRequestLine } from '../adjustments/entities/adjustment-request-line.entity';
 import { UploadsModule } from '../uploads/uploads.module';
+import { PilasModule } from '../pilas/pilas.module';
 
 @Module({
   imports: [
     UploadsModule,
+    PilasModule,
     TypeOrmModule.forFeature([
       Movement,
       MovementDetail,

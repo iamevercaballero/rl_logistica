@@ -17,6 +17,7 @@ import { AdjustmentRequestLine } from '../src/modules/adjustments/entities/adjus
 import { Attachment } from '../src/modules/uploads/entities/attachment.entity';
 import { DocumentEvent } from '../src/modules/uploads/entities/document-event.entity';
 import { SapStockSnapshot } from '../src/modules/reports/entities/sap-stock.entity';
+import { Pila } from '../src/modules/pilas/entities/pila.entity';
 
 /**
  * Conjunto mínimo de entidades que toca el motor de stock. No incluye User /
@@ -24,14 +25,14 @@ import { SapStockSnapshot } from '../src/modules/reports/entities/sap-stock.enti
  * así que synchronize crea sólo estas tablas y sus FKs (Lot→Product, Location→Warehouse).
  */
 export const TEST_ENTITIES = [
-  Product, Warehouse, Location, Stock, Lot, Pallet,
+  Product, Warehouse, Location, Stock, Lot, Pallet, Pila,
   Movement, MovementDetail, LogisticsDocument, DocumentSequence, RegularizationLog,
   AdjustmentRequest, AdjustmentRequestLine, Attachment, DocumentEvent, SapStockSnapshot,
 ];
 
 /** Tablas a vaciar entre tests (orden irrelevante por CASCADE). */
 const TABLES = [
-  'movement_details', 'movements', 'stocks', 'pallets', 'lots',
+  'movement_details', 'movements', 'stocks', 'pallets', 'pilas', 'lots',
   'logistics_documents', 'regularization_logs',
   'adjustment_request_lines', 'adjustment_requests',
   'attachments', 'document_events', 'document_sequences',

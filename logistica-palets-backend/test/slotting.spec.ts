@@ -1,14 +1,19 @@
 /**
  * Tests de integración del motor de slotting (LocationsService.recommend).
- * Valida factibilidad (temperatura, capacidad) y puntaje (consolidación).
+ * Valida factibilidad (temperatura, capacidad en bases) y puntaje (consolidación).
+ *
+ * La ocupación ahora se mide en bases (pilas), no en pallets sueltos — un
+ * pallet sin una fila en `pilas` no cuenta como ocupación para `recommend()`.
  */
 import { DataSource } from 'typeorm';
 import { LocationsService } from '../src/modules/locations/locations.service';
+import { PilasService } from '../src/modules/pilas/pilas.service';
 import { Product } from '../src/modules/products/entities/product.entity';
 import { Warehouse } from '../src/modules/warehouses/entities/warehouse.entity';
 import { Location } from '../src/modules/locations/entities/location.entity';
 import { Lot } from '../src/modules/lots/entities/lot.entity';
 import { Pallet } from '../src/modules/pallets/entities/pallet.entity';
+import { Pila } from '../src/modules/pilas/entities/pila.entity';
 import { createTestDataSource, resetDb } from './test-datasource';
 
 let ds: DataSource;
@@ -34,7 +39,7 @@ const mkLocation = (over: Partial<Location>) =>
   ds.getRepository(Location).save(
     ds.getRepository(Location).create({
       code: `L-${Math.random().toString(36).slice(2, 7)}`,
-      type: 'RACK',
+      type: 'PISO',
       active: true,
       temperatureZone: 'AMBIENT',
       allowsStacking: true,
@@ -42,6 +47,25 @@ const mkLocation = (over: Partial<Location>) =>
       ...over,
     }),
   );
+
+/** Ocupa una base: una pila real (no solo un pallet suelto — `recommend()` cuenta pilas). */
+const mkOccupiedBase = async (location: Location, productId: string, opts?: { sequence?: number }) => {
+  const pila = await ds.getRepository(Pila).save(
+    ds.getRepository(Pila).create({
+      locationId: location.id, sequence: opts?.sequence ?? 1, status: 'OPEN', productId,
+    }),
+  );
+  const lot = await ds.getRepository(Lot).save(
+    ds.getRepository(Lot).create({ productId, lotCode: `L-${pila.id.slice(0, 8)}`, stockActual: 1, status: 'NORMAL' }),
+  );
+  await ds.getRepository(Pallet).save(
+    ds.getRepository(Pallet).create({
+      code: `PAL-${pila.id.slice(0, 8)}`, lotId: lot.id, quantity: 1,
+      currentLocationId: location.id, pilaId: pila.id, stackPosition: 1, status: 'AVAILABLE',
+    }),
+  );
+  return pila;
+};
 
 beforeAll(async () => {
   ds = createTestDataSource();
@@ -51,6 +75,8 @@ beforeAll(async () => {
     ds.getRepository(Warehouse),
     ds.getRepository(Pallet),
     ds.getRepository(Product),
+    ds.getRepository(Pila),
+    new PilasService(),
     ds,
   );
 }, 60_000);
@@ -78,18 +104,13 @@ describe('slotting — recommend', () => {
     expect(res.recommendations[0].id).toBe(chilled.id);
   });
 
-  it('excluye ubicaciones llenas (ocupación >= capacidad)', async () => {
+  it('excluye sectores sin bases libres (ocupación >= capacidad)', async () => {
     const product = await mkProduct({});
-    const full = await mkLocation({ code: 'FULL-1', capacityPallets: 1 });
-    const free = await mkLocation({ code: 'FREE-1', capacityPallets: 5 });
+    const other = await mkProduct({}); // pila existente es de OTRO producto → no consolida, ocupa la única base
+    const full = await mkLocation({ code: 'FULL-1', capacityBases: 1 });
+    const free = await mkLocation({ code: 'FREE-1', capacityBases: 5 });
 
-    // Llenar `full` con un pallet vigente de otro lote/producto cualquiera.
-    const lot = await ds.getRepository(Lot).save(
-      ds.getRepository(Lot).create({ productId: product.id, lotCode: 'L1', stockActual: 1, status: 'NORMAL' }),
-    );
-    await ds.getRepository(Pallet).save(
-      ds.getRepository(Pallet).create({ code: 'PAL-1', lotId: lot.id, quantity: 1, currentLocationId: full.id, status: 'AVAILABLE' }),
-    );
+    await mkOccupiedBase(full, other.id);
 
     const res = await service.recommend(product.id);
     const ids = res.recommendations.map((r) => r.id);
@@ -97,23 +118,30 @@ describe('slotting — recommend', () => {
     expect(ids).not.toContain(full.id);
   });
 
-  it('prioriza consolidar con el mismo producto ya almacenado', async () => {
+  it('prioriza consolidar con el mismo producto ya almacenado (pila abierta)', async () => {
     const product = await mkProduct({});
-    const withProduct = await mkLocation({ code: 'CONS-1', capacityPallets: 5, zone: 'ALMACENAMIENTO' });
-    await mkLocation({ code: 'EMPTY-1', capacityPallets: 5, zone: 'ALMACENAMIENTO' });
+    const withProduct = await mkLocation({ code: 'CONS-1', capacityBases: 5, zone: 'ALMACENAMIENTO' });
+    await mkLocation({ code: 'EMPTY-1', capacityBases: 5, zone: 'ALMACENAMIENTO' });
 
-    const lot = await ds.getRepository(Lot).save(
-      ds.getRepository(Lot).create({ productId: product.id, lotCode: 'L2', stockActual: 10, status: 'NORMAL' }),
-    );
-    await ds.getRepository(Pallet).save(
-      ds.getRepository(Pallet).create({ code: 'PAL-2', lotId: lot.id, quantity: 10, currentLocationId: withProduct.id, status: 'AVAILABLE' }),
-    );
+    await mkOccupiedBase(withProduct, product.id);
 
     const res = await service.recommend(product.id);
     expect(res.recommendations[0].id).toBe(withProduct.id);
     expect(res.recommendations[0].reasons).toEqual(
       expect.arrayContaining([expect.stringContaining('mismo producto')]),
     );
+  });
+
+  it('un sector lleno de OTRO producto sigue siendo factible si el propio ya consolida ahí', async () => {
+    // Caso real: la pila abierta es del MISMO producto y la base "llena" es
+    // justamente esa — no hace falta una base nueva, así que sigue factible
+    // aunque capacityBases ya esté en el tope.
+    const product = await mkProduct({});
+    const loc = await mkLocation({ code: 'CONS-2', capacityBases: 1 });
+    await mkOccupiedBase(loc, product.id);
+
+    const res = await service.recommend(product.id);
+    expect(res.recommendations.map((r) => r.id)).toContain(loc.id);
   });
 
   it('devuelve mensaje cuando no hay ubicación factible', async () => {

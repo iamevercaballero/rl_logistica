@@ -29,10 +29,10 @@ function cellStyle(l: LayoutLocation): React.CSSProperties {
   if (!l.active) {
     return { background: "var(--panel)", border: "1px dashed var(--border)", color: "var(--muted)", opacity: 0.55 };
   }
-  if (l.pallets === 0) {
+  if (l.basesUsed === 0) {
     return { background: "var(--bg)", border: "1px solid var(--border)", color: "var(--muted)" };
   }
-  if (l.capacityPallets && l.pallets >= l.capacityPallets) {
+  if (l.capacityBases && l.basesUsed >= l.capacityBases) {
     return { background: "var(--badge-adjout-bg)", border: "1.5px solid var(--warning)", color: "var(--badge-adjout-text)", fontWeight: 800 };
   }
   return { background: "var(--primary-light)", border: "1.5px solid var(--primary)", color: "var(--primary)", fontWeight: 800 };
@@ -93,12 +93,43 @@ export default function WarehousesPage() {
     staleTime: 10_000,
   });
 
-  /* ── Alta manual de una ubicación suelta ── */
+  /* ── Alta manual de una ubicación suelta (o edición de una existente) ── */
   const [showNewLoc, setShowNewLoc] = useState(false);
+  /** Si está seteado, el modal de "Nueva ubicación" edita esta en vez de crear una. */
+  const [editTarget, setEditTarget] = useState<LayoutLocation | null>(null);
   const [newLocCode, setNewLocCode] = useState("");
+  const [newLocSector, setNewLocSector] = useState("");
+  const [newLocSubsector, setNewLocSubsector] = useState("");
   const [newLocZone, setNewLocZone] = useState<LocationZone>("ALMACENAMIENTO");
-  const [newLocType, setNewLocType] = useState("RACK");
+  const [newLocType, setNewLocType] = useState("PISO");
   const [newLocCapacity, setNewLocCapacity] = useState("1");
+
+  function openNewLocation() {
+    setEditTarget(null);
+    setNewLocCode("");
+    setNewLocSector("");
+    setNewLocSubsector("");
+    setNewLocZone("ALMACENAMIENTO");
+    setNewLocType("PISO");
+    setNewLocCapacity("1");
+    setShowNewLoc(true);
+  }
+
+  function openEditLocation(l: LayoutLocation) {
+    setEditTarget(l);
+    setNewLocCode(l.code);
+    setNewLocSector(l.aisle ?? "");
+    setNewLocSubsector(l.rack ?? "");
+    setNewLocZone((l.zone as LocationZone) ?? "ALMACENAMIENTO");
+    setNewLocType(l.type ?? "PISO");
+    setNewLocCapacity(l.capacityBases != null ? String(l.capacityBases) : "0");
+    setShowNewLoc(true);
+  }
+
+  function closeLocModal() {
+    setShowNewLoc(false);
+    setEditTarget(null);
+  }
 
   const newLocError = useMemo(() => {
     const value = newLocCode.trim();
@@ -111,24 +142,18 @@ export default function WarehousesPage() {
   const [showGen, setShowGen] = useState(false);
   const [genZone, setGenZone] = useState<LocationZone>("ALMACENAMIENTO");
   const [genPrefix, setGenPrefix] = useState("");
-  const [genAisles, setGenAisles] = useState("A");
-  const [genRacks, setGenRacks] = useState("2");
-  const [genLevels, setGenLevels] = useState("3");
-  const [genPositions, setGenPositions] = useState("4");
-  const [genCapacity, setGenCapacity] = useState("1");
+  const [genSectors, setGenSectors] = useState("A");
+  const [genSubsectorStart, setGenSubsectorStart] = useState("1");
+  const [genSubsectors, setGenSubsectors] = useState("10");
+  const [genCapacity, setGenCapacity] = useState("30");
 
-  const genAisleList = genAisles.split(",").map((a) => a.trim().toUpperCase()).filter(Boolean);
-  const genIsRack = genAisleList.length > 0;
-  const genTotal = (genAisleList.length || 1)
-    * (genIsRack ? Math.max(1, Number(genRacks) || 1) : 1)
-    * (genIsRack ? Math.max(1, Number(genLevels) || 1) : 1)
-    * Math.max(1, Number(genPositions) || 1);
+  const genSectorList = genSectors.split(",").map((a) => a.trim().toUpperCase()).filter(Boolean);
+  const genStart = Math.max(1, Number(genSubsectorStart) || 1);
+  const genTotal = (genSectorList.length || 1) * Math.max(1, Number(genSubsectors) || 1);
   const genExample = [
     genPrefix.trim().toUpperCase() || null,
-    genIsRack ? genAisleList[0] : null,
-    genIsRack ? "F1" : null,
-    genIsRack ? "N1" : null,
-    "P1",
+    genSectorList[0] ?? null,
+    `${genSectorList[0] ?? "S"}${genStart}`,
   ].filter(Boolean).join("-");
 
   function invalidateLayout() {
@@ -174,6 +199,19 @@ export default function WarehousesPage() {
       invalidateLayout();
       setShowNewLoc(false);
       setNewLocCode("");
+      setNewLocSector("");
+      setNewLocSubsector("");
+    },
+    onError: (err) => toast.error(getFriendlyApiError(err)),
+  });
+
+  const updateLocMut = useMutation({
+    mutationFn: ({ id, ...payload }: { id: string } & Parameters<typeof updateLocation>[1]) => updateLocation(id, payload),
+    onSuccess: (updated) => {
+      toast.success(`Ubicación ${updated.code} actualizada`);
+      invalidateLayout();
+      closeLocModal();
+      setLocDetail((d) => (d && d.id === updated.id ? { ...d, ...updated, capacityBases: updated.capacityBases ?? null } : d));
     },
     onError: (err) => toast.error(getFriendlyApiError(err)),
   });
@@ -226,12 +264,32 @@ export default function WarehousesPage() {
   function handleCreateLocation(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedId || newLocError) return;
+
+    if (editTarget) {
+      updateLocMut.mutate({
+        id: editTarget.id,
+        code: newLocCode.trim(),
+        type: newLocType,
+        zone: newLocZone,
+        aisle: newLocSector.trim().toUpperCase() || undefined,
+        rack: newLocSubsector.trim().toUpperCase() || undefined,
+        // null explícito (no undefined) para poder volver a "sin límite" —
+        // un campo ausente en el PATCH significa "no tocar", no "vaciar".
+        capacityBases: Number(newLocCapacity) > 0 ? Number(newLocCapacity) : null,
+      });
+      return;
+    }
+
     createLocMut.mutate({
       warehouseId: selectedId,
       code: newLocCode.trim(),
       type: newLocType,
       zone: newLocZone,
-      capacityPallets: Number(newLocCapacity) > 0 ? Number(newLocCapacity) : undefined,
+      // Sin esto la ubicación no se agrupa bajo ningún Sector en el mapa —
+      // el agrupamiento es por este campo, no por parecido de texto en el código.
+      aisle: newLocSector.trim().toUpperCase() || undefined,
+      rack: newLocSubsector.trim().toUpperCase() || undefined,
+      capacityBases: Number(newLocCapacity) > 0 ? Number(newLocCapacity) : undefined,
     });
   }
 
@@ -257,11 +315,10 @@ export default function WarehousesPage() {
       warehouseId: selectedId,
       zone: genZone,
       codePrefix: genPrefix.trim() || undefined,
-      aisles: genIsRack ? genAisleList : undefined,
-      racks: genIsRack ? Math.max(1, Number(genRacks) || 1) : undefined,
-      levels: genIsRack ? Math.max(1, Number(genLevels) || 1) : undefined,
-      positions: Math.max(1, Number(genPositions) || 1),
-      capacityPallets: Number(genCapacity) > 0 ? Number(genCapacity) : undefined,
+      sectors: genSectorList.length > 0 ? genSectorList : undefined,
+      subsectorStart: genStart,
+      subsectorsPerSector: Math.max(1, Number(genSubsectors) || 1),
+      capacityBases: Number(genCapacity) > 0 ? Number(genCapacity) : undefined,
     });
   }
 
@@ -272,26 +329,25 @@ export default function WarehousesPage() {
     return locs.filter((l) => (l.zone ?? "SIN_ZONA") === zoneFilter);
   }, [layout, zoneFilter]);
 
-  /** Pasillo → Rack → posiciones (estructuradas) */
+  /** Todos los sectores del depósito (sin filtro de zona) — sugerencias al crear una ubicación suelta. */
+  const allSectors = useMemo(
+    () => Array.from(new Set((layout?.locations ?? []).map((l) => l.aisle).filter((a): a is string => !!a))).sort(),
+    [layout],
+  );
+
+  /** Sector → Subsectores (cada Subsector es ya una celda única) */
   const aisleGroups = useMemo(() => {
     const structured = filteredLocs.filter((l) => l.aisle);
-    const byAisle = new Map<string, Map<string, LayoutLocation[]>>();
+    const bySector = new Map<string, LayoutLocation[]>();
     for (const l of structured) {
-      const aisle = l.aisle!;
-      const rack = l.rack ?? "—";
-      const racks = byAisle.get(aisle) ?? new Map<string, LayoutLocation[]>();
-      const cells = racks.get(rack) ?? [];
-      cells.push(l);
-      racks.set(rack, cells);
-      byAisle.set(aisle, racks);
+      const sector = l.aisle!;
+      bySector.set(sector, [...(bySector.get(sector) ?? []), l]);
     }
-    return [...byAisle.entries()]
+    return [...bySector.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([aisle, racks]) => ({
+      .map(([aisle, cells]) => ({
         aisle,
-        racks: [...racks.entries()]
-          .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
-          .map(([rack, cells]) => ({ rack, cells })),
+        cells: [...cells].sort((a, b) => (a.rack ?? "").localeCompare(b.rack ?? "", undefined, { numeric: true })),
       }));
   }, [filteredLocs]);
 
@@ -310,7 +366,7 @@ export default function WarehousesPage() {
         key={l.id}
         type="button"
         onClick={() => setLocDetail(l)}
-        title={`${l.code} · ${l.pallets} pallet(s) · ${l.units.toLocaleString("es-PY")} unid.${l.capacityPallets ? ` · cap. ${l.capacityPallets}` : ""}${l.active ? "" : " · INACTIVA"}`}
+        title={`${l.code} · ${l.basesUsed} base(s)${l.capacityBases ? ` de ${l.capacityBases}` : ""} · ${l.pallets} pallet(s) · ${l.units.toLocaleString("es-PY")} unid.${l.active ? "" : " · INACTIVA"}`}
         style={{
           width: size, height: size, borderRadius: 6, cursor: "pointer",
           display: "flex", alignItems: "center", justifyContent: "center",
@@ -329,7 +385,7 @@ export default function WarehousesPage() {
       <div style={{ marginBottom: 20 }}>
         <h1 style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.5, marginBottom: 4 }}>Depósitos</h1>
         <p style={{ color: "var(--muted)", fontSize: 14, marginBottom: 0 }}>
-          {!allowCreate ? "Modo lectura." : "Estructura, ocupación y mapa del depósito: zonas, pasillos, racks, niveles y posiciones."}
+          {!allowCreate ? "Modo lectura." : "Estructura, ocupación y mapa del depósito: zonas, sectores y subsectores."}
         </p>
       </div>
 
@@ -431,7 +487,7 @@ export default function WarehousesPage() {
                 <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>{layout.warehouse.name}</h3>
                 {allowStructure && (
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button type="button" className="btn" style={{ fontSize: 13 }} onClick={() => setShowNewLoc(true)}>
+                    <button type="button" className="btn" style={{ fontSize: 13 }} onClick={openNewLocation}>
                       ＋ Nueva ubicación
                     </button>
                     <button type="button" className="btn btn--primary" style={{ fontSize: 13 }} onClick={() => setShowGen(true)}>
@@ -495,7 +551,7 @@ export default function WarehousesPage() {
               <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 11, color: "var(--muted)", marginBottom: 12 }}>
                 <span><span style={{ display: "inline-block", width: 12, height: 12, borderRadius: 3, background: "var(--bg)", border: "1px solid var(--border)", verticalAlign: "middle", marginRight: 4 }} />Libre</span>
                 <span><span style={{ display: "inline-block", width: 12, height: 12, borderRadius: 3, background: "var(--primary-light)", border: "1.5px solid var(--primary)", verticalAlign: "middle", marginRight: 4 }} />Ocupada (n pallets)</span>
-                <span><span style={{ display: "inline-block", width: 12, height: 12, borderRadius: 3, background: "var(--badge-adjout-bg)", border: "1.5px solid var(--warning)", verticalAlign: "middle", marginRight: 4 }} />Llena (≥ capacidad)</span>
+                <span><span style={{ display: "inline-block", width: 12, height: 12, borderRadius: 3, background: "var(--badge-adjout-bg)", border: "1.5px solid var(--warning)", verticalAlign: "middle", marginRight: 4 }} />Llena (≥ bases)</span>
                 <span><span style={{ display: "inline-block", width: 12, height: 12, borderRadius: 3, background: "var(--panel)", border: "1px dashed var(--border)", verticalAlign: "middle", marginRight: 4 }} />Inactiva</span>
               </div>
 
@@ -508,56 +564,40 @@ export default function WarehousesPage() {
                 </div>
               ) : (
                 <div style={{ display: "grid", gap: 12 }}>
-                  {/* Pasillos estructurados */}
+                  {/* Sectores estructurados */}
                   {aisleGroups.map((g) => (
                     <div key={g.aisle} style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
                       <div style={{ background: "var(--bg)", padding: "7px 12px", fontSize: 13, fontWeight: 800, borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}>
-                        <span>Pasillo {g.aisle}</span>
+                        <span>Sector {g.aisle}</span>
                         <span style={{ fontWeight: 400, color: "var(--muted)", fontSize: 12 }}>
-                          {g.racks.length} rack{g.racks.length !== 1 ? "s" : ""}
+                          {g.cells.length} subsector{g.cells.length !== 1 ? "es" : ""}
                         </span>
                         {allowStructureDelete && (() => {
-                          const cells = g.racks.reduce((s, r) => s + r.cells.length, 0);
-                          const ocupadas = g.racks.reduce((s, r) => s + r.cells.filter((c) => c.pallets > 0).length, 0);
+                          const ocupadas = g.cells.filter((c) => c.basesUsed > 0).length;
                           return (
                             <button
                               type="button"
                               className="btn btn--danger"
-                              onClick={() => handleDeleteAisle(g.aisle, cells)}
+                              onClick={() => handleDeleteAisle(g.aisle, g.cells.length)}
                               disabled={deleteAisleMut.isPending || ocupadas > 0}
                               title={ocupadas > 0
                                 ? `No se puede eliminar: ${ocupadas} ubicación(es) con contenido. Transferí el stock antes.`
-                                : `Eliminar el pasillo ${g.aisle} y sus ${cells} ubicaciones`}
+                                : `Eliminar el sector ${g.aisle} y sus ${g.cells.length} subsectores`}
                               style={{ marginLeft: "auto", fontSize: 11, padding: "2px 8px", lineHeight: 1.6 }}
-                              aria-label={`Eliminar pasillo ${g.aisle}`}
+                              aria-label={`Eliminar sector ${g.aisle}`}
                             >
-                              ✕ Eliminar pasillo
+                              ✕ Eliminar sector
                             </button>
                           );
                         })()}
                       </div>
-                      <div style={{ display: "flex", gap: 14, padding: 12, flexWrap: "wrap" }}>
-                        {g.racks.map((r) => {
-                          const levels = [...new Set(r.cells.map((c) => c.level ?? 1))].sort((a, b) => b - a);
-                          return (
-                            <div key={r.rack}>
-                              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", marginBottom: 4, textAlign: "center" }}>{r.rack}</div>
-                              <div style={{ display: "grid", gap: 3 }}>
-                                {levels.map((lvl) => {
-                                  const cells = r.cells
-                                    .filter((c) => (c.level ?? 1) === lvl)
-                                    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-                                  return (
-                                    <div key={lvl} style={{ display: "flex", gap: 3, alignItems: "center" }}>
-                                      <span style={{ fontSize: 9, color: "var(--muted)", width: 20, fontFamily: "monospace" }}>N{lvl}</span>
-                                      {cells.map((c) => renderCell(c))}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })}
+                      <div style={{ display: "flex", gap: 8, padding: 12, flexWrap: "wrap" }}>
+                        {g.cells.map((c) => (
+                          <div key={c.id} style={{ textAlign: "center" }}>
+                            {renderCell(c)}
+                            <div style={{ fontSize: 9, color: "var(--muted)", marginTop: 2, fontFamily: "monospace" }}>{c.rack ?? c.code}</div>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   ))}
@@ -607,10 +647,8 @@ export default function WarehousesPage() {
                 <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, fontFamily: "monospace" }}>{locDetail.code}</h3>
                 <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--muted)" }}>
                   {zoneMeta(locDetail.zone) ? `${zoneMeta(locDetail.zone)!.icon} ${zoneMeta(locDetail.zone)!.label}` : "Sin zona"}
-                  {locDetail.aisle && <> · Pasillo {locDetail.aisle}</>}
+                  {locDetail.aisle && <> · Sector {locDetail.aisle}</>}
                   {locDetail.rack && <> · {locDetail.rack}</>}
-                  {locDetail.level != null && <> · Nivel {locDetail.level}</>}
-                  {locDetail.position != null && <> · Pos. {locDetail.position}</>}
                 </p>
               </div>
               <button onClick={() => setLocDetail(null)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "var(--muted)" }} aria-label="Cerrar">×</button>
@@ -619,9 +657,9 @@ export default function WarehousesPage() {
             <div style={{ padding: "16px 20px", display: "grid", gap: 14 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
                 <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 12px" }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>Pallets</div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>Bases</div>
                   <div style={{ fontSize: 18, fontWeight: 900 }}>
-                    {locDetail.pallets}{locDetail.capacityPallets ? <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 400 }}> / {locDetail.capacityPallets}</span> : null}
+                    {locDetail.basesUsed}{locDetail.capacityBases ? <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 400 }}> / {locDetail.capacityBases}</span> : null}
                   </div>
                 </div>
                 <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 12px" }}>
@@ -641,6 +679,14 @@ export default function WarehousesPage() {
                   <button
                     type="button"
                     className="btn"
+                    style={{ fontSize: 12 }}
+                    onClick={() => openEditLocation(locDetail)}
+                  >
+                    ✎ Editar
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
                     style={{ fontSize: 12, color: locDetail.active ? "var(--danger)" : "var(--success)" }}
                     disabled={toggleLocMut.isPending}
                     onClick={() => toggleLocMut.mutate({ id: locDetail.id, active: !locDetail.active })}
@@ -652,8 +698,8 @@ export default function WarehousesPage() {
                       type="button"
                       className="btn btn--danger"
                       style={{ fontSize: 12 }}
-                      disabled={deleteLocMut.isPending || locDetail.pallets > 0}
-                      title={locDetail.pallets > 0 ? "Transferí el contenido antes de eliminarla" : "Eliminar ubicación"}
+                      disabled={deleteLocMut.isPending || locDetail.basesUsed > 0}
+                      title={locDetail.basesUsed > 0 ? "Transferí el contenido antes de eliminarla" : "Eliminar ubicación"}
                       onClick={handleDeleteLocation}
                     >
                       {deleteLocMut.isPending ? "Eliminando..." : "Eliminar ubicación"}
@@ -699,21 +745,23 @@ export default function WarehousesPage() {
       {showNewLoc && selectedId && (
         <div
           style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-          onClick={() => setShowNewLoc(false)}
+          onClick={closeLocModal}
         >
           <form
             className="card"
             style={{ width: "min(440px, 100%)", display: "grid", gap: 12 }}
             onClick={(e) => e.stopPropagation()}
             onSubmit={handleCreateLocation}
-            aria-label="Nueva ubicación"
+            aria-label={editTarget ? "Editar ubicación" : "Nueva ubicación"}
           >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>＋ Nueva ubicación</h3>
-              <button type="button" onClick={() => setShowNewLoc(false)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "var(--muted)" }} aria-label="Cerrar">×</button>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>{editTarget ? "✎ Editar ubicación" : "＋ Nueva ubicación"}</h3>
+              <button type="button" onClick={closeLocModal} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "var(--muted)" }} aria-label="Cerrar">×</button>
             </div>
             <p style={{ margin: 0, fontSize: 12, color: "var(--muted)" }}>
-              Para cargar varias posiciones de una vez usá <strong>⚙ Generar estructura</strong>.
+              {editTarget
+                ? "Los cambios se aplican solo a esta ubicación."
+                : <>Para cargar varias posiciones de una vez usá <strong>⚙ Generar estructura</strong>.</>}
             </p>
 
             <div>
@@ -722,11 +770,39 @@ export default function WarehousesPage() {
                 className="input"
                 value={newLocCode}
                 onChange={(e) => setNewLocCode(e.target.value)}
-                placeholder="Ej: A1-F1-N1-P2"
+                placeholder="Ej: B-B1"
                 aria-label="Código de ubicación"
                 aria-invalid={!!newLocError}
               />
               {newLocError && newLocCode ? <p className="form-error" role="alert" style={{ margin: "4px 0 0" }}>{newLocError}</p> : null}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Sector</label>
+                <input
+                  className="input"
+                  list="existing-sectors"
+                  value={newLocSector}
+                  onChange={(e) => setNewLocSector(e.target.value)}
+                  placeholder="Ej: A — vacío = fuera de sector"
+                  aria-label="Sector"
+                  title="Para que agrupe junto a las demás ubicaciones de ese sector en el mapa"
+                />
+                <datalist id="existing-sectors">
+                  {allSectors.map((s) => <option key={s} value={s} />)}
+                </datalist>
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Subsector</label>
+                <input
+                  className="input"
+                  value={newLocSubsector}
+                  onChange={(e) => setNewLocSubsector(e.target.value)}
+                  placeholder="Ej: A7"
+                  aria-label="Subsector"
+                />
+              </div>
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
@@ -739,7 +815,6 @@ export default function WarehousesPage() {
               <div>
                 <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Tipo</label>
                 <select className="input" value={newLocType} onChange={(e) => setNewLocType(e.target.value)}>
-                  <option value="RACK">Rack</option>
                   <option value="PISO">Piso</option>
                   <option value="TEMPORAL">Temporal / provisoria</option>
                 </select>
@@ -747,15 +822,15 @@ export default function WarehousesPage() {
             </div>
 
             <div>
-              <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Capacidad (pallets)</label>
+              <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Capacidad (bases)</label>
               <input className="input" type="number" min={0} value={newLocCapacity} onChange={(e) => setNewLocCapacity(e.target.value)} placeholder="0 = sin límite" />
             </div>
 
             <div style={{ display: "flex", gap: 10 }}>
-              <button className="btn btn--primary" type="submit" disabled={createLocMut.isPending || !!newLocError}>
-                {createLocMut.isPending ? "Guardando..." : "Crear ubicación"}
+              <button className="btn btn--primary" type="submit" disabled={createLocMut.isPending || updateLocMut.isPending || !!newLocError}>
+                {createLocMut.isPending || updateLocMut.isPending ? "Guardando..." : editTarget ? "Guardar cambios" : "Crear ubicación"}
               </button>
-              <button type="button" className="btn" onClick={() => setShowNewLoc(false)}>Cancelar</button>
+              <button type="button" className="btn" onClick={closeLocModal}>Cancelar</button>
             </div>
           </form>
         </div>
@@ -794,36 +869,29 @@ export default function WarehousesPage() {
                 <input className="input" value={genPrefix} onChange={(e) => setGenPrefix(e.target.value)} placeholder="Ej: REC (opcional)" maxLength={10} />
               </div>
               <div>
-                <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Pasillos (separados por coma)</label>
-                <input className="input" value={genAisles} onChange={(e) => setGenAisles(e.target.value)} placeholder='Ej: A,B,C — vacío = zona plana' />
+                <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Sectores (separados por coma)</label>
+                <input className="input" value={genSectors} onChange={(e) => setGenSectors(e.target.value)} placeholder='Ej: A,B,C — vacío = subsectores sin letra' />
               </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: genIsRack ? "1fr 1fr 1fr 1fr" : "1fr 1fr", gap: 8 }}>
-              {genIsRack && (
-                <>
-                  <div>
-                    <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Racks / pasillo</label>
-                    <input className="input" type="number" min={1} max={50} value={genRacks} onChange={(e) => setGenRacks(e.target.value)} />
-                  </div>
-                  <div>
-                    <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Niveles / rack</label>
-                    <input className="input" type="number" min={1} max={10} value={genLevels} onChange={(e) => setGenLevels(e.target.value)} />
-                  </div>
-                </>
-              )}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
               <div>
-                <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>{genIsRack ? "Posiciones / nivel" : "Posiciones"}</label>
-                <input className="input" type="number" min={1} max={100} value={genPositions} onChange={(e) => setGenPositions(e.target.value)} />
+                <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Desde</label>
+                <input className="input" type="number" min={1} value={genSubsectorStart} onChange={(e) => setGenSubsectorStart(e.target.value)} title="Número del primer subsector — subilo para agregar un tramo nuevo sin pisar los que ya generaste" />
               </div>
               <div>
-                <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Capacidad (pallets)</label>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Subsectores</label>
+                <input className="input" type="number" min={1} max={200} value={genSubsectors} onChange={(e) => setGenSubsectors(e.target.value)} />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Capacidad (bases)</label>
                 <input className="input" type="number" min={0} value={genCapacity} onChange={(e) => setGenCapacity(e.target.value)} placeholder="0 = sin límite" />
               </div>
             </div>
 
             <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 12px", fontSize: 12 }}>
               Se generarán <strong>{genTotal.toLocaleString("es-PY")}</strong> ubicaciones
+              {" "}(subsectores {genStart} a {genStart + Math.max(1, Number(genSubsectors) || 1) - 1})
               {" "}· código de ejemplo: <strong style={{ fontFamily: "monospace" }}>{genExample}</strong>
               {genTotal > 2000 && <div style={{ color: "var(--danger)", fontWeight: 700, marginTop: 4 }}>Máximo 2000 por tanda — reducí la estructura.</div>}
             </div>

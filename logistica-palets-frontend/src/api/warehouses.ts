@@ -21,9 +21,8 @@ export type LayoutLocation = {
   zone: string | null;
   aisle: string | null;
   rack: string | null;
-  level: number | null;
-  position: number | null;
-  capacityPallets: number | null;
+  capacityBases: number | null;
+  basesUsed: number;
   pallets: number;
   units: number;
 };

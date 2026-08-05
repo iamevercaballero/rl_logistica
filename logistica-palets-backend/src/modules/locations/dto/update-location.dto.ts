@@ -53,11 +53,26 @@ export class UpdateLocationDto {
   @Min(1)
   position?: number;
 
+  /** @deprecated Reemplazado por `capacityBases`. */
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
   capacityPallets?: number;
+
+  /** Capacidad en bases (pilas) de este Sector-Subsector. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  capacityBases?: number;
+
+  /** Techo de niveles de apilamiento propio de este Sector-Subsector. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  defaultMaxStackLevel?: number;
 
   /* ── Restricciones de slotting ─────────────────────────────────────────── */
 

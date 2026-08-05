@@ -26,11 +26,12 @@ export type Location = {
   code: string;
   type?: string;
   zone?: string | null;
+  /** Sector (ej: "B"). */
   aisle?: string | null;
+  /** Subsector dentro del sector (ej: "B1"). */
   rack?: string | null;
-  level?: number | null;
-  position?: number | null;
-  capacityPallets?: number | null;
+  /** Capacidad en bases (pilas) — la que ve el operario. */
+  capacityBases?: number | null;
   warehouseId?: string;
   warehouse?: { id: string; name: string };
   active?: boolean;
@@ -49,12 +50,12 @@ export type LocationAvailability = {
   zone: string | null;
   aisle: string | null;
   rack: string | null;
-  level: number | null;
-  position: number | null;
   warehouseId: string | null;
   warehouseName: string | null;
   active: boolean;
+  /** Bases (pilas) ocupadas. */
   occupied: number;
+  /** Capacidad en bases. */
   capacity: number | null;
   status: LocationAvailabilityStatus;
 };
@@ -148,11 +149,12 @@ export type LocationCell = {
   zone: string | null;
   aisle: string | null;
   rack: string | null;
-  level: number | null;
-  position: number | null;
-  capacityPallets: number | null;
+  /** Bases (pilas) ocupadas — la capacidad real es en bases, no en pallets. */
+  basesUsed: number;
+  capacityBases: number | null;
   warehouseId: string | null;
   warehouseName: string | null;
+  /** Pallets físicos acá — informativo. */
   pallets: number;
   units: number;
   stockUnits: number;
@@ -257,6 +259,8 @@ export type LocationContentPallet = {
   palletStatus: string;
   quantity: number;
   createdAt: string | null;
+  pilaId: string | null;
+  stackPosition: number | null;
   lotId: string;
   lotCode: string;
   supplierLot: string | null;
@@ -270,6 +274,12 @@ export type LocationContentPallet = {
   entryDocumentId: string | null;
 };
 
+export type LocationContentPile = {
+  pilaId: string | null;
+  sequence: number | null;
+  pallets: LocationContentPallet[];
+};
+
 export type LocationContent = {
   location: {
     id: string;
@@ -279,20 +289,20 @@ export type LocationContent = {
     zone: string | null;
     aisle: string | null;
     rack: string | null;
-    level: number | null;
-    position: number | null;
-    capacityPallets: number | null;
+    capacityBases: number | null;
     temperatureZone: string;
     warehouseId: string | null;
     warehouseName: string | null;
   };
   occupancy: {
     pallets: number;
-    capacity: number | null;
+    basesUsed: number;
+    basesCapacity: number | null;
     units: number;
     stockUnits: number;
     mismatch: number;
   };
+  piles: LocationContentPile[];
   pallets: LocationContentPallet[];
 };
 
@@ -351,9 +361,8 @@ export async function createLocation(payload: {
   zone?: LocationZone;
   aisle?: string;
   rack?: string;
-  level?: number;
-  position?: number;
-  capacityPallets?: number;
+  capacityBases?: number;
+  defaultMaxStackLevel?: number;
 }) {
   const { data } = await api.post<Location>("/locations", payload);
   return data;
@@ -362,23 +371,30 @@ export async function createLocation(payload: {
 export async function updateLocation(id: string, payload: Partial<{
   code: string;
   zone: LocationZone;
-  capacityPallets: number;
+  type: string;
+  aisle: string;
+  rack: string;
+  capacityBases: number;
+  defaultMaxStackLevel: number;
   active: boolean;
 }>) {
   const { data } = await api.patch<Location>(`/locations/${id}`, payload);
   return data;
 }
 
-/** Genera la estructura de una zona en lote (pasillos × racks × niveles × posiciones). */
+/** Genera la estructura de una zona en lote: sectores × subsectores (ej: "B-B1"). */
 export async function generateLocations(payload: {
   warehouseId: string;
   zone: LocationZone;
   codePrefix?: string;
-  aisles?: string[];
-  racks?: number;
-  levels?: number;
-  positions: number;
-  capacityPallets?: number;
+  /** Sectores a crear (ej: ["A","B"]). Omitido = subsectores planos sin letra de sector. */
+  sectors?: string[];
+  /** Número del primer subsector (ej: 4 → arranca en B4). Default 1 — permite correr el generador varias veces con capacidades distintas por tramo. */
+  subsectorStart?: number;
+  /** Cantidad de subsectores a crear a partir de subsectorStart. */
+  subsectorsPerSector: number;
+  capacityBases?: number;
+  defaultMaxStackLevel?: number;
 }): Promise<{ requested: number; created: number; skipped: number }> {
   const { data } = await api.post("/locations/generate", payload);
   return data;

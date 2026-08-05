@@ -24,6 +24,7 @@ import { RegularizeMovementDto } from './dto/regularize-movement.dto';
 import { RequestQuantityEditDto } from './dto/request-quantity-edit.dto';
 import { TransferBatchDto } from './dto/transfer-batch.dto';
 import { MovementsQueryDto } from './dto/movements-query.dto';
+import { PreviewPlacementDto } from './dto/preview-placement.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles/roles.guard';
 import { Roles } from '../auth/roles/roles.decorator';
@@ -46,6 +47,16 @@ export class MovementsController {
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   createDocument(@Body() dto: CreateDocumentDto, @Req() req: Request & { user: { userId: string } }) {
     return this.service.createDocument(dto, req.user.userId);
+  }
+
+  /**
+   * Vista previa de cómo van a quedar armadas las pilas antes de confirmar
+   * una entrada — no reserva nada, no escribe nada.
+   */
+  @Post('preview-placement')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
+  previewPlacement(@Body() dto: PreviewPlacementDto) {
+    return this.service.previewPlacement(dto);
   }
 
   /**

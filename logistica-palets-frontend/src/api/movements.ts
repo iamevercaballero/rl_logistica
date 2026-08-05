@@ -97,6 +97,36 @@ export async function createMovement(payload: {
   return data;
 }
 
+/* ── Vista previa de colocación (pilas) ──────────────────────────────────── */
+
+export type PlacementPile = {
+  pilaId: string;
+  isNew: boolean;
+  sequence: number;
+  productId: string;
+  lotId: string | null;
+  items: { key: string; stackPosition: number }[];
+};
+
+export type PlacementPlan = {
+  locationId: string;
+  locationCode: string;
+  piles: PlacementPile[];
+  basesUsed: number;
+  basesTotal: number | null;
+  basesFree: number | null;
+};
+
+/** Cómo van a quedar armadas las pilas antes de confirmar una entrada — no reserva nada. */
+export async function previewPlacement(payload: {
+  locationId: string;
+  productId: string;
+  palletCount: number;
+}): Promise<PlacementPlan> {
+  const { data } = await api.post<PlacementPlan>("/movements/preview-placement", payload);
+  return data;
+}
+
 /** Edita metadatos de cualquier movimiento (cualquier tipo/estado). Propaga a lotes. */
 // ─── Documentos logísticos (remitos) — multi-producto / multi-lote ───
 

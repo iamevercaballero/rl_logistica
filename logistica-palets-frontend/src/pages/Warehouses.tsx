@@ -491,7 +491,7 @@ export default function WarehousesPage() {
                       ＋ Nueva ubicación
                     </button>
                     <button type="button" className="btn btn--primary" style={{ fontSize: 13 }} onClick={() => setShowGen(true)}>
-                      ⚙ Generar estructura
+                       Generar estructura
                     </button>
                   </div>
                 )}
@@ -541,7 +541,7 @@ export default function WarehousesPage() {
                         color: zoneFilter === z.zone ? "#fff" : undefined,
                       }}
                     >
-                      {meta ? `${meta.icon} ${meta.label}` : z.zone === "SIN_ZONA" ? "Sin zona" : z.zone} ({z.locations})
+                      {meta ? `${meta.label}` : z.zone === "SIN_ZONA" ? "Sin zona" : z.zone} ({z.locations})
                     </button>
                   );
                 })}
@@ -559,7 +559,7 @@ export default function WarehousesPage() {
               {filteredLocs.length === 0 ? (
                 <div style={{ background: "var(--bg)", border: "1px dashed var(--border)", borderRadius: 10, padding: "28px 20px", textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
                   {layout.locations.length === 0
-                    ? <>Este depósito todavía no tiene ubicaciones.{allowStructure && <> Usá <strong>⚙ Generar estructura</strong> para crear zonas, pasillos, racks y posiciones en un paso.</>}</>
+                    ? <>Este depósito todavía no tiene ubicaciones.{allowStructure && <> Usá <strong> Generar estructura</strong> para crear zonas, pasillos, racks y posiciones en un paso.</>}</>
                     : "No hay ubicaciones en esta zona."}
                 </div>
               ) : (
@@ -646,7 +646,7 @@ export default function WarehousesPage() {
               <div>
                 <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, fontFamily: "monospace" }}>{locDetail.code}</h3>
                 <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--muted)" }}>
-                  {zoneMeta(locDetail.zone) ? `${zoneMeta(locDetail.zone)!.icon} ${zoneMeta(locDetail.zone)!.label}` : "Sin zona"}
+                  {zoneMeta(locDetail.zone) ? `${zoneMeta(locDetail.zone)!.label}` : "Sin zona"}
                   {locDetail.aisle && <> · Sector {locDetail.aisle}</>}
                   {locDetail.rack && <> · {locDetail.rack}</>}
                 </p>
@@ -682,7 +682,7 @@ export default function WarehousesPage() {
                     style={{ fontSize: 12 }}
                     onClick={() => openEditLocation(locDetail)}
                   >
-                    ✎ Editar
+                     Editar
                   </button>
                   <button
                     type="button"
@@ -755,13 +755,13 @@ export default function WarehousesPage() {
             aria-label={editTarget ? "Editar ubicación" : "Nueva ubicación"}
           >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>{editTarget ? "✎ Editar ubicación" : "＋ Nueva ubicación"}</h3>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>{editTarget ? " Editar ubicación" : "＋ Nueva ubicación"}</h3>
               <button type="button" onClick={closeLocModal} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "var(--muted)" }} aria-label="Cerrar">×</button>
             </div>
             <p style={{ margin: 0, fontSize: 12, color: "var(--muted)" }}>
               {editTarget
                 ? "Los cambios se aplican solo a esta ubicación."
-                : <>Para cargar varias posiciones de una vez usá <strong>⚙ Generar estructura</strong>.</>}
+                : <>Para cargar varias posiciones de una vez usá <strong> Generar estructura</strong>.</>}
             </p>
 
             <div>
@@ -809,7 +809,7 @@ export default function WarehousesPage() {
               <div>
                 <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Zona</label>
                 <select className="input" value={newLocZone} onChange={(e) => setNewLocZone(e.target.value as LocationZone)}>
-                  {LOCATION_ZONES.map((z) => <option key={z.value} value={z.value}>{z.icon} {z.label}</option>)}
+                  {LOCATION_ZONES.map((z) => <option key={z.value} value={z.value}>{z.label}</option>)}
                 </select>
               </div>
               <div>
@@ -849,7 +849,7 @@ export default function WarehousesPage() {
             onSubmit={handleGenerate}
           >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>⚙ Generar estructura</h3>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}> Generar estructura</h3>
               <button type="button" onClick={() => setShowGen(false)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "var(--muted)" }} aria-label="Cerrar">×</button>
             </div>
             <p style={{ margin: 0, fontSize: 12, color: "var(--muted)" }}>
@@ -859,7 +859,7 @@ export default function WarehousesPage() {
             <div>
               <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Zona *</label>
               <select className="input" value={genZone} onChange={(e) => setGenZone(e.target.value as LocationZone)}>
-                {LOCATION_ZONES.map((z) => <option key={z.value} value={z.value}>{z.icon} {z.label}</option>)}
+                {LOCATION_ZONES.map((z) => <option key={z.value} value={z.value}>{z.label}</option>)}
               </select>
             </div>
 
@@ -891,7 +891,6 @@ export default function WarehousesPage() {
 
             <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 12px", fontSize: 12 }}>
               Se generarán <strong>{genTotal.toLocaleString("es-PY")}</strong> ubicaciones
-              {" "}(subsectores {genStart} a {genStart + Math.max(1, Number(genSubsectors) || 1) - 1})
               {" "}· código de ejemplo: <strong style={{ fontFamily: "monospace" }}>{genExample}</strong>
               {genTotal > 2000 && <div style={{ color: "var(--danger)", fontWeight: 700, marginTop: 4 }}>Máximo 2000 por tanda — reducí la estructura.</div>}
             </div>

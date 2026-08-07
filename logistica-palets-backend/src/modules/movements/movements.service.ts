@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { DataSource, EntityManager, In, IsNull } from 'typeorm';
 import * as XLSX from 'xlsx';
 import { CreateMovementDto } from './dto/create-movement.dto';
@@ -27,6 +27,7 @@ import { DeepPartial } from 'typeorm/common/DeepPartial';
 import { EventsGateway } from '../events/events.gateway';
 import { CacheService } from '../cache/cache.service';
 import { roundQuantity } from '../../common/quantity';
+import { businessToday, parseBusinessDate, toBusinessDateString } from '../../common/date';
 import { PilasService, PlacementItem } from '../pilas/pilas.service';
 
 @Injectable()
@@ -212,10 +213,16 @@ export class MovementsService {
     }
   }
 
-  async create(dto: CreateMovementDto, userId: string) {
+  async create(dto: CreateMovementDto, userId: string, requesterRole?: string) {
+    // El encargado sale del JWT, no del payload (ver resolveEncargado).
+    const effectiveDto: CreateMovementDto = {
+      ...dto,
+      encargadoRecepcionId: this.resolveEncargado(dto.encargadoRecepcionId, userId, requesterRole),
+    };
+
     const result = await this.withUniqueRetry(() =>
       this.dataSource.transaction((manager) =>
-        this.createInTransaction(manager, dto, userId),
+        this.createInTransaction(manager, effectiveDto, userId),
       ),
     );
 
@@ -232,6 +239,20 @@ export class MovementsService {
     this.events.emitStockUpdated({ warehouseId: result.warehouseId });
 
     return { movementId: result.movementId, stockImpact: result.stockImpact };
+  }
+
+  /**
+   * El encargado del remito es el usuario logueado. El backend lo toma del JWT
+   * y no del payload: si el cliente manda otro, solo se acepta cuando quien
+   * opera es ADMIN o MANAGER (reasignación explícita). Un OPERATOR no puede
+   * registrar un remito a nombre de otra persona.
+   */
+  private resolveEncargado(requestedId: string | undefined, userId: string, role?: string): string {
+    if (!requestedId || requestedId === userId) return userId;
+    if (role === 'ADMIN' || role === 'MANAGER') return requestedId;
+    throw new ForbiddenException(
+      'Solo un ADMIN o MANAGER puede asignar el remito a otro encargado.',
+    );
   }
 
   /**
@@ -347,12 +368,31 @@ export class MovementsService {
       // EXIT sin palletItems usa auto-FEFO: stock se reduce palet a palet después de guardar el movimiento
       let useAutoFefo = false;
 
+      // Ubicación efectiva de cada ítem: la suya propia si el gestor de pallets
+      // la definió, si no la de la línea. Permite repartir un lote entre
+      // sectores sin romper el flujo simple (todos al mismo sector).
+      const itemLocationId = (item: { locationId?: string }): string | null =>
+        item.locationId ?? resolved.locationId ?? null;
+
       if (dto.palletItems?.length) {
-        // ENTRY/ADJUSTMENT_IN: aumentar stock total ahora con ubicación del formulario.
+        // ENTRY/ADJUSTMENT_IN: aumentar stock ahora, **por ubicación**.
         // EXIT/ADJUSTMENT_OUT: reducir palet a palet en el loop (por ubicación real del palet).
         // TRANSFER: reducir/aumentar palet a palet en el loop.
         if (isEntry) {
-          await this.applyIncrease(manager, dto.productId, resolved.warehouseId, resolved.locationId, totalQty);
+          // Agrupado por celda: si el lote se reparte entre sectores, cada uno
+          // recibe su parte. Una sola fila con el total dejaría stock en un
+          // sector sin pallets que lo respalden (rompe Stock = Lotes = Pallets).
+          const qtyByLocation = new Map<string | null, number>();
+          for (const item of dto.palletItems) {
+            const locId = itemLocationId(item);
+            qtyByLocation.set(locId, roundQuantity((qtyByLocation.get(locId) ?? 0) + item.quantity));
+          }
+          for (const [locId, qty] of qtyByLocation) {
+            const warehouseId = locId
+              ? (await this.findLocation(manager, locId)).warehouse.id
+              : resolved.warehouseId;
+            await this.applyIncrease(manager, dto.productId, warehouseId, locId, qty);
+          }
         }
       } else {
         switch (dto.type) {
@@ -376,7 +416,7 @@ export class MovementsService {
 
       const movementData: DeepPartial<Movement> = {
         type: dto.type,
-        date: dto.date ? new Date(dto.date) : new Date(),
+        date: parseBusinessDate(dto.date),
         productId: dto.productId,
         quantity: totalQty,
         pallets: dto.pallets ?? undefined,
@@ -390,6 +430,7 @@ export class MovementsService {
         supplier: dto.supplier?.trim() || undefined,
         carrier: dto.carrier?.trim() || undefined,
         driver: dto.driver?.trim() || undefined,
+        driverDocument: dto.driverDocument?.trim() || undefined,
         destination: dto.destination?.trim() || undefined,
         notes: dto.notes?.trim() || undefined,
         palletId: dto.palletId ?? undefined,
@@ -417,11 +458,17 @@ export class MovementsService {
       const lotByItemIndex = new Map<number, Lot>();
       let placementByKey: Map<string, { pilaId: string; stackPosition: number }> | null = null;
 
-      if (dto.type === 'ENTRY' && resolved.locationId && dto.palletItems?.length) {
-        const placementItems: PlacementItem[] = [];
+      if (dto.type === 'ENTRY' && dto.palletItems?.length) {
+        // Se agrupa por sector destino: el motor tiene que ver juntos todos los
+        // pallets que van al mismo sector para poder consolidarlos en una pila
+        // y para contar bien las bases contra la capacidad.
+        const byLocation = new Map<string, PlacementItem[]>();
         for (let idx = 0; idx < dto.palletItems.length; idx++) {
           const item = dto.palletItems[idx];
           if (!item.lotCode) continue;
+          const locId = itemLocationId(item);
+          if (!locId) continue; // sin ubicación no hay pila que armar
+
           const lot = await this.findOrCreateLot(
             manager, dto.productId, item.lotCode,
             item.fechaVencimiento, item.proveedor,
@@ -430,14 +477,20 @@ export class MovementsService {
             item.supplierLot,
           );
           lotByItemIndex.set(idx, lot);
-          placementItems.push({ key: String(idx), productId: dto.productId, lotId: lot.id });
+          byLocation.set(locId, [
+            ...(byLocation.get(locId) ?? []),
+            { key: String(idx), productId: dto.productId, lotId: lot.id },
+          ]);
         }
-        if (placementItems.length > 0) {
-          const plan = await this.pilas.placePallets(manager, resolved.locationId, placementItems, { commit: true });
+
+        if (byLocation.size > 0) {
           placementByKey = new Map();
-          for (const pile of plan.piles) {
-            for (const pileItem of pile.items) {
-              placementByKey.set(pileItem.key, { pilaId: pile.pilaId, stackPosition: pileItem.stackPosition });
+          for (const [locId, placementItems] of byLocation) {
+            const plan = await this.pilas.placePallets(manager, locId, placementItems, { commit: true });
+            for (const pile of plan.piles) {
+              for (const pileItem of pile.items) {
+                placementByKey.set(pileItem.key, { pilaId: pile.pilaId, stackPosition: pileItem.stackPosition });
+              }
             }
           }
         }
@@ -466,6 +519,9 @@ export class MovementsService {
             resolvedLotId = pallet.lotId;
             // Para EXIT/TRANSFER: la ubicación de origen es donde estaba el palet
             detailLocationId = pallet.currentLocationId ?? null;
+            // Pila de la que sale — se evalúa después de guardar para saber si
+            // su base quedó libre (solo si no queda ningún otro pallet apilado).
+            const originPilaId = pallet.pilaId ?? null;
 
             // El palet debe pertenecer al material de la línea: si no, se descontaría
             // stock del producto A moviendo un palet del producto B.
@@ -566,6 +622,13 @@ export class MovementsService {
 
             await manager.save(pallet);
 
+            // El pallet dejó su pila (salió del todo o se movió a otra): la base
+            // de origen se libera únicamente si ya no queda ningún pallet vivo
+            // en esa pila — sacar uno de una pila de tres no libera el lugar.
+            if (originPilaId && (pallet.status === 'EXITED' || pallet.pilaId !== originPilaId)) {
+              await this.pilas.releaseIfEmpty(manager, originPilaId);
+            }
+
           } else if (item.lotCode) {
             // ENTRADA: lote ya resuelto arriba (junto con el plan de colocación).
             const lot = lotByItemIndex.get(itemIdx) ?? await this.findOrCreateLot(
@@ -582,11 +645,12 @@ export class MovementsService {
             // y el código de lote NO lo es: los lotes SAP se numeran por fecha
             // (Z011008201), así que dos materiales recibidos el mismo día comparten
             // lote y, sin el prefijo, el segundo palet choca contra el índice único.
+            const palletLocationId = itemLocationId(item);
             const pallet = manager.getRepository(Pallet).create({
               code: `${product.code}-${lot.lotCode}-P${existingCount + 1}`,
               lotId: lot.id,
               quantity: item.quantity,
-              currentLocationId: resolved.locationId ?? null,
+              currentLocationId: palletLocationId,
               status: 'AVAILABLE',
               weightKg: item.weightKg ?? null,
               pilaId: placement?.pilaId ?? null,
@@ -596,7 +660,7 @@ export class MovementsService {
             resolvedPalletId = savedPallet.id;
             resolvedPilaId = placement?.pilaId;
             // Para ENTRADA: la ubicación de destino es donde queda el palet
-            detailLocationId = resolved.locationId ?? null;
+            detailLocationId = palletLocationId;
           } else {
             // Ni palletId (existente) ni lotCode (nuevo): sin esto no hay forma de crear
             // el lote/pallet correspondiente y el stock agregado quedaría desincronizado
@@ -644,9 +708,11 @@ export class MovementsService {
    * en UNA sola transacción. Genera el código interno RLNE/RLNS y vincula cada
    * movimiento a la cabecera. Si una línea falla, se revierte TODO el documento.
    */
-  async createDocument(dto: CreateDocumentDto, userId: string) {
+  async createDocument(dto: CreateDocumentDto, userId: string, requesterRole?: string) {
+    const encargadoId = this.resolveEncargado(dto.encargadoId, userId, requesterRole);
+
     const result = await this.withUniqueRetry(() => this.dataSource.transaction(async (manager) => {
-      const docDate = dto.date ? new Date(dto.date) : new Date();
+      const docDate = parseBusinessDate(dto.date);
       const code = await this.sequences.nextCode(manager, dto.type, docDate);
 
       const document = manager.create(LogisticsDocument, {
@@ -660,8 +726,9 @@ export class MovementsService {
         warehouseId: dto.warehouseId ?? null,
         carrier: dto.carrier?.trim() || null,
         driver: dto.driver?.trim() || null,
+        driverDocument: dto.driverDocument?.trim() || null,
         vehiclePlate: dto.vehiclePlate?.trim() || null,
-        encargadoId: dto.encargadoId ?? null,
+        encargadoId,
         notes: dto.notes?.trim() || null,
         createdById: userId,
       });
@@ -684,10 +751,11 @@ export class MovementsService {
           supplier: dto.supplier,
           carrier: dto.carrier,
           driver: dto.driver,
+          driverDocument: dto.driverDocument,
           destination: dto.destination,
           notes: dto.notes,
           lotId: line.lotId,
-          encargadoRecepcionId: dto.encargadoId,
+          encargadoRecepcionId: encargadoId,
           isProvisional: dto.isProvisional,
           palletItems: line.palletItems,
         };
@@ -911,6 +979,8 @@ export class MovementsService {
             status: p.status,
             quantityInMovement: d.quantity,
             currentQuantity: p.quantity,
+            weightKg: p.weightKg ?? null,
+            locationId: p.currentLocationId ?? null,
           };
         });
       // Máximo descontable hoy: lo que queda físicamente en los pallets de este movimiento
@@ -980,6 +1050,8 @@ export class MovementsService {
     type LotField = 'sapLot' | 'proveedor' | 'fechaVencimiento' | 'fechaFabricacion';
     const renames: Array<{ lot: Lot; newCode: string }> = [];
     const fieldUpdates: Array<{ lot: Lot; field: LotField; oldValue: string | null; newValue: string }> = [];
+    /** Cambios de peso por pallet — dato descriptivo, se aplica directo y auditado. */
+    const weightUpdates: Array<{ pallet: Pallet; oldValue: number | null; newValue: number }> = [];
     const increaseItems: IncreaseItem[] = [];
     const decreaseItems: Array<{ palletId: string; quantity: number }> = [];
     // Solo EXIT: devolver stock a un pallet ya existente (posiblemente EXITED) — ver
@@ -1068,6 +1140,14 @@ export class MovementsService {
           const take = pallet.quantity - pe.newQuantity;
           if (take > 0) decreaseItems.push({ palletId: pallet.id, quantity: take });
         }
+
+        // El peso no mueve stock: se aplica directo (auditado), sin aprobación.
+        if (pe.weightKg !== undefined) {
+          const oldWeight = pallet.weightKg ?? null;
+          if (oldWeight !== pe.weightKg) {
+            weightUpdates.push({ pallet, oldValue: oldWeight, newValue: pe.weightKg });
+          }
+        }
       }
 
       // ── Agregado de unidades → pallets nuevos al aprobar (solo ENTRY) ──
@@ -1095,7 +1175,7 @@ export class MovementsService {
     }
 
     if (
-      renames.length === 0 && fieldUpdates.length === 0 &&
+      renames.length === 0 && fieldUpdates.length === 0 && weightUpdates.length === 0 &&
       increaseItems.length === 0 && decreaseItems.length === 0 && restoreItems.length === 0
     ) {
       throw new BadRequestException('No hay cambios para aplicar.');
@@ -1147,6 +1227,20 @@ export class MovementsService {
         }));
       }
 
+      // 2b. Peso por pallet: descriptivo, se aplica directo y queda auditado.
+      for (const wu of weightUpdates) {
+        wu.pallet.weightKg = wu.newValue;
+        await manager.save(Pallet, wu.pallet);
+        await manager.save(manager.create(RegularizationLog, {
+          movementId: id,
+          field: `pallet.${wu.pallet.code}.weightKg`,
+          oldValue: wu.oldValue != null ? String(wu.oldValue) : null,
+          newValue: String(wu.newValue),
+          changedById: userId,
+          reason: dto.reason,
+        }));
+      }
+
       // 3. Solicitudes de ajuste por los deltas — pendientes de aprobación
       const requests: Array<{ requestId: string; code: string; type: string; totalQuantity: number }> = [];
       const createRequest = async (
@@ -1184,13 +1278,19 @@ export class MovementsService {
       if (restoreItems.length > 0) await createRequest('ADJUSTMENT_IN', restoreItems);
       if (decreaseItems.length > 0) await createRequest('ADJUSTMENT_OUT', decreaseItems);
 
-      return { renamed: renames.length, lotFieldChanges: fieldUpdates.length, requests };
+      return {
+        renamed: renames.length,
+        lotFieldChanges: fieldUpdates.length,
+        weightChanges: weightUpdates.length,
+        requests,
+      };
     });
 
     // Bitácora del movimiento
     const parts: string[] = [];
     if (result.renamed > 0) parts.push(`${result.renamed} lote(s) renombrado(s)`);
     if (result.lotFieldChanges > 0) parts.push(`${result.lotFieldChanges} dato(s) de lote actualizado(s)`);
+    if (result.weightChanges > 0) parts.push(`${result.weightChanges} peso(s) de pallet actualizado(s)`);
     for (const r of result.requests) {
       parts.push(`${r.code} (${r.type === 'ADJUSTMENT_IN' ? '+' : '−'}${r.totalQuantity} unid.) pendiente de aprobación`);
     }
@@ -1751,6 +1851,7 @@ export class MovementsService {
       }
       await this.applyDecrease(manager, productId, stockWarehouseId, stockLocationId, take);
 
+      const originPilaId = pallet.pilaId ?? null;
       pallet.quantity = roundQuantity(pallet.quantity - take);
       if (pallet.quantity === 0) {
         pallet.status = 'EXITED';
@@ -1759,6 +1860,12 @@ export class MovementsService {
         pallet.status = 'PARTIAL';
       }
       await manager.save(pallet);
+
+      // Mismo criterio que la salida manual: la base se libera solo cuando la
+      // pila se queda sin ningún pallet vivo.
+      if (originPilaId && pallet.status === 'EXITED') {
+        await this.pilas.releaseIfEmpty(manager, originPilaId);
+      }
 
       const detail = manager.create(MovementDetail, {
         movementId,
@@ -1845,11 +1952,10 @@ export class MovementsService {
 
     /** `undefined` = celda vacía (sin vencimiento); `null` = valor presente pero inválido. */
     const parseDate = (value: unknown): string | null | undefined => {
-      if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
+      if (value instanceof Date) return toBusinessDateString(value);
       const str = String(value ?? '').trim();
       if (!str) return undefined;
-      const d = new Date(str);
-      return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+      return toBusinessDateString(str);
     };
 
     const rowIssues: StockSnapshotRowIssue[] = [];
@@ -1863,7 +1969,7 @@ export class MovementsService {
       qty: number; fechaVencimiento: string | null; lotCode: string; sapLot: string;
     };
     const groups = new Map<string, Group>();
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = businessToday();
 
     // ── Pasada 1: parseo y validaciones de fila ──────────────────────────────
     const parsed: ParsedRow[] = [];

@@ -98,6 +98,12 @@ export class CreateDocumentDto {
   @MaxLength(120)
   driver?: string;
 
+  /** CI del chofer — viene de Transportes, no se tipea a mano. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  driverDocument?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(30)

@@ -108,7 +108,7 @@ export default function LocationPicker({ value, onChange, warehouseId, placehold
       {productId && recommendations.length > 0 && (
         <div style={{ display: "grid", gap: 6, padding: 8, border: "1px solid var(--border)", borderRadius: 8, background: "var(--primary-light, rgba(0,0,0,0.03))" }}>
           <span style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", letterSpacing: 0.3 }}>
-            ✨ SECTORES RECOMENDADOS
+            SECTORES RECOMENDADOS
           </span>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {recommendations.map((r) => (

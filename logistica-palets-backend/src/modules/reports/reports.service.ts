@@ -9,6 +9,7 @@ import { DifferencesSapQueryDto } from './dto/differences-sap-query.dto';
 import { UpsertSapStockDto } from './dto/upsert-sap-stock.dto';
 import { SapStockSnapshot } from './entities/sap-stock.entity';
 import { CacheService } from '../cache/cache.service';
+import { businessToday, parseBusinessDate } from '../../common/date';
 
 @Injectable()
 export class ReportsService {
@@ -625,12 +626,14 @@ export class ReportsService {
   }
 
   async dailyStock(query: DailyStockQueryDto) {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = businessToday();
     const from = (query.dateFrom ?? query.date ?? today).slice(0, 10);
     const to   = (query.dateTo   ?? query.date ?? today).slice(0, 10);
     const date = from; // kept for SAP snapshot lookup and response label
-    const dayStart = `${from}T00:00:00.000Z`;
-    const dayEnd   = `${to}T23:59:59.999Z`;
+    // La ventana del día es de medianoche a medianoche **en Asunción**: con
+    // límites UTC, todo lo cargado después de las 21:00 caía en el día siguiente.
+    const dayStart = parseBusinessDate(from).toISOString();
+    const dayEnd   = new Date(parseBusinessDate(to).getTime() + 86_400_000 - 1).toISOString();
 
     const movementFilter = this.buildMovementScopeFilter(query, 2);
     const sapFilter = this.buildSapScopeFilter(query, 1);

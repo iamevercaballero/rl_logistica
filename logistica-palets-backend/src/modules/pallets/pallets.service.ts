@@ -108,7 +108,7 @@ export class PalletsService {
         p.id,
         p.code,
         p."lotId",
-        p.quantity,
+        p.quantity::float8   AS quantity,
         p."currentLocationId",
         p.status,
         p."createdAt",

@@ -21,7 +21,10 @@ export type PalletItem = {
   fechaFabricacion?: string;
   sapLot?: string;
   proveedor?: string;
+  /** Peso físico de este pallet (kg) — se imprime en su etiqueta. */
   weightKg?: number;
+  /** Sector-Subsector de este pallet. Si se omite, hereda el de la línea. */
+  locationId?: string;
 };
 
 export type VoidStatus = 'NONE' | 'VOID_PENDING' | 'VOIDED';
@@ -151,6 +154,8 @@ export type CreateDocumentPayload = {
   warehouseId?: string;
   carrier?: string;
   driver?: string;
+  /** CI del conductor — se copia desde la ficha del vehículo en Transportes. */
+  driverDocument?: string;
   vehiclePlate?: string;
   encargadoId?: string;
   notes?: string;
@@ -170,6 +175,8 @@ export type LogisticsDocument = {
   warehouseId?: string | null;
   carrier?: string | null;
   driver?: string | null;
+  /** CI del conductor — copiada desde Transportes, sale impresa en la nota. */
+  driverDocument?: string | null;
   vehiclePlate?: string | null;
   notes?: string | null;
   totalLines: number;
@@ -284,7 +291,16 @@ export type MovementLotBreakdown = {
   proveedor?: string | null;
   quantity: number;
   availableQty: number;
-  pallets: { id: string; code: string; status: string; quantityInMovement: number; currentQuantity: number }[];
+  pallets: {
+    id: string;
+    code: string;
+    status: string;
+    quantityInMovement: number;
+    currentQuantity: number;
+    /** Peso físico del pallet (kg) — editable en la corrección. */
+    weightKg?: number | null;
+    locationId?: string | null;
+  }[];
 };
 
 export async function getMovementLots(id: string): Promise<{
@@ -310,7 +326,8 @@ export type QuantityEditLotPayload = {
   fechaVencimiento?: string;
   fechaFabricacion?: string;
   proveedor?: string;
-  palletEdits?: { palletId: string; newQuantity: number }[];
+  /** `weightKg` es descriptivo: se aplica directo y auditado, no genera solicitud. */
+  palletEdits?: { palletId: string; newQuantity: number; weightKg?: number }[];
   addQuantity?: number;
   addPalletCount?: number;
 };

@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { EntityManager, In } from 'typeorm';
+import { EntityManager, In, Not } from 'typeorm';
 import { Pila } from './entities/pila.entity';
 import { Location } from '../locations/entities/location.entity';
 import { Pallet } from '../pallets/entities/pallet.entity';
@@ -36,6 +36,8 @@ export interface PlacementPlan {
 interface WorkingPile extends PlacementPileResult {
   level: number;
   maxLevel: number;
+  /** false para pilas CLOSED: ocupan base pero ya no admiten pallets encima. */
+  stackable: boolean;
 }
 
 /**
@@ -112,12 +114,15 @@ export class PilasService {
     }
 
     const pilaRepo = manager.getRepository(Pila);
-    const openPilas = options.commit
-      ? await pilaRepo.find({ where: { locationId, status: 'OPEN' }, lock: { mode: 'pessimistic_write' } })
-      : await pilaRepo.find({ where: { locationId, status: 'OPEN' } });
+    // Se cargan OPEN **y** CLOSED: una pila llena sigue ocupando su base física
+    // aunque ya no admita más niveles. Contar solo las OPEN dejaría meter pallets
+    // por encima de `capacityBases`. Las EMPTY sí se excluyen — su base se liberó.
+    const existingPilas = options.commit
+      ? await pilaRepo.find({ where: { locationId, status: In(['OPEN', 'CLOSED']) }, lock: { mode: 'pessimistic_write' } })
+      : await pilaRepo.find({ where: { locationId, status: In(['OPEN', 'CLOSED']) } });
 
     // Productos de pilas ya existentes que no aparecen en `items` (para poder leer su maxStackLevel).
-    const existingProductIds = openPilas.map((p) => p.productId).filter((id): id is string => !!id);
+    const existingProductIds = existingPilas.map((p) => p.productId).filter((id): id is string => !!id);
     if (existingProductIds.some((id) => !productMap.has(id))) {
       const extra = await manager
         .getRepository(Product)
@@ -126,13 +131,13 @@ export class PilasService {
     }
 
     const levelsByPila = new Map<string, number>();
-    if (openPilas.length > 0) {
+    if (existingPilas.length > 0) {
       const counts = await manager
         .getRepository(Pallet)
         .createQueryBuilder('p')
         .select('p."pilaId"', 'pilaId')
         .addSelect('COUNT(*)', 'n')
-        .where('p."pilaId" IN (:...ids)', { ids: openPilas.map((p) => p.id) })
+        .where('p."pilaId" IN (:...ids)', { ids: existingPilas.map((p) => p.id) })
         .andWhere(`p.status NOT IN ('EXITED', 'EMPTY')`)
         .groupBy('p."pilaId"')
         .getRawMany<{ pilaId: string; n: string }>();
@@ -149,7 +154,7 @@ export class PilasService {
     const maxLevelFor = (productId: string, pilaOverride?: number | null) =>
       pilaOverride ?? location.defaultMaxStackLevel ?? productMap.get(productId)?.maxStackLevel ?? Infinity;
 
-    const working: WorkingPile[] = openPilas.map((p) => ({
+    const working: WorkingPile[] = existingPilas.map((p) => ({
       pilaId: p.id,
       isNew: false,
       sequence: p.sequence,
@@ -158,6 +163,8 @@ export class PilasService {
       items: [],
       level: levelsByPila.get(p.id) ?? 0,
       maxLevel: maxLevelFor(p.productId!, p.maxLevels),
+      // Una pila CLOSED ocupa base pero ya no recibe pallets encima.
+      stackable: p.status === 'OPEN',
     }));
 
     const policy = options.pileMixingPolicy ?? 'SAME_PRODUCT';
@@ -170,6 +177,7 @@ export class PilasService {
       if (product.stackable && location.allowsStacking) {
         target = working.find(
           (w) =>
+            w.stackable &&
             w.productId === item.productId &&
             (policy !== 'SAME_LOT' || w.lotId === itemLotId) &&
             w.level < w.maxLevel,
@@ -177,6 +185,8 @@ export class PilasService {
       }
 
       if (!target) {
+        // `working` ya incluye las pilas CLOSED existentes, así que esto cuenta
+        // todas las bases realmente ocupadas, no solo las que reciben pallets acá.
         const basesUsed = working.length;
         if (location.capacityBases != null && basesUsed >= location.capacityBases) {
           throw new BadRequestException(
@@ -193,6 +203,7 @@ export class PilasService {
           items: [],
           level: 0,
           maxLevel: maxLevelFor(item.productId, null),
+          stackable: true,
         };
         working.push(target);
       }
@@ -219,7 +230,10 @@ export class PilasService {
       }
     }
 
-    const basesUsed = working.filter((w) => w.items.length > 0).length;
+    // Ocupación total del sector una vez aplicada la operación (existentes +
+    // nuevas), no solo las pilas que este movimiento toca — es lo que se le
+    // muestra al operario como "X/Y bases ocupadas".
+    const basesUsed = working.length;
     return {
       locationId,
       locationCode: location.code,
@@ -232,6 +246,32 @@ export class PilasService {
       basesTotal: location.capacityBases ?? null,
       basesFree: location.capacityBases != null ? Math.max(0, location.capacityBases - basesUsed) : null,
     };
+  }
+
+  /**
+   * Libera la base **solo si la pila quedó sin pallets vivos**. Si todavía
+   * quedan pallets apilados, la base sigue ocupada — sacar un pallet de una
+   * pila de tres no libera el lugar de piso.
+   *
+   * La fila no se borra: se marca EMPTY para no romper las referencias de
+   * auditoría (`movement_details.pilaId`) ni reciclar el número de secuencia.
+   * Todas las consultas de ocupación descuentan las EMPTY.
+   */
+  async releaseIfEmpty(manager: EntityManager, pilaId?: string | null): Promise<void> {
+    if (!pilaId) return;
+
+    const remaining = await manager
+      .getRepository(Pallet)
+      .count({ where: { pilaId, status: Not(In(['EXITED', 'EMPTY'])) } });
+    if (remaining > 0) return;
+
+    await manager.getRepository(Pila).update(pilaId, {
+      status: 'EMPTY',
+      productId: null,
+      lotId: null,
+      closedAt: new Date(),
+      updatedAt: new Date(),
+    });
   }
 
   /**

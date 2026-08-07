@@ -38,15 +38,15 @@ export class MovementsController {
 
   @Post()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
-  create(@Body() dto: CreateMovementDto, @Req() req: Request & { user: { userId: string } }) {
-    return this.service.create(dto, req.user.userId);
+  create(@Body() dto: CreateMovementDto, @Req() req: Request & { user: { userId: string; role: string } }) {
+    return this.service.create(dto, req.user.userId, req.user.role);
   }
 
   /** Crea un documento logístico (remito) multi-producto/multi-lote con código RLNE/RLNS. */
   @Post('documents')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
-  createDocument(@Body() dto: CreateDocumentDto, @Req() req: Request & { user: { userId: string } }) {
-    return this.service.createDocument(dto, req.user.userId);
+  createDocument(@Body() dto: CreateDocumentDto, @Req() req: Request & { user: { userId: string; role: string } }) {
+    return this.service.createDocument(dto, req.user.userId, req.user.role);
   }
 
   /**

@@ -192,12 +192,16 @@ export class LocationsService {
       );
     }
 
+    const aisle = dto.aisle?.trim().toUpperCase() || null;
+    const rack = dto.rack?.trim().toUpperCase() || null;
+    await this.assertSubsectorFree(dto.warehouseId, aisle, rack, warehouse.name);
+
     const location = this.locationRepo.create({
       code,
       type: dto.type ?? 'RACK',
       zone: dto.zone ?? null,
-      aisle: dto.aisle ?? null,
-      rack: dto.rack ?? null,
+      aisle,
+      rack,
       level: dto.level ?? null,
       position: dto.position ?? null,
       capacityPallets: dto.capacityPallets ?? null,
@@ -211,6 +215,39 @@ export class LocationsService {
     });
 
     return this.locationRepo.save(location);
+  }
+
+  /**
+   * Dos ubicaciones con el mismo Sector-Subsector son celdas indistinguibles en
+   * el mapa: el operario ve dos "B2" y no sabe cuál es cuál. El código único no
+   * alcanza — "B-B2" y "B-B22" son códigos distintos pero pueden terminar con
+   * el mismo subsector por un tipeo.
+   *
+   * `excludeId` permite reusar el chequeo al editar (no chocar consigo misma).
+   */
+  private async assertSubsectorFree(
+    warehouseId: string,
+    aisle: string | null,
+    rack: string | null,
+    warehouseName: string,
+    excludeId?: string,
+  ) {
+    if (!aisle || !rack) return; // sin sector/subsector no hay celda que duplicar
+
+    const qb = this.locationRepo
+      .createQueryBuilder('loc')
+      .where('loc."warehouseId" = :warehouseId', { warehouseId })
+      .andWhere('UPPER(loc.aisle) = :aisle', { aisle })
+      .andWhere('UPPER(loc.rack) = :rack', { rack });
+    if (excludeId) qb.andWhere('loc.id <> :excludeId', { excludeId });
+
+    const clash = await qb.getOne();
+    if (clash) {
+      throw new BadRequestException(
+        `El subsector ${aisle}-${rack} ya existe en ${warehouseName} (ubicación "${clash.code}"). ` +
+        `Usá otro subsector o editá la existente.`,
+      );
+    }
   }
 
   /**
@@ -308,11 +345,12 @@ export class LocationsService {
   async availability() {
     const locations = await this.locationRepo.find({ relations: ['warehouse'] });
 
-    // Bases (pilas) por Sector-Subsector.
+    // Bases (pilas) por Sector-Subsector. Las EMPTY ya liberaron su base.
     const counts = await this.pilaRepo
       .createQueryBuilder('p')
       .select('p."locationId"', 'locationId')
       .addSelect('COUNT(*)', 'bases')
+      .where("p.status <> 'EMPTY'")
       .groupBy('p."locationId"')
       .getRawMany<{ locationId: string; bases: string }>();
 
@@ -360,11 +398,12 @@ export class LocationsService {
 
     const locations = await this.locationRepo.find({ relations: ['warehouse'] });
 
-    // Bases (pilas) ocupadas por Sector-Subsector.
+    // Bases (pilas) ocupadas por Sector-Subsector. Las EMPTY ya liberaron su base.
     const baseCounts = await this.pilaRepo
       .createQueryBuilder('p')
       .select('p."locationId"', 'locationId')
       .addSelect('COUNT(*)', 'bases')
+      .where("p.status <> 'EMPTY'")
       .groupBy('p."locationId"')
       .getRawMany<{ locationId: string; bases: string }>();
     const basesByLoc = new Map(baseCounts.map((c) => [c.locationId, Number(c.bases)]));
@@ -503,6 +542,7 @@ export class LocationsService {
       pil AS (
         SELECT "locationId", COUNT(*)::int AS bases
         FROM pilas
+        WHERE status <> 'EMPTY'
         GROUP BY "locationId"
       )
       SELECT
@@ -991,6 +1031,19 @@ export class LocationsService {
     }
     const { warehouseId: _ignored, ...fields } = dto;
     void _ignored;
+
+    // Mismo criterio que en create(): no dejar dos celdas con el mismo
+    // Sector-Subsector, ni siquiera moviendo una existente a un par ya tomado.
+    if (dto.aisle !== undefined || dto.rack !== undefined) {
+      const nextAisle = (dto.aisle ?? location.aisle)?.trim().toUpperCase() || null;
+      const nextRack = (dto.rack ?? location.rack)?.trim().toUpperCase() || null;
+      await this.assertSubsectorFree(
+        location.warehouse.id, nextAisle, nextRack, location.warehouse.name, location.id,
+      );
+      if (dto.aisle !== undefined) fields.aisle = nextAisle ?? undefined;
+      if (dto.rack !== undefined) fields.rack = nextRack ?? undefined;
+    }
+
     Object.assign(location, fields);
     return this.locationRepo.save(location);
   }

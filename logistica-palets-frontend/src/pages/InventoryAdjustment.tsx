@@ -7,7 +7,8 @@ import LotPalletBreakdownTable, { type ScopedLot } from "../components/adjustmen
 import CountLevelPicker, { type CountLevel } from "../components/adjustments/CountLevelPicker";
 import CountEntryPanel from "../components/adjustments/CountEntryPanel";
 import SurplusAllocationPicker, { type SurplusDestination } from "../components/adjustments/SurplusAllocationPicker";
-import ShortageAllocationTable, { computeShortageAllocation, type CandidatePallet } from "../components/adjustments/ShortageAllocationTable";
+import ShortageAllocationTable, { computeShortageAllocation, autoDistributeShortage, type CandidatePallet } from "../components/adjustments/ShortageAllocationTable";
+import ShortageModePicker, { type ShortageMode } from "../components/adjustments/ShortageModePicker";
 import AdjustmentSummary from "../components/adjustments/AdjustmentSummary";
 import type { Product } from "../api/products";
 import { listWarehouses } from "../api/warehouses";
@@ -112,7 +113,8 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
   const [entrySapLot, setEntrySapLot] = useState(() => generateSapLot());
   const [lotGroups, setLotGroups] = useState<LotGroup[]>([newLotGroup()]);
 
-  // Faltante (Producto/Lote): recuento por pallet
+  // Faltante (Producto/Lote): lo reparte el sistema (FEFO) o se recuenta pallet por pallet
+  const [shortageMode, setShortageMode] = useState<ShortageMode>("AUTO");
   const [shortagePhysicalByPallet, setShortagePhysicalByPallet] = useState<Record<string, string>>({});
 
   // Carrito, errores y resumen previo al envío
@@ -174,6 +176,13 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
     ? (scopeLot ? scopeLot.pallets.map((p) => ({ ...p, lotCode: scopeLot.lotCode })) : [])
     : lots.flatMap((l) => l.pallets.map((p) => ({ ...p, lotCode: l.lotCode })));
 
+  // Faltante a repartir y cuánto pueden absorber los pallets candidatos.
+  const shortageTarget = diff !== null && diff < 0 && level !== "PALLET" ? Math.round(-diff * 1000) / 1000 : 0;
+  const shortageCapacity = shortageCandidates.reduce((s, p) => s + p.quantity, 0);
+  // `shortageCandidates` es un array nuevo en cada render: no sirve como dependencia
+  // del efecto de autodistribución, se usa esta clave estable en su lugar.
+  const shortageCandidatesKey = shortageCandidates.map((p) => `${p.id}:${p.quantity}`).join("|");
+
   const cartInCount = cart.filter((l) => l.direction === "ADJUSTMENT_IN").length;
   const cartOutCount = cart.filter((l) => l.direction === "ADJUSTMENT_OUT").length;
   const cartHasNewPalletLine = cart.some((l) => l.direction === "ADJUSTMENT_IN" && !l.locationId);
@@ -187,7 +196,25 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
     setSurplusPallet(null);
     setLotGroups([newLotGroup(lotCodeSeed)]);
     setEntrySapLot(generateSapLot());
+    setShortageMode("AUTO");
     setShortagePhysicalByPallet({});
+    setFormError("");
+  }
+
+  // El error de validación es una foto del momento en que se apretó "Agregar al
+  // carrito": si el operador corrige el conteo hay que borrarlo, o queda en pantalla
+  // contradiciendo los números que está viendo.
+  function changePhysicalQty(value: string) {
+    setPhysicalQtyInput(value);
+    setFormError("");
+  }
+  function changeShortagePhysical(palletId: string, value: string) {
+    setShortagePhysicalByPallet((m) => ({ ...m, [palletId]: value }));
+    setFormError("");
+  }
+  function changeShortageMode(mode: ShortageMode) {
+    setShortageMode(mode);
+    setFormError("");
   }
   function selectProduct(p: Product | null) {
     setProduct(p);
@@ -251,6 +278,15 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [diff, surplusDestination]);
+
+  // Faltante en modo automático: el sistema reparte por FEFO y deja el resultado en el
+  // mismo mapa que llena el recuento manual, así la validación, el resumen y el envío
+  // son los mismos — lo único que cambia es quién carga los números.
+  useEffect(() => {
+    if (shortageMode !== "AUTO" || shortageTarget <= 0) return;
+    setShortagePhysicalByPallet(autoDistributeShortage(shortageCandidates, shortageTarget).physicalByPallet);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shortageMode, shortageTarget, shortageCandidatesKey]);
 
   // ── LotGroup helpers (sobrante — pallet no registrado / sin pallet) ──────
   function addLotGroup() { setLotGroups((g) => [...g, newLotGroup()]); }
@@ -342,14 +378,20 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
     }
 
     // Nivel Lote/Producto, faltante: distribución por pallet (Sistema → Físico → diferencia).
-    const target = -diff;
+    const target = shortageTarget;
     const { palletItems, total } = computeShortageAllocation(shortageCandidates, shortagePhysicalByPallet);
     if (palletItems.length === 0) return { error: "Recontá al menos un pallet donde encontraste menos, para cubrir el faltante." };
     if (total !== target) {
-      return { error: `Asignaste ${total} unidades pero el faltante es de ${target}. Ajustá el conteo por pallet.` };
+      const pending = Math.round((target - total) * 1000) / 1000;
+      return {
+        error: pending > 0
+          ? `Falta asignar ${pending.toLocaleString("es-PY")} unidades — llevás ${total.toLocaleString("es-PY")} de ${target.toLocaleString("es-PY")}.`
+          : `Te pasaste por ${Math.abs(pending).toLocaleString("es-PY")} unidades — asignaste ${total.toLocaleString("es-PY")} y el faltante es ${target.toLocaleString("es-PY")}.`,
+      };
     }
     const lotsUsed = [...new Set(palletItems.map((i) => shortageCandidates.find((p) => p.id === i.palletId)?.lotCode).filter((v): v is string => !!v))];
-    return { direction: "ADJUSTMENT_OUT", palletItems, totalQty: target, summary: `Lotes: ${lotsUsed.join(", ")}` };
+    const detalle = `${palletItems.length} pallet${palletItems.length !== 1 ? "s" : ""}${shortageMode === "AUTO" ? " (distribución automática)" : ""}`;
+    return { direction: "ADJUSTMENT_OUT", palletItems, totalQty: target, summary: `Lotes: ${lotsUsed.join(", ")} · ${detalle}` };
   }
 
   function addToCart() {
@@ -652,7 +694,7 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
               )}
 
               {showCountEntry && (
-                <CountEntryPanel systemQty={systemQty} physicalQtyInput={physicalQtyInput} onPhysicalQtyChange={setPhysicalQtyInput} unitLabel={product.unitOfMeasure ?? "unid."} />
+                <CountEntryPanel systemQty={systemQty} physicalQtyInput={physicalQtyInput} onPhysicalQtyChange={changePhysicalQty} unitLabel={product.unitOfMeasure ?? "unid."} />
               )}
 
               {/* Sobrante — Producto/Lote: ¿dónde están las unidades? */}
@@ -760,23 +802,32 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
 
               {/* Faltante — Producto/Lote: distribución por pallet */}
               {diff !== null && diff < 0 && level !== "PALLET" && (
-                <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ display: "grid", gap: 10 }}>
+                  <ShortageModePicker mode={shortageMode} onChange={changeShortageMode} />
+
+                  {shortageMode === "AUTO" && (
+                    <div style={{ background: "var(--panel-hi)", border: "1px solid var(--border)", borderRadius: 8, padding: "10px 14px", fontSize: 13 }}>
+                      Se descontarán <strong style={{ color: "var(--danger)" }}>{shortageTarget.toLocaleString("es-PY")}</strong> unidades
+                      repartidas automáticamente entre los pallets de abajo — no hace falta recontarlos uno por uno.
+                      Si sabés exactamente en qué pallets falta, pasá a <strong>Recuento por pallet</strong>.
+                    </div>
+                  )}
+
+                  {shortageTarget > shortageCapacity && (
+                    <div style={{ background: "var(--panel-hi)", border: "1px solid var(--danger)", borderRadius: 8, padding: "10px 14px", fontSize: 13, color: "var(--danger)" }}>
+                      Los pallets disponibles suman {shortageCapacity.toLocaleString("es-PY")} unidades — no alcanzan para cubrir un faltante
+                      de {shortageTarget.toLocaleString("es-PY")}. Revisá el conteo físico o ajustá primero los pallets que falten registrar.
+                    </div>
+                  )}
+
                   <ShortageAllocationTable
                     pallets={shortageCandidates}
                     physicalByPallet={shortagePhysicalByPallet}
-                    onPhysicalChange={(id, val) => setShortagePhysicalByPallet((m) => ({ ...m, [id]: val }))}
+                    onPhysicalChange={changeShortagePhysical}
                     locationMap={locationMap}
+                    target={shortageTarget}
+                    readOnly={shortageMode === "AUTO"}
                   />
-                  {shortageCandidates.length > 0 && (() => {
-                    const { total } = computeShortageAllocation(shortageCandidates, shortagePhysicalByPallet);
-                    const target = -diff;
-                    const ok = total === target;
-                    return (
-                      <div style={{ fontSize: 13, fontWeight: 700, color: ok ? "var(--success)" : "var(--muted)" }}>
-                        {ok ? "✓" : "—"} Asignado: {total.toLocaleString("es-PY")} / Faltante: {target.toLocaleString("es-PY")}
-                      </div>
-                    );
-                  })()}
                 </div>
               )}
 
@@ -918,7 +969,7 @@ function RequestCard({ adj, canApprove, rejectingId, rejectReason, onApprove, on
           )}
         </div>
         <div style={{ display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
-          <button className="btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={onLog} title="Ver bitácora y adjuntos">📎</button>
+          <button className="btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={onLog} title="Ver bitácora y adjuntos"></button>
           {isDraft && (
             <button className="btn btn--primary" style={{ fontSize: 12 }} onClick={onSubmitDraft} disabled={submittingDraft}>
               {submittingDraft ? "Enviando..." : "Enviar a aprobación"}

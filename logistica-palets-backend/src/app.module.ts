@@ -20,6 +20,7 @@ import { MovementsModule } from './modules/movements/movements.module';
 import { AdjustmentsModule } from './modules/adjustments/adjustments.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { TransportsModule } from './modules/transports/transports.module';
+import { SuppliersModule } from './modules/suppliers/suppliers.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { SeedModule } from './modules/seed/seed.module';
@@ -114,6 +115,7 @@ import { AppController } from './app.controller';
     AdjustmentsModule,
     UploadsModule,
     TransportsModule,
+    SuppliersModule,
     ReportsModule,
     BillingModule,
     SeedModule,

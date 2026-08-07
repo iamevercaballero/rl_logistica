@@ -85,6 +85,10 @@ export class Movement {
   @Column({ type: 'varchar', nullable: true })
   driver?: string;
 
+  /** CI del chofer — copiada desde Transportes al registrar el movimiento. */
+  @Column({ type: 'varchar', length: 40, nullable: true })
+  driverDocument?: string | null;
+
   @Column({ type: 'varchar', nullable: true })
   destination?: string;
 

@@ -88,7 +88,7 @@ export default function AttachmentUploader({ entityType, entityId, onUploaded, o
         onClick={() => inputRef.current?.click()}
       >
         {file ? (
-          <span style={{ fontSize: 13, fontWeight: 600 }}>📎 {file.name} <span style={{ color: "var(--muted)", fontWeight: 400 }}>({(file.size / 1024).toFixed(0)} KB)</span></span>
+          <span style={{ fontSize: 13, fontWeight: 600 }}> {file.name} <span style={{ color: "var(--muted)", fontWeight: 400 }}>({(file.size / 1024).toFixed(0)} KB)</span></span>
         ) : (
           <span style={{ fontSize: 13, color: "var(--muted)" }}>Hacé click para seleccionar un archivo (máx. 20 MB)</span>
         )}
@@ -126,8 +126,7 @@ export default function AttachmentUploader({ entityType, entityId, onUploaded, o
               fontWeight: category === c.value ? 700 : 400,
             }}
           >
-            <div style={{ fontSize: 18 }}>{c.icon}</div>
-            <div style={{ marginTop: 2 }}>{c.label}</div>
+            <div>{c.label}</div>
           </button>
         ))}
       </div>

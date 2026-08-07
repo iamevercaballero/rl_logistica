@@ -77,6 +77,7 @@ export class WarehousesService {
        AND p.status NOT IN ('EXITED', 'EMPTY')
       LEFT JOIN pilas pil
         ON pil."locationId" = loc.id
+       AND pil.status <> 'EMPTY'
       WHERE loc."warehouseId" = $1
       GROUP BY loc.id
       ORDER BY loc.zone NULLS LAST, loc.aisle NULLS LAST, loc.rack, loc.code

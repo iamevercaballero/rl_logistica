@@ -333,7 +333,11 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
               {movement.quantity.toLocaleString("es-PY")} unid.
             </div>
             <div style={{ fontSize: 11, color: "var(--muted)" }}>
-              {new Date(movement.date).toLocaleDateString("es-PY")}
+              {new Date(movement.createdAt ?? movement.date).toLocaleString("es-PY", {
+                timeZone: "America/Asuncion",
+                day: "2-digit", month: "2-digit", year: "numeric",
+                hour: "2-digit", minute: "2-digit",
+              })}
               {movement.warehouse && ` · ${movement.warehouse.name}`}
               {movement.location && ` / ${movement.location.code}`}
             </div>

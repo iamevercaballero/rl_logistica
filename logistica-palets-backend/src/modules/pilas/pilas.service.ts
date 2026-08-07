@@ -20,6 +20,8 @@ export interface PlacementPileResult {
   sequence: number;
   productId: string;
   lotId: string | null;
+  /** Máximo de niveles que admite esta pila (null = sin límite declarado). */
+  maxLevel: number | null;
   items: { key: string; stackPosition: number }[];
 }
 
@@ -50,6 +52,23 @@ interface WorkingPile extends PlacementPileResult {
  */
 @Injectable()
 export class PilasService {
+  /**
+   * Límite efectivo de una pila. Producto, Sector-Subsector y la propia pila
+   * pueden imponer techos independientes: siempre manda el más restrictivo.
+   * Un producto/sector no apilable equivale a una pila de un solo nivel.
+   */
+  effectiveMaxStackLevel(
+    location: Location,
+    product: Product,
+    pilaOverride?: number | null,
+  ): number {
+    if (!product.stackable || !location.allowsStacking) return 1;
+
+    const limits = [pilaOverride, location.defaultMaxStackLevel, product.maxStackLevel]
+      .filter((value): value is number => value != null && Number.isFinite(value) && value > 0);
+    return limits.length > 0 ? Math.min(...limits) : Infinity;
+  }
+
   /**
    * Factibilidad (ubicación, producto) — independiente de cuánto haya
    * ocupado ahora mismo. Temperatura/peso/altura exactos de `recommend()`;
@@ -152,7 +171,7 @@ export class PilasService {
     let nextSequence = Number(maxSeqRow?.max ?? 0) + 1;
 
     const maxLevelFor = (productId: string, pilaOverride?: number | null) =>
-      pilaOverride ?? location.defaultMaxStackLevel ?? productMap.get(productId)?.maxStackLevel ?? Infinity;
+      this.effectiveMaxStackLevel(location, productMap.get(productId)!, pilaOverride);
 
     const working: WorkingPile[] = existingPilas.map((p) => ({
       pilaId: p.id,
@@ -203,7 +222,7 @@ export class PilasService {
           items: [],
           level: 0,
           maxLevel: maxLevelFor(item.productId, null),
-          stackable: true,
+          stackable: maxLevelFor(item.productId, null) > 1,
         };
         working.push(target);
       }
@@ -239,8 +258,10 @@ export class PilasService {
       locationCode: location.code,
       piles: working
         .filter((w) => w.items.length > 0)
-        .map(({ pilaId, isNew, sequence, productId, lotId, items: pileItems }) => ({
-          pilaId, isNew, sequence, productId, lotId, items: pileItems,
+        .map(({ pilaId, isNew, sequence, productId, lotId, maxLevel, items: pileItems }) => ({
+          pilaId, isNew, sequence, productId, lotId,
+          maxLevel: Number.isFinite(maxLevel) ? maxLevel : null,
+          items: pileItems,
         })),
       basesUsed,
       basesTotal: location.capacityBases ?? null,
@@ -249,27 +270,61 @@ export class PilasService {
   }
 
   /**
-   * Libera la base **solo si la pila quedó sin pallets vivos**. Si todavía
-   * quedan pallets apilados, la base sigue ocupada — sacar un pallet de una
-   * pila de tres no libera el lugar de piso.
+   * Recalcula una pila después de retirar un pallet. Si quedó vacía libera la
+   * base; si todavía contiene pallets, compacta sus niveles y vuelve a OPEN
+   * cuando quedó por debajo del máximo efectivo.
    *
    * La fila no se borra: se marca EMPTY para no romper las referencias de
    * auditoría (`movement_details.pilaId`) ni reciclar el número de secuencia.
-   * Todas las consultas de ocupación descuentan las EMPTY.
    */
   async releaseIfEmpty(manager: EntityManager, pilaId?: string | null): Promise<void> {
     if (!pilaId) return;
 
-    const remaining = await manager
-      .getRepository(Pallet)
-      .count({ where: { pilaId, status: Not(In(['EXITED', 'EMPTY'])) } });
-    if (remaining > 0) return;
+    const pilaRepo = manager.getRepository(Pila);
+    const pila = await pilaRepo.findOne({
+      where: { id: pilaId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!pila) return;
 
-    await manager.getRepository(Pila).update(pilaId, {
-      status: 'EMPTY',
-      productId: null,
-      lotId: null,
-      closedAt: new Date(),
+    const palletRepo = manager.getRepository(Pallet);
+    const remaining = await palletRepo.find({
+      where: { pilaId, status: Not(In(['EXITED', 'EMPTY'])) },
+      order: { stackPosition: 'ASC', createdAt: 'ASC', id: 'ASC' },
+    });
+    if (remaining.length === 0) {
+      await pilaRepo.update(pilaId, {
+        status: 'EMPTY',
+        productId: null,
+        lotId: null,
+        closedAt: new Date(),
+        updatedAt: new Date(),
+      });
+      return;
+    }
+
+    // Al retirar un nivel intermedio no puede quedar, por ejemplo, 1-3: el
+    // próximo ingreso usa el conteo vivo y terminaría duplicando el nivel 2.
+    for (const [index, pallet] of remaining.entries()) {
+      const normalizedPosition = index + 1;
+      if (pallet.stackPosition !== normalizedPosition) {
+        await palletRepo.update(pallet.id, { stackPosition: normalizedPosition });
+      }
+    }
+
+    const [location, product] = await Promise.all([
+      manager.getRepository(Location).findOne({ where: { id: pila.locationId } }),
+      pila.productId
+        ? manager.getRepository(Product).findOne({ where: { id: pila.productId } })
+        : Promise.resolve(null),
+    ]);
+    const maxLevel = location && product
+      ? this.effectiveMaxStackLevel(location, product, pila.maxLevels)
+      : remaining.length;
+    const status = remaining.length >= maxLevel ? 'CLOSED' : 'OPEN';
+    await pilaRepo.update(pilaId, {
+      status,
+      closedAt: status === 'CLOSED' ? (pila.closedAt ?? new Date()) : null,
       updatedAt: new Date(),
     });
   }

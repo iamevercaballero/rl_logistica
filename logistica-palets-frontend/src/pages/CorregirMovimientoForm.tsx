@@ -5,6 +5,7 @@ import MovementEditorModal from "./MovementEditorModal";
 import DispatchLogDrawer from "../components/DispatchLogDrawer";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
+import { fmtDateTime } from "../utils/dateFormat";
 
 interface Props {
   onTypeChange: (t: MovementType | "INVENTORY_ADJUSTMENT") => void;
@@ -82,7 +83,7 @@ export default function CorregirMovimientoForm({ onTypeChange }: Props) {
         <DispatchLogDrawer
           entityType="MOVEMENT"
           entityId={logMovement.id}
-          title={`${logMovement.material.code} · ${new Date(logMovement.date).toLocaleDateString("es-PY")}`}
+          title={`${logMovement.material.code} · ${fmtDateTime(logMovement.createdAt ?? logMovement.date)}`}
           onClose={() => setLogMovement(null)}
         />
       )}
@@ -279,7 +280,7 @@ function MovementRow({ movement: m, onEdit, onVoid, onLog, voiding }: {
           {isVoided && <span className="badge" style={{ fontSize: 10, background: "var(--muted)", color: "#fff" }}>ANULADO</span>}
         </div>
         <div style={{ display: "flex", gap: 12, marginTop: 4, flexWrap: "wrap", fontSize: 12, color: "var(--muted)" }}>
-          <span>{new Date(m.date).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" })}</span>
+          <span>{fmtDateTime(m.createdAt ?? m.date)}</span>
           {isEntry && m.warehouse && <span>{m.warehouse.name}{m.location ? ` / ${m.location.code}` : ""}</span>}
           {!isEntry && m.destination && <span>→ {m.destination}</span>}
           {m.documentNumber && <span>MIC/Fac/Rem. {m.documentNumber}</span>}

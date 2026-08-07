@@ -101,6 +101,7 @@ export class TransportsService {
       .createQueryBuilder('doc')
       .where('doc."vehiclePlate" ILIKE :plate', { plate: transport.plate.trim() })
       .orderBy('doc.date', 'DESC')
+      .addOrderBy('doc.createdAt', 'DESC')
       .limit(100)
       .getMany();
 
@@ -114,7 +115,7 @@ export class TransportsService {
         totalTrips: documents.length,
         entries,
         exits,
-        lastTrip: documents.length > 0 ? documents[0].date : null,
+        lastTrip: documents.length > 0 ? documents[0].createdAt : null,
       },
     };
   }

@@ -89,6 +89,8 @@ export type SlottingResult = {
     fragile: boolean;
     rotationPolicy: string;
   };
+  /** Todas las ubicaciones factibles; recommendations contiene solo el top 3. */
+  feasibleLocationIds: string[];
   recommendations: LocationRecommendation[];
   message: string | null;
 };

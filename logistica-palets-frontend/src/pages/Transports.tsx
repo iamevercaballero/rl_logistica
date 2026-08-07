@@ -32,7 +32,8 @@ function fmtDate(s?: string | null): string {
   if (!s) return "—";
   return new Date(s).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" });
 }
-function fmtDateTime(s: string): string {
+function fmtDateTime(s: string | null | undefined): string {
+  if (!s) return "—";
   return new Date(s).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 function formatBytes(b: number): string {
@@ -620,7 +621,7 @@ function HistorialTab({ vehicleId }: { vehicleId: string }) {
           { label: "Viajes", value: summary.totalTrips },
           { label: "Entradas", value: summary.entries },
           { label: "Salidas", value: summary.exits },
-          { label: "Último viaje", value: fmtDate(summary.lastTrip) },
+          { label: "Último viaje", value: fmtDateTime(summary.lastTrip) },
         ].map((k) => (
           <div key={k.label} style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 12px" }}>
             <div style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>{k.label}</div>
@@ -637,7 +638,7 @@ function HistorialTab({ vehicleId }: { vehicleId: string }) {
         <div style={{ overflowX: "auto" }}>
           <table className="table" style={{ margin: 0 }}>
             <thead>
-              <tr><th>Remito</th><th>Tipo</th><th>Fecha</th><th>Origen / Destino</th><th style={{ textAlign: "right" }}>Ítems</th></tr>
+              <tr><th>Remito</th><th>Tipo</th><th>Fecha y hora</th><th>Origen / Destino</th><th style={{ textAlign: "right" }}>Ítems</th></tr>
             </thead>
             <tbody>
               {documents.map((d) => (
@@ -648,7 +649,7 @@ function HistorialTab({ vehicleId }: { vehicleId: string }) {
                       {d.type === "ENTRY" ? "Entrada" : "Salida"}
                     </span>
                   </td>
-                  <td>{fmtDate(d.date)}</td>
+                  <td>{fmtDateTime(d.createdAt ?? d.date)}</td>
                   <td style={{ color: "var(--muted)", fontSize: 13 }}>{d.supplier || d.destination || "—"}</td>
                   <td style={{ textAlign: "right" }}>{d.totalLines}</td>
                 </tr>

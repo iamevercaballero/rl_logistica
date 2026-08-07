@@ -35,7 +35,10 @@ export type Movement = {
   status: MovementStatus;
   voidStatus?: VoidStatus;
   voidAdjRequestId?: string | null;
+  /** Día operativo elegido por el usuario. */
   date: string;
+  /** Instante exacto en que el movimiento quedó registrado. */
+  createdAt: string;
   quantity: number;
   pallets?: number | null;
   documentNumber?: string | null;
@@ -108,6 +111,8 @@ export type PlacementPile = {
   sequence: number;
   productId: string;
   lotId: string | null;
+  /** Máximo de niveles que admite esta pila (null = sin límite declarado). */
+  maxLevel: number | null;
   items: { key: string; stackPosition: number }[];
 };
 
@@ -181,6 +186,8 @@ export type LogisticsDocument = {
   notes?: string | null;
   totalLines: number;
   totalQuantity: number;
+  /** Líneas (movimientos) de este documento anuladas después de aprobado. El status del documento no cambia por esto. */
+  voidedLines?: number;
   createdAt: string;
 };
 
@@ -218,6 +225,7 @@ export type RawMovement = {
   id: string;
   type: MovementType;
   date: string;
+  createdAt?: string;
   productId: string;
   quantity: number;
   pallets?: number | null;

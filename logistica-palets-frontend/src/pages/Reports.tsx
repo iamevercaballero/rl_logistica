@@ -89,6 +89,20 @@ const MOVE_BADGE: Record<string, string> = {
   ADJUSTMENT_OUT: "badge badge--adj-out",
 };
 
+/**
+ * Badge de anulación — mismo criterio en todas las pestañas de Reportes: un
+ * movimiento anulado sigue apareciendo en el historial (no se oculta, es
+ * información de auditoría), pero queda marcado para no confundirse con una
+ * entrada/salida oficial vigente. VOID_PENDING (anulación solicitada, todavía
+ * sin aprobar) es distinto de VOIDED (ya confirmada) — el stock recién se
+ * corrige cuando pasa a VOIDED.
+ */
+function VoidBadge({ voidStatus }: { voidStatus?: "NONE" | "VOID_PENDING" | "VOIDED" }) {
+  if (voidStatus === "VOIDED") return <span className="badge badge--estado-cancelado">Anulado</span>;
+  if (voidStatus === "VOID_PENDING") return <span className="badge badge--estado-pendiente">Anulación pendiente</span>;
+  return null;
+}
+
 type Tab = "stock" | "movimientos" | "lotes" | "entradas" | "diario" | "salidas" | "trazabilidad" | "frescura" | "almacen";
 
 type MovementFilters = {
@@ -588,13 +602,14 @@ export default function ReportsPage() {
               <table className="table">
                 <thead>
                   <tr>
-                    <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => movSort.handleSort("date")}>Fecha{sortArrow(movSort.sortConfig, "date")}</th>
+                    <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => movSort.handleSort("createdAt")}>Fecha y hora{sortArrow(movSort.sortConfig, "createdAt")}</th>
                     <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => movSort.handleSort("type")}>Tipo{sortArrow(movSort.sortConfig, "type")}</th>
                     <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => movSort.handleSort("material.code")}>Material{sortArrow(movSort.sortConfig, "material.code")}</th>
                     <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => movSort.handleSort("quantity")}>Cantidad{sortArrow(movSort.sortConfig, "quantity")}</th>
                     <th scope="col">Ubicación</th>
                     <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => movSort.handleSort("lotCode")}>Lote{sortArrow(movSort.sortConfig, "lotCode")}</th>
                     <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => movSort.handleSort("pallets")}>Pallets{sortArrow(movSort.sortConfig, "pallets")}</th>
+                    <th scope="col">Estado</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -602,12 +617,13 @@ export default function ReportsPage() {
                     const rows = (m.lotsDetail && m.lotsDetail.length > 0)
                       ? m.lotsDetail.map((ld) => ({ lot: ld.lotCode, pallets: ld.pallets, quantity: ld.quantity }))
                       : [{ lot: m.lotCode ?? null, pallets: m.pallets ?? null, quantity: m.quantity }];
+                    const voided = m.voidStatus === "VOIDED";
                     return rows.map((r, i) => (
-                      <tr key={`${m.id}-${m.date}-${i}`}>
-                        <td style={{ color: "var(--muted)", fontSize: 12 }}>{fmtDateTime(m.date)}</td>
+                      <tr key={`${m.id}-${m.date}-${i}`} style={voided ? { opacity: 0.6 } : undefined}>
+                        <td style={{ color: "var(--muted)", fontSize: 12 }}>{fmtDateTime(m.createdAt ?? m.date)}</td>
                         <td><span className={MOVE_BADGE[m.type] ?? "badge"}>{MOVE_LABEL[m.type] ?? m.type}</span></td>
                         <td><strong>{m.material.code}</strong> · {m.material.description}</td>
-                        <td>{r.quantity.toLocaleString("es-PY")}</td>
+                        <td style={{ textDecoration: voided ? "line-through" : undefined }}>{r.quantity.toLocaleString("es-PY")}</td>
                         <td style={{ fontSize: 12 }}>
                           {m.type === "TRANSFER"
                             ? `${m.from?.locationCode ?? "-"} → ${m.to?.locationCode ?? "-"}`
@@ -615,6 +631,7 @@ export default function ReportsPage() {
                         </td>
                         <td style={{ color: "var(--muted)", fontSize: 12 }}>{r.lot ?? "-"}</td>
                         <td style={{ color: "var(--muted)", fontSize: 12, textAlign: "right" }}>{r.pallets != null ? r.pallets : "-"}</td>
+                        <td><VoidBadge voidStatus={m.voidStatus} /></td>
                       </tr>
                     ));
                   })}
@@ -822,7 +839,7 @@ export default function ReportsPage() {
                 <table className="table" style={{ minWidth: 1100 }}>
                   <thead>
                     <tr>
-                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("date")}>Fecha{sortArrow(entradasSort.sortConfig, "date")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("createdAt")}>Fecha y hora{sortArrow(entradasSort.sortConfig, "createdAt")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("material.code")}>Material{sortArrow(entradasSort.sortConfig, "material.code")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("lotCode")}>Lote{sortArrow(entradasSort.sortConfig, "lotCode")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("sapLot")}>Lote SAP{sortArrow(entradasSort.sortConfig, "sapLot")}</th>
@@ -843,16 +860,17 @@ export default function ReportsPage() {
                       const rows = (m.lotsDetail && m.lotsDetail.length > 0)
                         ? m.lotsDetail.map((ld) => ({ lot: ld.lotCode, sapLot: ld.sapLot ?? null, pallets: ld.pallets, quantity: ld.quantity }))
                         : [{ lot: m.lotCode ?? null, sapLot: m.sapLot ?? null, pallets: m.pallets ?? null, quantity: m.quantity }];
+                      const voided = m.voidStatus === "VOIDED";
                       return rows.map((r, i) => (
-                      <tr key={`${m.id}-${i}`} style={m.status === "PENDING_REGULARIZATION" ? { background: "var(--badge-adjout-bg)" } : {}}>
+                      <tr key={`${m.id}-${i}`} style={voided ? { opacity: 0.6 } : m.status === "PENDING_REGULARIZATION" ? { background: "var(--badge-adjout-bg)" } : {}}>
                         <td style={{ color: "var(--muted)", fontSize: 12, whiteSpace: "nowrap" }}>
-                          {fmtDateTime(m.date)}
+                          {fmtDateTime(m.createdAt ?? m.date)}
                         </td>
                         <td><strong>{m.material.code}</strong><span style={{ color: "var(--muted)", marginLeft: 4 }}>· {m.material.description}</span></td>
                         <td style={{ fontSize: 12 }}>{r.lot ?? "—"}</td>
                         <td style={{ fontFamily: "monospace", fontSize: 12 }}>{r.sapLot ?? "—"}</td>
                         <td style={{ fontSize: 12, color: "var(--muted)" }}>{m.documentNumber ?? "—"}</td>
-                        <td style={{ fontWeight: 600 }}>{r.quantity.toLocaleString("es-PY")} {m.material.unitOfMeasure ?? ""}</td>
+                        <td style={{ fontWeight: 600, textDecoration: voided ? "line-through" : undefined }}>{r.quantity.toLocaleString("es-PY")} {m.material.unitOfMeasure ?? ""}</td>
                         <td style={{ textAlign: "center" }}>{r.pallets != null ? r.pallets : "—"}</td>
                         <td style={{ fontSize: 12 }}>
                           {m.warehouse?.name ?? "—"}{m.location?.code ? ` / ${m.location.code}` : ""}
@@ -864,12 +882,14 @@ export default function ReportsPage() {
                           {m.notes ?? "—"}
                         </td>
                         <td>
-                          {m.status === "PENDING_REGULARIZATION"
+                          {voided
+                            ? <VoidBadge voidStatus={m.voidStatus} />
+                            : m.status === "PENDING_REGULARIZATION"
                             ? <span className="badge badge--adj-out">Pendiente</span>
                             : <span className="badge badge--entry">Normal</span>}
                         </td>
                         <td>
-                          {m.status === "PENDING_REGULARIZATION" && (
+                          {m.status === "PENDING_REGULARIZATION" && !voided && (
                             <button
                               className="btn btn--primary"
                               style={{ fontSize: 12, padding: "4px 10px", whiteSpace: "nowrap" }}
@@ -1106,7 +1126,7 @@ export default function ReportsPage() {
                 <table className="table" style={{ minWidth: 960 }}>
                   <thead>
                     <tr>
-                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("date")}>Fecha{sortArrow(salidasSort.sortConfig, "date")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("createdAt")}>Fecha y hora{sortArrow(salidasSort.sortConfig, "createdAt")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("material.code")}>Material{sortArrow(salidasSort.sortConfig, "material.code")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("lotCode")}>Lote{sortArrow(salidasSort.sortConfig, "lotCode")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("sapLot")}>Lote SAP{sortArrow(salidasSort.sortConfig, "sapLot")}</th>
@@ -1117,6 +1137,7 @@ export default function ReportsPage() {
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("carrier")}>Transportista{sortArrow(salidasSort.sortConfig, "carrier")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("driver")}>Chofer{sortArrow(salidasSort.sortConfig, "driver")}</th>
                       <th scope="col">Notas</th>
+                      <th scope="col">Estado</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1124,15 +1145,16 @@ export default function ReportsPage() {
                       const rows = (m.lotsDetail && m.lotsDetail.length > 0)
                         ? m.lotsDetail.map((ld) => ({ lot: ld.lotCode, sapLot: ld.sapLot ?? null, pallets: ld.pallets, quantity: ld.quantity }))
                         : [{ lot: m.lotCode ?? null, sapLot: m.sapLot ?? null, pallets: m.pallets ?? null, quantity: m.quantity }];
+                      const voided = m.voidStatus === "VOIDED";
                       return rows.map((r, i) => (
-                      <tr key={`${m.id}-${i}`}>
+                      <tr key={`${m.id}-${i}`} style={voided ? { opacity: 0.6 } : undefined}>
                         <td style={{ color: "var(--muted)", fontSize: 12, whiteSpace: "nowrap" }}>
-                          {fmtDateTime(m.date)}
+                          {fmtDateTime(m.createdAt ?? m.date)}
                         </td>
                         <td><strong>{m.material.code}</strong><span style={{ color: "var(--muted)", marginLeft: 4 }}>· {m.material.description}</span></td>
                         <td style={{ fontSize: 12 }}>{r.lot ?? "—"}</td>
                         <td style={{ fontFamily: "monospace", fontSize: 12 }}>{r.sapLot ?? "—"}</td>
-                        <td style={{ fontWeight: 600 }}>{r.quantity.toLocaleString("es-PY")} {m.material.unitOfMeasure ?? ""}</td>
+                        <td style={{ fontWeight: 600, textDecoration: voided ? "line-through" : undefined }}>{r.quantity.toLocaleString("es-PY")} {m.material.unitOfMeasure ?? ""}</td>
                         <td style={{ textAlign: "center" }}>{r.pallets != null ? r.pallets : "—"}</td>
                         <td style={{ fontSize: 12 }}>
                           {m.warehouse?.name ?? m.from?.warehouseName ?? "—"}{(m.location?.code ?? m.from?.locationCode) ? ` / ${m.location?.code ?? m.from?.locationCode}` : ""}
@@ -1143,6 +1165,7 @@ export default function ReportsPage() {
                         <td style={{ fontSize: 12, color: "var(--muted)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {m.notes ?? "—"}
                         </td>
+                        <td><VoidBadge voidStatus={m.voidStatus} /></td>
                       </tr>
                       ));
                     })}
@@ -1216,22 +1239,27 @@ export default function ReportsPage() {
                   key={event.movementId}
                   style={{
                     borderLeft: `3px solid ${
+                      event.voidStatus === "VOIDED" ? "var(--border)" :
                       event.type === "ENTRY"    ? "var(--success)" :
                       event.type === "EXIT"     ? "var(--danger)"  :
                       event.type === "TRANSFER" ? "var(--primary)" :
                       "var(--border)"
                     }`,
                     paddingLeft: 14, paddingTop: 4, paddingBottom: 4,
+                    opacity: event.voidStatus === "VOIDED" ? 0.6 : 1,
                   }}
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                     <span className={MOVE_BADGE[event.type] ?? "badge"}>
                       {MOVE_LABEL[event.type] ?? event.type}
                     </span>
-                    <strong>{event.quantity.toLocaleString("es-PY")}</strong>
+                    <strong style={{ textDecoration: event.voidStatus === "VOIDED" ? "line-through" : undefined }}>
+                      {event.quantity.toLocaleString("es-PY")}
+                    </strong>
                     <span style={{ color: "var(--muted)", fontSize: 12 }}>
                       {fmtDateTime(event.at)}
                     </span>
+                    <VoidBadge voidStatus={event.voidStatus} />
                   </div>
                   <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12, color: "var(--muted)" }}>
                     {event.documentNumber && (

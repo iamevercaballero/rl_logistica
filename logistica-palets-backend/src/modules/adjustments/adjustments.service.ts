@@ -191,7 +191,7 @@ export class AdjustmentsService {
         );
       }
 
-      return { requestId: id, code: locked.code, movementIds };
+      return { requestId: id, code: locked.code, movementIds, originalMovementId: locked.originalMovementId ?? null };
     });
 
     // Invalidar caché y emitir evento
@@ -204,6 +204,15 @@ export class AdjustmentsService {
     void this.uploads.log('ADJUSTMENT', id, 'APROBADO',
       `Solicitud ${result.code} aprobada — stock actualizado (${result.movementIds.length} movimiento(s))`,
       userId, undefined, undefined, result.code);
+
+    // Cierra el ciclo en la bitácora del movimiento original: hasta acá solo
+    // constaba la solicitud (ANULACION_SOLICITADA); sin este evento, quien mira
+    // la bitácora del movimiento nunca se entera de que la anulación se confirmó.
+    if (result.originalMovementId) {
+      void this.uploads.log('MOVEMENT', result.originalMovementId, 'ANULADO',
+        `Anulación confirmada — aprobada como ${result.code}`,
+        userId, undefined, undefined, result.code);
+    }
 
     return result;
   }
@@ -236,8 +245,8 @@ export class AdjustmentsService {
   //  ANULAR
   // ─────────────────────────────────────────────────────────
 
-  async cancel(id: string, _userId: string) {
-    return this.dataSource.transaction(async (manager) => {
+  async cancel(id: string, userId: string) {
+    const result = await this.dataSource.transaction(async (manager) => {
       const req = await this.findOrFail(manager, id);
       if (req.status === 'APROBADO') {
         throw new ForbiddenException('No se puede anular un ajuste aprobado.');
@@ -257,8 +266,19 @@ export class AdjustmentsService {
         );
       }
 
-      return { requestId: req.id, code: req.code };
+      return { requestId: req.id, code: req.code, originalMovementId: req.originalMovementId ?? null };
     });
+
+    // El movimiento queda operable de nuevo — sin este evento, su bitácora se
+    // quedaría en "anulación solicitada" para siempre aunque en los hechos se
+    // haya cancelado y el movimiento siga vigente.
+    if (result.originalMovementId) {
+      void this.uploads.log('MOVEMENT', result.originalMovementId, 'RECHAZADO',
+        `Anulación cancelada (${result.code}) — el movimiento sigue vigente`,
+        userId, undefined, undefined, result.code);
+    }
+
+    return result;
   }
 
   // ─────────────────────────────────────────────────────────

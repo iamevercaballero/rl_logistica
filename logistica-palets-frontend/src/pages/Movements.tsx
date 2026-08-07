@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import ProductSearch from "../components/ProductSearch";
 import ProductCatalogModal from "../components/ProductCatalogModal";
-import LocationPicker from "../components/LocationPicker";
+import LocationPicker, { type LocationSessionUsage } from "../components/LocationPicker";
 import CorregirMovimientoForm from "./CorregirMovimientoForm";
 import InventoryAdjustmentPage from "./InventoryAdjustment";
 import {
@@ -19,6 +19,7 @@ import {
   type LogisticsDocument,
   type PlacementPlan,
 } from "../api/movements";
+import { buildLocationPlanView, type LocationPlanView } from "../lib/placementView";
 import { fefoLots, generateSapLot, type Lot } from "../api/lots";
 import { uploadAttachment, ATTACHMENT_CATEGORIES, type AttachmentCategory } from "../api/attachments";
 import AttachmentUploader from "../components/AttachmentUploader";
@@ -419,6 +420,52 @@ export default function MovementsPage() {
     return map;
   }, [palletsByLocation, placementQueries]);
 
+  /**
+   * Ocupación que esta carga ya comprometió y todavía no está en la base. Se le
+   * pasa al selector de ubicación para que las recomendaciones y el mapa se
+   * adapten: sin esto, después de mandar un pallet a un sector el siguiente
+   * seguía viendo ese mismo sector como si estuviera vacío.
+   */
+  const locationSessionUsage = useMemo(() => {
+    const m = new Map<string, LocationSessionUsage>();
+    for (const [locId, pallets] of palletsByLocation) {
+      const state = planByLocation.get(locId);
+      m.set(locId, { pallets, basesFree: state?.plan?.basesFree ?? null, error: state?.error });
+    }
+    return m;
+  }, [palletsByLocation, planByLocation]);
+
+  /** locationId → P-número (1-based, el que se ve en la columna Pallet) de cada
+   *  fila, en el mismo orden que `posInLocation` — permite traducir "índice
+   *  dentro del plan de este sector" a la etiqueta que el operador ve en pantalla. */
+  const rowNumbersByLocation = useMemo(() => {
+    const map = new Map<string, number[]>();
+    palletRows.forEach((r, globalIdx) => {
+      const loc = r.line.locationId || locationId;
+      if (!loc) return;
+      map.set(loc, [...(map.get(loc) ?? []), globalIdx + 1]);
+    });
+    return map;
+  }, [palletRows, locationId]);
+
+  /**
+   * Lectura por-fila del plan de colocación de cada sector: a qué pila entra
+   * cada pallet, cuántas bases van quedando libres a medida que se procesan
+   * (no el total final repetido en todas las filas) y qué otros pallets de
+   * esta misma carga terminan en la misma pila (para poder confirmar un
+   * apilado a simple vista, no solo intuirlo).
+   */
+  const locationPlanViews = useMemo(() => {
+    const views = new Map<string, LocationPlanView>();
+    for (const [locId, count] of palletsByLocation) {
+      const plan = planByLocation.get(locId)?.plan;
+      const rowNumbers = rowNumbersByLocation.get(locId);
+      if (!plan || !rowNumbers) continue;
+      views.set(locId, buildLocationPlanView(plan, count, rowNumbers));
+    }
+    return views;
+  }, [palletsByLocation, planByLocation, rowNumbersByLocation]);
+
   useEffect(() => {
     if (!fefoEnabled) { setFefoRows([]); return; }
     if (!fefoQ.data) return;
@@ -578,6 +625,10 @@ export default function MovementsPage() {
     queryClient.invalidateQueries({ queryKey: ["stock"] });
     queryClient.invalidateQueries({ queryKey: ["lots"] });
     queryClient.invalidateQueries({ queryKey: ["pallets"] });
+    queryClient.invalidateQueries({ queryKey: ["location-availability"] });
+    queryClient.invalidateQueries({ queryKey: ["location-recommendations"] });
+    queryClient.invalidateQueries({ queryKey: ["location-map"] });
+    queryClient.invalidateQueries({ queryKey: ["location-content"] });
   }
 
   const transferMut = useMutation({
@@ -930,12 +981,12 @@ export default function MovementsPage() {
           <div style={{ overflowX: "auto" }}>
             <table className="table">
               <thead>
-                <tr><th scope="col">Fecha</th><th scope="col">Material</th><th scope="col">Cantidad</th><th scope="col">Observación</th><th scope="col"></th></tr>
+                <tr><th scope="col">Fecha y hora</th><th scope="col">Material</th><th scope="col">Cantidad</th><th scope="col">Observación</th><th scope="col"></th></tr>
               </thead>
               <tbody>
                 {pending.map((m) => (
                   <tr key={m.id}>
-                    <td style={{ fontSize: 12, whiteSpace: "nowrap", color: "var(--muted)" }}>{new Date(m.date).toLocaleString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
+                    <td style={{ fontSize: 12, whiteSpace: "nowrap", color: "var(--muted)" }}>{new Date(m.createdAt ?? m.date).toLocaleString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
                     <td><strong>{m.material.code}</strong><span style={{ color: "var(--muted)", fontSize: 12 }}> · {m.material.description}</span></td>
                     <td style={{ fontWeight: 700 }}>{m.quantity.toLocaleString("es-PY")}</td>
                     <td style={{ fontSize: 12, color: "var(--muted)", maxWidth: 220 }}>{m.notes || "—"}</td>
@@ -1170,6 +1221,16 @@ export default function MovementsPage() {
                         }}>
                           {doc.status.replace("_", " ")}
                         </span>
+                        {/* El status de arriba no cambia si una línea se anuló después de
+                            aprobado — esta es la señal aparte de que ya no está 100% intacto. */}
+                        {!!doc.voidedLines && (
+                          <div
+                            title="Al menos un movimiento de este remito fue anulado después de aprobado."
+                            style={{ fontSize: 10, color: "var(--muted)", marginTop: 3, whiteSpace: "nowrap" }}
+                          >
+                            ⊘ {doc.voidedLines} anulada{doc.voidedLines !== 1 ? "s" : ""}
+                          </div>
+                        )}
                       </td>
                       <td style={{ textAlign: "center", whiteSpace: "nowrap" }}>
                         <button
@@ -1365,7 +1426,7 @@ export default function MovementsPage() {
                 </div>
                 <div>
                   <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>Ubicación destino</label>
-                  <LocationPicker value={toLocationId} onChange={setToLocationId} placeholder="Seleccionar destino" excludeUnavailable productId={transferProduct?.id} />
+                  <LocationPicker value={toLocationId} onChange={setToLocationId} placeholder="Seleccionar destino" excludeUnavailable productId={transferProduct?.id} excludeLocationId={fromLocationId || undefined} />
                   {toLocationId && destPalletsQ.data && (
                     <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--muted)" }}>
                       El destino ya tiene {destPalletsQ.data.filter((p) => p.status !== "EXITED" && p.status !== "EMPTY").length} palet(s)
@@ -2204,6 +2265,7 @@ export default function MovementsPage() {
                 onChange={(locId) => { if (locId) applyLocationToAllPallets(locId); }}
                 warehouseId={warehouseId || undefined}
                 productId={product?.id}
+                sessionUsage={locationSessionUsage}
                 placeholder="Elegí un sector para todos los pallets"
               />
             </div>
@@ -2224,14 +2286,15 @@ export default function MovementsPage() {
                   {palletRows.map((row, globalIdx) => {
                     const effectiveLoc = row.line.locationId || locationId;
                     const state = effectiveLoc ? planByLocation.get(effectiveLoc) : undefined;
+                    const view = effectiveLoc ? locationPlanViews.get(effectiveLoc) : undefined;
                     // Cuántos pallets de este mismo sector vienen antes: da la
                     // posición de esta fila dentro del plan de ese sector.
                     const posInLocation = palletRows
                       .slice(0, globalIdx)
                       .filter((r) => (r.line.locationId || locationId) === effectiveLoc).length;
-                    const pile = state?.plan?.piles.find((p) =>
-                      p.items.some((it) => it.key === String(posInLocation)),
-                    );
+                    const pile = view?.keyToPile.get(String(posInLocation));
+                    const item = pile?.items.find((it) => it.key === String(posInLocation));
+                    const basesFreeHere = view?.runningBasesFree[posInLocation] ?? null;
 
                     let placement: { text: string; color: string };
                     if (!effectiveLoc) {
@@ -2240,10 +2303,23 @@ export default function MovementsPage() {
                       placement = { text: "Calculando…", color: "var(--muted)" };
                     } else if (state?.error) {
                       placement = { text: state.error, color: "var(--danger)" };
-                    } else if (pile) {
-                      placement = pile.isNew
-                        ? { text: "Ocupará una nueva base", color: "var(--muted)" }
-                        : { text: "Se agregará sobre una pila existente", color: "var(--success)" };
+                    } else if (pile && item) {
+                      // El nivel solo se muestra si esta pila realmente junta más de un
+                      // pallet de esta carga — si no, "nivel 1/3" sugeriría un apilado
+                      // que en los hechos no está pasando (producto no apilable, o
+                      // este es el único pallet que le tocó a esa base).
+                      const levelTxt = pile.items.length > 1 && pile.maxLevel ? `nivel ${item.stackPosition}/${pile.maxLevel}` : null;
+                      if (item.stackPosition === 1) {
+                        // Único pallet de la pila que realmente consume una base — el
+                        // resto (nivel 2, 3…) se apila encima sin ocupar otra base.
+                        const basesTxt = basesFreeHere != null ? `quedan ${basesFreeHere} bases` : null;
+                        placement = { text: ["Abre base nueva", levelTxt, basesTxt].filter(Boolean).join(" · "), color: "var(--muted)" };
+                      } else {
+                        const baseRef = pile.isNew ? "la base nueva" : "la pila existente";
+                        const siblings = (view?.pileRowNumbers.get(pile.sequence) ?? []).filter((n) => n !== globalIdx + 1);
+                        const withTxt = siblings.length ? `con P${siblings.join(", P")}` : null;
+                        placement = { text: [`Se apila sobre ${baseRef}`, levelTxt, withTxt].filter(Boolean).join(" · "), color: "var(--success)" };
+                      }
                     } else {
                       placement = { text: "—", color: "var(--muted)" };
                     }
@@ -2269,12 +2345,13 @@ export default function MovementsPage() {
                             aria-label={`Peso del pallet ${globalIdx + 1}`}
                           />
                         </td>
-                        <td style={{ minWidth: 240 }}>
+                        <td style={{ minWidth: 210 }}>
                           <LocationPicker
                             value={row.line.locationId}
                             onChange={(locId) => updatePalletLine(row.groupId, row.idx, { locationId: locId })}
                             warehouseId={warehouseId || undefined}
                             productId={product?.id}
+                            sessionUsage={locationSessionUsage}
                             placeholder={locationId ? "Igual que la línea" : "Elegí un sector"}
                           />
                         </td>

@@ -13,6 +13,7 @@ import { DataSource, In, Not } from 'typeorm';
 import { MovementsService } from '../src/modules/movements/movements.service';
 import { DocumentSequenceService } from '../src/modules/movements/document-sequence.service';
 import { PilasService } from '../src/modules/pilas/pilas.service';
+import { PalletsService } from '../src/modules/pallets/pallets.service';
 import { ReportsService } from '../src/modules/reports/reports.service';
 import { Product } from '../src/modules/products/entities/product.entity';
 import { Stock } from '../src/modules/stocks/entities/stock.entity';
@@ -39,6 +40,7 @@ const noopUploads = { log: async () => {} } as unknown as UploadsService;
 
 let ds: DataSource;
 let service: MovementsService;
+let palletsService: PalletsService;
 let reports: ReportsService;
 let base: Basics;
 
@@ -58,6 +60,13 @@ beforeAll(async () => {
     `("productId", COALESCE("warehouseId", ${NIL}), COALESCE("locationId", ${NIL}))`,
   );
   service = new MovementsService(ds, noopEvents, noopCache, new DocumentSequenceService(), noopUploads, new PilasService());
+  palletsService = new PalletsService(
+    ds,
+    ds.getRepository(Pallet),
+    ds.getRepository(Lot),
+    ds.getRepository(Location),
+    new PilasService(),
+  );
   reports = new ReportsService(ds, ds.getRepository(SapStockSnapshot), noopCache);
 }, 60_000);
 
@@ -421,6 +430,30 @@ describe('motor de stock — cantidades decimales', () => {
 });
 
 describe('motor de stock — colocación en pilas', () => {
+  it('la vista previa de un no apilable consume una base por pallet y rechaza el excedente', async () => {
+    const tight = await ds.getRepository(Location).save(
+      ds.getRepository(Location).create({ code: 'PREVIEW-NS', type: 'PISO', warehouse: base.warehouse, active: true, capacityBases: 2 }),
+    );
+    await ds.getRepository(Product).update(base.product.id, { stackable: false });
+
+    const plan = await service.previewPlacement({
+      productId: base.product.id,
+      locationId: tight.id,
+      palletCount: 2,
+    });
+    expect(plan.piles).toHaveLength(2);
+    expect(plan.piles.every((p) => p.items[0].stackPosition === 1)).toBe(true);
+    expect(plan.basesUsed).toBe(2);
+    expect(plan.basesFree).toBe(0);
+    expect(await ds.getRepository(Pila).count()).toBe(0); // preview no persiste
+
+    await expect(service.previewPlacement({
+      productId: base.product.id,
+      locationId: tight.id,
+      palletCount: 3,
+    })).rejects.toThrow(/bases libres/);
+  });
+
   it('un lote apilable hasta 3 arma 2 pilas para 6 pallets', async () => {
     await ds.getRepository(Product).update(base.product.id, { stackable: true, maxStackLevel: 3 });
 
@@ -519,6 +552,147 @@ describe('motor de stock — colocación en pilas', () => {
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: tight.id,
       palletItems: [{ lotCode: 'LF-3', quantity: 10 }],
     }, USER_ID)).rejects.toThrow(/bases libres/);
+  });
+
+  it('aplica el menor máximo entre producto y ubicación', async () => {
+    const tight = await ds.getRepository(Location).save(
+      ds.getRepository(Location).create({
+        code: 'MIN-LIMIT', type: 'PISO', warehouse: base.warehouse, active: true,
+        capacityBases: 1, defaultMaxStackLevel: 5,
+      }),
+    );
+    await ds.getRepository(Product).update(base.product.id, { stackable: true, maxStackLevel: 2 });
+
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: tight.id,
+      palletItems: [{ lotCode: 'ML-1', quantity: 10 }, { lotCode: 'ML-2', quantity: 10 }],
+    }, USER_ID);
+
+    const pallets = await ds.getRepository(Pallet).find({ where: { currentLocationId: tight.id } });
+    expect(pallets.map((p) => p.stackPosition).sort()).toEqual([1, 2]);
+    expect((await ds.getRepository(Pila).findOne({ where: { locationId: tight.id } }))!.status).toBe('CLOSED');
+
+    await expect(service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: tight.id,
+      palletItems: [{ lotCode: 'ML-3', quantity: 10 }],
+    }, USER_ID)).rejects.toThrow(/bases libres/);
+  });
+});
+
+describe('transferencias — mismas reglas de colocación en todos los módulos', () => {
+  async function entryAt(location: Location, lotCode: string) {
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: location.id,
+      palletItems: [{ lotCode, quantity: 10 }],
+    }, USER_ID);
+    return ds.getRepository(Pallet).findOneOrFail({
+      where: { currentLocationId: location.id, code: `${base.product.code}-${lotCode}-P1` },
+    });
+  }
+
+  it('Movimientos rechaza transferir un no apilable a un sector sin bases libres', async () => {
+    await ds.getRepository(Product).update(base.product.id, { stackable: false });
+    const full = await ds.getRepository(Location).save(
+      ds.getRepository(Location).create({ code: 'MOV-FULL', type: 'PISO', warehouse: base.warehouse, active: true, capacityBases: 1 }),
+    );
+    await entryAt(full, 'MOV-DST');
+    const moving = await entryAt(base.location, 'MOV-SRC');
+    const originPile = moving.pilaId;
+
+    await expect(service.createTransferBatch({
+      fromLocationId: base.location.id,
+      toLocationId: full.id,
+      lines: [{ productId: base.product.id, palletItems: [{ palletId: moving.id, quantity: moving.quantity }] }],
+    }, USER_ID)).rejects.toThrow(/bases libres/);
+
+    const unchanged = await ds.getRepository(Pallet).findOneByOrFail({ id: moving.id });
+    expect(unchanged.currentLocationId).toBe(base.location.id);
+    expect(unchanged.pilaId).toBe(originPile);
+    expect(await ds.getRepository(Pallet).count({ where: { currentLocationId: full.id } })).toBe(1);
+  });
+
+  it('Movimientos apila hasta el máximo y luego rechaza el siguiente pallet', async () => {
+    await ds.getRepository(Product).update(base.product.id, { stackable: true, maxStackLevel: 2 });
+    const target = await ds.getRepository(Location).save(
+      ds.getRepository(Location).create({
+        code: 'MOV-MAX', type: 'PISO', warehouse: base.warehouse, active: true,
+        capacityBases: 1, defaultMaxStackLevel: 5,
+      }),
+    );
+    const first = await entryAt(target, 'MOV-MAX-1');
+    const second = await entryAt(base.location, 'MOV-MAX-2');
+    const third = await entryAt(base.location, 'MOV-MAX-3');
+    const originPileId = second.pilaId!;
+
+    await service.createTransferBatch({
+      fromLocationId: base.location.id,
+      toLocationId: target.id,
+      lines: [{ productId: base.product.id, palletItems: [{ palletId: second.id, quantity: second.quantity }] }],
+    }, USER_ID);
+    const moved = await ds.getRepository(Pallet).findOneByOrFail({ id: second.id });
+    expect(moved.pilaId).toBe(first.pilaId);
+    expect(moved.stackPosition).toBe(2);
+    // La pila de origen estaba CLOSED en 2/2. Al sacar un pallet debe volver a
+    // OPEN y compactar el que quedó, para que ocupación y recomendación sean reales.
+    expect((await ds.getRepository(Pila).findOneByOrFail({ id: originPileId })).status).toBe('OPEN');
+    expect((await ds.getRepository(Pallet).findOneByOrFail({ id: third.id })).stackPosition).toBe(1);
+
+    await expect(service.createTransferBatch({
+      fromLocationId: base.location.id,
+      toLocationId: target.id,
+      lines: [{ productId: base.product.id, palletItems: [{ palletId: third.id, quantity: third.quantity }] }],
+    }, USER_ID)).rejects.toThrow(/bases libres/);
+    expect((await ds.getRepository(Pallet).findOneByOrFail({ id: third.id })).currentLocationId).toBe(base.location.id);
+  });
+
+  it('Pallets/Localizador rechazan un no apilable cuando el destino está lleno', async () => {
+    await ds.getRepository(Product).update(base.product.id, { stackable: false });
+    const full = await ds.getRepository(Location).save(
+      ds.getRepository(Location).create({ code: 'QUICK-FULL', type: 'PISO', warehouse: base.warehouse, active: true, capacityBases: 1 }),
+    );
+    await entryAt(full, 'QUICK-DST');
+    const moving = await entryAt(base.location, 'QUICK-SRC');
+    const originPile = moving.pilaId;
+
+    await expect(palletsService.quickTransfer(moving.id, full.id, USER_ID)).rejects.toThrow(/bases libres/);
+    const unchanged = await ds.getRepository(Pallet).findOneByOrFail({ id: moving.id });
+    expect(unchanged.currentLocationId).toBe(base.location.id);
+    expect(unchanged.pilaId).toBe(originPile);
+  });
+
+  it('Pallets/Localizador asignan pila destino, liberan origen y respetan el máximo', async () => {
+    await ds.getRepository(Product).update(base.product.id, { stackable: true, maxStackLevel: 2 });
+    const target = await ds.getRepository(Location).save(
+      ds.getRepository(Location).create({
+        code: 'QUICK-MAX', type: 'PISO', warehouse: base.warehouse, active: true,
+        capacityBases: 1, defaultMaxStackLevel: 4,
+      }),
+    );
+    const sourceSecond = await ds.getRepository(Location).save(
+      ds.getRepository(Location).create({
+        code: 'QUICK-SOURCE-2', type: 'PISO', warehouse: base.warehouse, active: true,
+        capacityBases: 1,
+      }),
+    );
+    const sourceThird = await ds.getRepository(Location).save(
+      ds.getRepository(Location).create({
+        code: 'QUICK-SOURCE-3', type: 'PISO', warehouse: base.warehouse, active: true,
+        capacityBases: 1,
+      }),
+    );
+    const first = await entryAt(target, 'QUICK-MAX-1');
+    const second = await entryAt(sourceSecond, 'QUICK-MAX-2');
+    const third = await entryAt(sourceThird, 'QUICK-MAX-3');
+    const secondOriginPile = second.pilaId!;
+
+    await palletsService.quickTransfer(second.id, target.id, USER_ID);
+    const moved = await ds.getRepository(Pallet).findOneByOrFail({ id: second.id });
+    expect(moved.pilaId).toBe(first.pilaId);
+    expect(moved.stackPosition).toBe(2);
+    expect((await ds.getRepository(Pila).findOneByOrFail({ id: secondOriginPile })).status).toBe('EMPTY');
+
+    await expect(palletsService.quickTransfer(third.id, target.id, USER_ID)).rejects.toThrow(/bases libres/);
+    expect((await ds.getRepository(Pallet).findOneByOrFail({ id: third.id })).currentLocationId).toBe(sourceThird.id);
   });
 });
 

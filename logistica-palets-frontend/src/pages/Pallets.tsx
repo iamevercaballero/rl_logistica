@@ -15,6 +15,8 @@ import { useAuth } from "../auth/AuthContext";
 import { canCreate, canDelete } from "../auth/rbac";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
+import { fmtDateTimeLong } from "../utils/dateFormat";
+import LocationPicker from "../components/LocationPicker";
 
 /* ── Constants ───────────────────────────────────────────────────────────── */
 
@@ -118,10 +120,11 @@ function HistoryTimeline({ events }: { events: PalletHistoryEvent[] }) {
   return (
     <ol style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 0 }}>
       {events.map((ev, idx) => {
-        const color = MOVE_COLOR[ev.type] ?? "var(--border)";
+        const voided = ev.voidStatus === "VOIDED";
+        const color = voided ? "var(--muted)" : MOVE_COLOR[ev.type] ?? "var(--border)";
         const isLast = idx === events.length - 1;
         return (
-          <li key={ev.movementId} style={{ display: "flex", gap: 12, position: "relative" }}>
+          <li key={ev.movementId} style={{ display: "flex", gap: 12, position: "relative", opacity: voided ? 0.6 : 1 }}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
               <div
                 style={{
@@ -146,13 +149,9 @@ function HistoryTimeline({ events }: { events: PalletHistoryEvent[] }) {
                   {MOVE_LABEL[ev.type] ?? ev.type}
                 </span>
                 <span style={{ fontSize: 11, color: "var(--muted)", fontVariantNumeric: "tabular-nums" }}>
-                  {new Date(ev.date).toLocaleDateString("es-PY", {
-                    timeZone: "America/Asuncion",
-                    day: "2-digit", month: "short", year: "numeric",
-                    hour: "2-digit", minute: "2-digit",
-                  })}
+                  {fmtDateTimeLong(ev.createdAt ?? ev.date)}
                 </span>
-                {ev.status === "PENDING_REGULARIZATION" && (
+                {ev.status === "PENDING_REGULARIZATION" && !voided && (
                   <span
                     style={{
                       fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 999,
@@ -163,8 +162,30 @@ function HistoryTimeline({ events }: { events: PalletHistoryEvent[] }) {
                     Pend. regularizar
                   </span>
                 )}
+                {ev.voidStatus === "VOID_PENDING" && (
+                  <span
+                    style={{
+                      fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 999,
+                      background: "rgba(245,158,11,0.10)", color: "var(--warning)",
+                      border: "1px solid rgba(245,158,11,0.28)",
+                    }}
+                  >
+                    Anulación pendiente
+                  </span>
+                )}
+                {voided && (
+                  <span
+                    style={{
+                      fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 999,
+                      background: "var(--panel-hi)", color: "var(--muted)",
+                      border: "1px dashed var(--border)",
+                    }}
+                  >
+                    Anulado
+                  </span>
+                )}
               </div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", marginBottom: 4 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", marginBottom: 4, textDecoration: voided ? "line-through" : undefined }}>
                 {ev.quantity.toLocaleString("es-PY")} unidades
                 {ev.remainingAfter !== undefined && (
                   <span style={{ fontWeight: 400, color: "var(--muted)", marginLeft: 6 }}>
@@ -221,22 +242,14 @@ type LocationOpt = { id: string; code: string; warehouseName?: string | null };
 
 function QuickTransferModal({
   pallet,
-  locations,
   onClose,
 }: {
   pallet: LotPallet;
-  locations: LocationOpt[];
   onClose: () => void;
 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [toLocationId, setToLocationId] = useState("");
-
-  const available = locations.filter((l) => l.id !== pallet.currentLocationId);
-
-  useEffect(() => {
-    if (!toLocationId && available[0]) setToLocationId(available[0].id);
-  }, [available, toLocationId]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -247,7 +260,13 @@ function QuickTransferModal({
   const transferMut = useMutation({
     mutationFn: () => quickTransferPallet(pallet.id, toLocationId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["pallets"] });
+      void queryClient.invalidateQueries({ queryKey: ["pallets"] });
+      void queryClient.invalidateQueries({ queryKey: ["stock"] });
+      void queryClient.invalidateQueries({ queryKey: ["movements"] });
+      void queryClient.invalidateQueries({ queryKey: ["location-availability"] });
+      void queryClient.invalidateQueries({ queryKey: ["location-recommendations"] });
+      void queryClient.invalidateQueries({ queryKey: ["location-map"] });
+      void queryClient.invalidateQueries({ queryKey: ["location-content"] });
       toast.success(`Pallet ${pallet.code} transferido`);
       onClose();
     },
@@ -318,22 +337,17 @@ function QuickTransferModal({
             </div>
           </div>
 
-          <label style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
             <span style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)" }}>Ubicación destino</span>
-            <select
-              className="input"
+            <LocationPicker
               value={toLocationId}
-              onChange={(e) => setToLocationId(e.target.value)}
-              disabled={transferMut.isPending}
-            >
-              <option value="">Seleccionar ubicación…</option>
-              {available.map((loc) => (
-                <option key={loc.id} value={loc.id}>
-                  {loc.warehouseName ? `${loc.warehouseName} · ` : ""}{loc.code}
-                </option>
-              ))}
-            </select>
-          </label>
+              onChange={setToLocationId}
+              excludeUnavailable
+              excludeLocationId={pallet.currentLocationId ?? undefined}
+              productId={pallet.productId}
+              placeholder="Seleccionar ubicación…"
+            />
+          </div>
 
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button className="btn" onClick={onClose} disabled={transferMut.isPending}>Cancelar</button>
@@ -852,7 +866,6 @@ export default function PalletsPage() {
       {transferPallet && (
         <QuickTransferModal
           pallet={transferPallet}
-          locations={locationOpts}
           onClose={() => setTransferPallet(null)}
         />
       )}

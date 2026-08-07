@@ -1,4 +1,4 @@
-import { fmtDate, fmtGeneratedAt } from "../utils/dateFormat";
+import { fmtDate, fmtDateTime, fmtGeneratedAt } from "../utils/dateFormat";
 
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -96,7 +96,7 @@ export function exportStockPDF(data: StockItemRow[], filename = "stock-report"):
       r.warehouse?.name ?? "-",
       r.location?.code ?? "-",
       `${r.currentQuantity.toLocaleString("es-PY")} ${r.material.unitOfMeasure ?? ""}`.trim(),
-      fmtDate(r.updatedAt),
+      fmtDateTime(r.updatedAt),
     ]),
     columnStyles: {
       0: { cellWidth: 28 },
@@ -120,15 +120,16 @@ export function exportMovementsPDF(data: ReportMovementRow[], filename = "movimi
   autoTable(doc, {
     ...baseStyles,
     startY,
-    head: [["Fecha", "Tipo", "Material", "Cantidad", "Depósito", "MIC/Fac/Rem.", "Prov. / Transportista"]],
+    head: [["Fecha y hora", "Tipo", "Material", "Cantidad", "Depósito", "MIC/Fac/Rem.", "Prov. / Transportista", "Estado"]],
     body: data.map((r) => [
-      fmtDate(r.date),
+      fmtDateTime(r.createdAt ?? r.date),
       MOVE_LABEL_MAP[r.type] ?? r.type,
       r.material?.code ? `${r.material.code} - ${r.material.description}` : "-",
       r.quantity.toLocaleString("es-PY"),
       r.warehouse?.name ?? "-",
       r.documentNumber ?? "-",
       r.supplier ?? r.carrier ?? "-",
+      r.voidStatus === "VOIDED" ? "Anulado" : "Normal",
     ]),
     columnStyles: {
       0: { cellWidth: 26 },
@@ -136,6 +137,12 @@ export function exportMovementsPDF(data: ReportMovementRow[], filename = "movimi
       3: { halign: "right", cellWidth: 24 },
       4: { cellWidth: 36 },
       5: { cellWidth: 30 },
+      7: { cellWidth: 20 },
+    },
+    didParseCell: (data) => {
+      if (data.section === "body" && (data.row.raw as (string | number)[])[7] === "Anulado") {
+        data.cell.styles.textColor = [156, 148, 136];
+      }
     },
   });
 
@@ -193,7 +200,7 @@ export function exportEntradasPDF(data: Movement[], filename = "entradas"): void
 
     for (const ld of lots) {
       body.push([
-        fmtDate(m.date),
+        fmtDateTime(m.createdAt ?? m.date),
         `${m.material.code} · ${m.material.description}`,
         ld.lotCode ?? "-",
         ld.sapLot ?? "-",
@@ -205,7 +212,7 @@ export function exportEntradasPDF(data: Movement[], filename = "entradas"): void
         m.carrier ?? "-",
         m.driver ?? "-",
         m.notes ?? "-",
-        m.status === "PENDING_REGULARIZATION" ? "Pendiente" : "Normal",
+        m.voidStatus === "VOIDED" ? "Anulado" : m.status === "PENDING_REGULARIZATION" ? "Pendiente" : "Normal",
       ]);
     }
   }
@@ -216,7 +223,7 @@ export function exportEntradasPDF(data: Movement[], filename = "entradas"): void
     margin: { left: 8, right: 8 },
     bodyStyles: { ...baseStyles.bodyStyles, fontSize: 7.5 },
     headStyles: { ...baseStyles.headStyles, fontSize: 8 },
-    head: [["Fecha", "Material", "Lote", "Lote SAP", "MIC/Fac/Rem.", "Cantidad", "Pal.", "Depósito / Ubic.", "Proveedor", "Transportista", "Chofer", "Notas", "Estado"]],
+    head: [["Fecha y hora", "Material", "Lote", "Lote SAP", "MIC/Fac/Rem.", "Cantidad", "Pal.", "Depósito / Ubic.", "Proveedor", "Transportista", "Chofer", "Notas", "Estado"]],
     body,
     columnStyles: {
       0: { cellWidth: 20 },
@@ -232,6 +239,11 @@ export function exportEntradasPDF(data: Movement[], filename = "entradas"): void
       10: { cellWidth: 18 },
       11: { cellWidth: 24 },
       12: { cellWidth: 14 },
+    },
+    didParseCell: (data) => {
+      if (data.section === "body" && (data.row.raw as (string | number)[])[12] === "Anulado") {
+        data.cell.styles.textColor = [156, 148, 136];
+      }
     },
   });
 
@@ -253,7 +265,7 @@ export function exportSalidasPDF(data: Movement[], filename = "salidas"): void {
 
     for (const ld of lots) {
       body.push([
-        fmtDate(m.date),
+        fmtDateTime(m.createdAt ?? m.date),
         `${m.material.code} · ${m.material.description}`,
         ld.lotCode ?? "-",
         ld.sapLot ?? "-",
@@ -264,6 +276,7 @@ export function exportSalidasPDF(data: Movement[], filename = "salidas"): void {
         m.carrier ?? "-",
         m.driver ?? "-",
         m.notes ?? "-",
+        m.voidStatus === "VOIDED" ? "Anulado" : "Normal",
       ]);
     }
   }
@@ -272,7 +285,7 @@ export function exportSalidasPDF(data: Movement[], filename = "salidas"): void {
     ...baseStyles,
     startY,
     margin: { left: 10, right: 10 },
-    head: [["Fecha", "Material", "Lote", "Lote SAP", "Cantidad", "Pal.", "Desde", "Destino", "Transportista", "Chofer", "Notas"]],
+    head: [["Fecha y hora", "Material", "Lote", "Lote SAP", "Cantidad", "Pal.", "Desde", "Destino", "Transportista", "Chofer", "Notas", "Estado"]],
     body,
     columnStyles: {
       0: { cellWidth: 22 },
@@ -286,6 +299,12 @@ export function exportSalidasPDF(data: Movement[], filename = "salidas"): void {
       8: { cellWidth: 24 },
       9: { cellWidth: 20 },
       10: { cellWidth: 25 },
+      11: { cellWidth: 18 },
+    },
+    didParseCell: (data) => {
+      if (data.section === "body" && (data.row.raw as (string | number)[])[11] === "Anulado") {
+        data.cell.styles.textColor = [156, 148, 136];
+      }
     },
   });
 
@@ -340,15 +359,16 @@ export function exportTrazabilidadPDF(
   autoTable(doc, {
     ...baseStyles,
     startY,
-    head: [["Fecha", "Tipo", "Cantidad", "Desde", "Destino", "MIC/Fac/Rem.", "Notas"]],
+    head: [["Fecha y hora", "Tipo", "Cantidad", "Desde", "Destino", "MIC/Fac/Rem.", "Notas", "Estado"]],
     body: history.map((e) => [
-      fmtDate(e.at),
+      fmtDateTime(e.at),
       MOVE_LABEL_MAP[e.type] ?? e.type,
       e.quantity.toLocaleString("es-PY"),
       `${e.fromWarehouseName ?? e.warehouseName ?? "-"}${e.fromLocationCode ? ` / ${e.fromLocationCode}` : ""}`,
       `${e.toWarehouseName ?? "-"}${e.toLocationCode ? ` / ${e.toLocationCode}` : ""}`,
       e.documentNumber ?? "-",
       e.notes ?? "-",
+      e.voidStatus === "VOIDED" ? "Anulado" : "Normal",
     ]),
     columnStyles: {
       0: { cellWidth: 26 },
@@ -357,6 +377,12 @@ export function exportTrazabilidadPDF(
       3: { cellWidth: 55 },
       4: { cellWidth: 55 },
       5: { cellWidth: 30 },
+      7: { cellWidth: 20 },
+    },
+    didParseCell: (data) => {
+      if (data.section === "body" && (data.row.raw as (string | number)[])[7] === "Anulado") {
+        data.cell.styles.textColor = [156, 148, 136];
+      }
     },
   });
 
@@ -386,9 +412,9 @@ export function exportPalletHistoryPDF(
   autoTable(doc, {
     ...baseStyles,
     startY,
-    head: [["Fecha", "Tipo", "Cantidad", "Desde", "Hacia", "MIC/Fac/Rem.", "Notas"]],
+    head: [["Fecha y hora", "Tipo", "Cantidad", "Desde", "Hacia", "MIC/Fac/Rem.", "Notas"]],
     body: events.map((e) => [
-      fmtDate(e.date),
+      fmtDateTime(e.createdAt ?? e.date),
       PALLET_LABEL[e.type] ?? e.type,
       e.quantity.toLocaleString("es-PY"),
       e.from ? `${e.from.locationCode} (${e.from.warehouseName ?? ""})` : "-",

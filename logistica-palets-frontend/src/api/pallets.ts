@@ -1,4 +1,5 @@
 import { api } from "./client";
+import type { VoidStatus } from "./movements";
 
 export type LotPallet = {
   id: string;
@@ -108,7 +109,10 @@ export async function deletePallet(id: string): Promise<void> {
 export type PalletHistoryEvent = {
   movementId: string;
   type: string;
+  /** Día operativo del movimiento. */
   date: string;
+  /** Instante exacto en que el movimiento quedó registrado. */
+  createdAt: string;
   quantity: number;
   remainingAfter?: number;
   documentNumber?: string | null;
@@ -118,6 +122,7 @@ export type PalletHistoryEvent = {
   destination?: string | null;
   notes?: string | null;
   status: string;
+  voidStatus?: VoidStatus;
   from?: {
     locationId: string;
     locationCode: string;

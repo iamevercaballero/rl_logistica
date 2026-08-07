@@ -625,7 +625,7 @@ export default function DashboardPage() {
                       </span>
                     </div>
                     <span style={{ fontSize: 11, color: "var(--muted)", flexShrink: 0 }}>
-                      {formatRelativeDate(m.date)}
+                      {formatRelativeDate(m.createdAt ?? m.date)}
                     </span>
                   </div>
                 ))}

@@ -200,7 +200,7 @@ export class ReportsService {
       LEFT JOIN (
         SELECT "productId", SUM(quantity) AS units
         FROM movements
-        WHERE type = 'EXIT' AND date BETWEEN $1 AND $2
+        WHERE type = 'EXIT' AND date BETWEEN $1 AND $2 AND "voidStatus" <> 'VOIDED'
         GROUP BY "productId"
       ) ex ON ex."productId" = pr.id
       LEFT JOIN (
@@ -468,6 +468,7 @@ export class ReportsService {
       .select('m.id', 'id')
       .addSelect('m.type', 'type')
       .addSelect('m.date', 'date')
+      .addSelect('m."createdAt"', 'createdAt')
       .addSelect('m.quantity', 'quantity')
       .addSelect('m.pallets', 'pallets')
       .addSelect('m."documentNumber"', 'documentNumber')
@@ -477,6 +478,7 @@ export class ReportsService {
       .addSelect('m.destination', 'destination')
       .addSelect('m.notes', 'notes')
       .addSelect('m.status', 'status')
+      .addSelect('m."voidStatus"', 'voidStatus')
       .addSelect('m."adjustmentReason"', 'adjustmentReason')
       .addSelect('p.id', 'productId')
       .addSelect('p.code', 'productCode')
@@ -518,7 +520,12 @@ export class ReportsService {
     }
 
     const [data, total] = await Promise.all([
-      qb.clone().orderBy('m.date', 'DESC').offset((page - 1) * limit).limit(limit).getRawMany(),
+      qb.clone()
+        .orderBy('m.date', 'DESC')
+        .addOrderBy('m."createdAt"', 'DESC')
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .getRawMany(),
       qb.clone().select('COUNT(m.id)', 'total').getRawOne(),
     ]);
 
@@ -527,6 +534,7 @@ export class ReportsService {
         id: row.id,
         type: row.type,
         date: row.date,
+        createdAt: row.createdAt ?? row.date,
         quantity: this.parseNumber(row.quantity),
         pallets: row.pallets === null || row.pallets === undefined ? null : this.parseNumber(row.pallets),
         documentNumber: row.documentNumber,
@@ -550,6 +558,7 @@ export class ReportsService {
           ? (Array.isArray(row.lotsDetail) ? row.lotsDetail : JSON.parse(row.lotsDetail as string))
           : null,
         status: row.status ?? 'NORMAL',
+        voidStatus: row.voidStatus ?? 'NONE',
         adjustmentReason: row.adjustmentReason ?? null,
         from: row.fromWarehouseName || row.fromLocationCode ? { warehouseName: row.fromWarehouseName, locationCode: row.fromLocationCode } : null,
         to: row.toWarehouseName || row.toLocationCode ? { warehouseName: row.toWarehouseName, locationCode: row.toLocationCode } : null,
@@ -587,13 +596,17 @@ export class ReportsService {
       .leftJoin('warehouses', 'tw', 'tw.id = m."toWarehouseId"')
       .leftJoin('locations', 'tl', 'tl.id = m."toLocationId"')
       .select('m.id', 'movementId')
-      .addSelect('m.date', 'at')
+      // `date` es el día operativo elegido en el formulario. Para auditoría y
+      // trazabilidad se muestra el instante real de creación, que sí conserva
+      // la hora; los filtros diarios continúan usando `date`.
+      .addSelect('m."createdAt"', 'at')
       .addSelect('m.type', 'type')
       .addSelect('m.quantity', 'quantity')
       .addSelect('m."documentNumber"', 'documentNumber')
       .addSelect('m.supplier', 'supplier')
       .addSelect('m.destination', 'destination')
       .addSelect('m.notes', 'notes')
+      .addSelect('m."voidStatus"', 'voidStatus')
       .addSelect('w.name', 'warehouseName')
       .addSelect('l.code', 'locationCode')
       .addSelect('fw.name', 'fromWarehouseName')
@@ -602,6 +615,7 @@ export class ReportsService {
       .addSelect('tl.code', 'toLocationCode')
       .where('m."productId" = :materialId', { materialId })
       .orderBy('m.date', 'ASC')
+      .addOrderBy('m."createdAt"', 'ASC')
       .getRawMany();
 
     return {
@@ -615,6 +629,7 @@ export class ReportsService {
         supplier: row.supplier,
         destination: row.destination,
         notes: row.notes,
+        voidStatus: row.voidStatus ?? 'NONE',
         warehouseName: row.warehouseName,
         locationCode: row.locationCode,
         fromWarehouseName: row.fromWarehouseName,
@@ -659,8 +674,8 @@ export class ReportsService {
           ELSE 0
         END), 0) AS salidas
       FROM products p
-      LEFT JOIN movements m ON m."productId" = p.id
-      
+      LEFT JOIN movements m ON m."productId" = p.id AND m."voidStatus" <> 'VOIDED'
+
       WHERE p.active = true ${movementFilter.whereSuffix}
       GROUP BY p.id, p.code, p.description, p."unitOfMeasure"
       ORDER BY p.code ASC
@@ -804,12 +819,13 @@ export class ReportsService {
         .orderBy('w.name', 'ASC')
         .getRawMany(),
 
-      // Pending regularizations count
+      // Pending regularizations count — un movimiento anulado ya no necesita regularizarse.
       this.dataSource
         .createQueryBuilder()
         .from('movements', 'm')
         .select('COUNT(m.id)', 'pending')
         .where('m.status = :status', { status: 'PENDING_REGULARIZATION' })
+        .andWhere('m."voidStatus" = :voidStatus', { voidStatus: 'NONE' })
         .getRawOne(),
 
       // Lots expiring within 60 days (with available pallets)

@@ -1,4 +1,4 @@
-import { fmtDate, fmtGeneratedAt } from "../utils/dateFormat";
+import { fmtDate, fmtDateTime, fmtGeneratedAt } from "../utils/dateFormat";
 
 import ExcelJS from "exceljs";
 import type { StockItemRow, ReportMovementRow, DailyStockRow, ReportTraceEvent, FreshnessRow } from "../api/reports";
@@ -141,7 +141,7 @@ export async function exportStockExcel(
       r.location?.code ?? "-",
       r.currentQuantity,
       r.material.unitOfMeasure ?? "",
-      fmtDate(r.updatedAt),
+      fmtDateTime(r.updatedAt),
     ]);
     styleDataRow(row, i, COL_COUNT);
     row.getCell(5).alignment = { horizontal: "right" };
@@ -229,7 +229,7 @@ export async function exportMovementsExcel(
   data: ReportMovementRow[],
   filename = "movimientos",
 ): Promise<void> {
-  const COL_COUNT = 10;
+  const COL_COUNT = 11;
   const wb = buildBaseWorkbook();
   const ws = wb.addWorksheet("Movimientos");
 
@@ -244,18 +244,20 @@ export async function exportMovementsExcel(
     { key: "carrier",  width: 25 },
     { key: "driver",   width: 20 },
     { key: "notes",    width: 35 },
+    { key: "estado",   width: 14 },
   ];
 
   addReportHeader(ws, "Historial de Movimientos", COL_COUNT);
   applyHeaderRow(ws.addRow([]), [
-    "Fecha", "Tipo", "Material", "Cantidad", "Depósito",
-    "MIC/Factura/Remito", "Proveedor", "Transportista", "Chofer", "Notas",
+    "Fecha y hora", "Tipo", "Material", "Cantidad", "Depósito",
+    "MIC/Factura/Remito", "Proveedor", "Transportista", "Chofer", "Notas", "Estado",
   ]);
 
   let rowCount = 0;
   data.forEach((r, i) => {
+    const voided = r.voidStatus === "VOIDED";
     const row = ws.addRow([
-      fmtDate(r.date),
+      fmtDateTime(r.createdAt ?? r.date),
       MOVE_LABEL[r.type] ?? r.type,
       r.material?.code ? `${r.material.code} - ${r.material.description}` : "-",
       r.quantity,
@@ -265,8 +267,12 @@ export async function exportMovementsExcel(
       r.carrier ?? "-",
       r.driver ?? "-",
       r.notes ?? "-",
+      voided ? "Anulado" : "Normal",
     ]);
     styleDataRow(row, i, COL_COUNT);
+    if (voided) {
+      for (let col = 1; col <= COL_COUNT; col++) row.getCell(col).font = { ...row.getCell(col).font, strike: true, color: { argb: "FF9C9488" } };
+    }
     row.getCell(4).alignment = { horizontal: "right" };
     row.getCell(4).numFmt = '#,##0';
     rowCount++;
@@ -360,7 +366,7 @@ export async function exportEntradasExcel(data: Movement[], filename = "entradas
 
   addReportHeader(ws, "Reporte de Entradas", COL_COUNT);
   applyHeaderRow(ws.addRow([]), [
-    "Fecha", "Material", "Lote", "Lote SAP", "MIC/Factura/Remito", "Cantidad", "Pallets",
+    "Fecha y hora", "Material", "Lote", "Lote SAP", "MIC/Factura/Remito", "Cantidad", "Pallets",
     "Depósito / Ubic.", "Proveedor", "Transportista", "Chofer", "Notas", "Estado",
   ]);
 
@@ -372,7 +378,7 @@ export async function exportEntradasExcel(data: Movement[], filename = "entradas
 
     lots.forEach((ld) => {
       const row = ws.addRow([
-        fmtDate(m.date),
+        fmtDateTime(m.createdAt ?? m.date),
         `${m.material.code} - ${m.material.description}`,
         ld.lotCode ?? "-",
         ld.sapLot ?? "-",
@@ -384,10 +390,12 @@ export async function exportEntradasExcel(data: Movement[], filename = "entradas
         m.carrier ?? "-",
         m.driver ?? "-",
         m.notes ?? "-",
-        m.status === "PENDING_REGULARIZATION" ? "Pendiente" : "Normal",
+        m.voidStatus === "VOIDED" ? "Anulado" : m.status === "PENDING_REGULARIZATION" ? "Pendiente" : "Normal",
       ]);
       styleDataRow(row, rowCount, COL_COUNT);
-      if (m.status === "PENDING_REGULARIZATION") {
+      if (m.voidStatus === "VOIDED") {
+        for (let col = 1; col <= COL_COUNT; col++) row.getCell(col).font = { ...row.getCell(col).font, strike: true, color: { argb: "FF9C9488" } };
+      } else if (m.status === "PENDING_REGULARIZATION") {
         row.getCell(13).fill = { type: "pattern", pattern: "solid", fgColor: { argb: `FF${RED_LIGHT}` } };
         row.getCell(13).font = { bold: true, color: { argb: "FF991B1B" } };
       }
@@ -407,7 +415,7 @@ export async function exportEntradasExcel(data: Movement[], filename = "entradas
 /* ── Salidas report (expands lotsDetail like the UI table) ───────────────── */
 
 export async function exportSalidasExcel(data: Movement[], filename = "salidas"): Promise<void> {
-  const COL_COUNT = 11;
+  const COL_COUNT = 12;
   const wb = buildBaseWorkbook();
   const ws = wb.addWorksheet("Salidas");
 
@@ -423,12 +431,13 @@ export async function exportSalidasExcel(data: Movement[], filename = "salidas")
     { key: "carrier",  width: 24 },
     { key: "driver",   width: 20 },
     { key: "notes",    width: 34 },
+    { key: "estado",   width: 14 },
   ];
 
   addReportHeader(ws, "Reporte de Salidas", COL_COUNT);
   applyHeaderRow(ws.addRow([]), [
-    "Fecha", "Material", "Lote", "Lote SAP", "Cantidad", "Pallets",
-    "Desde", "Destino", "Transportista", "Chofer", "Notas",
+    "Fecha y hora", "Material", "Lote", "Lote SAP", "Cantidad", "Pallets",
+    "Desde", "Destino", "Transportista", "Chofer", "Notas", "Estado",
   ]);
 
   let rowCount = 0;
@@ -439,7 +448,7 @@ export async function exportSalidasExcel(data: Movement[], filename = "salidas")
 
     lots.forEach((ld) => {
       const row = ws.addRow([
-        fmtDate(m.date),
+        fmtDateTime(m.createdAt ?? m.date),
         `${m.material.code} - ${m.material.description}`,
         ld.lotCode ?? "-",
         ld.sapLot ?? "-",
@@ -450,8 +459,12 @@ export async function exportSalidasExcel(data: Movement[], filename = "salidas")
         m.carrier ?? "-",
         m.driver ?? "-",
         m.notes ?? "-",
+        m.voidStatus === "VOIDED" ? "Anulado" : "Normal",
       ]);
       styleDataRow(row, rowCount, COL_COUNT);
+      if (m.voidStatus === "VOIDED") {
+        for (let col = 1; col <= COL_COUNT; col++) row.getCell(col).font = { ...row.getCell(col).font, strike: true, color: { argb: "FF9C9488" } };
+      }
       row.getCell(5).alignment = { horizontal: "right" };
       row.getCell(5).numFmt = '#,##0';
       row.getCell(6).alignment = { horizontal: "center" };
@@ -601,7 +614,7 @@ export async function exportTrazabilidadExcel(
   history: ReportTraceEvent[],
   filename = "trazabilidad",
 ): Promise<void> {
-  const COL_COUNT = 7;
+  const COL_COUNT = 8;
   const wb = buildBaseWorkbook();
   const ws = wb.addWorksheet(`Traza ${materialCode}`.slice(0, 31));
 
@@ -613,10 +626,11 @@ export async function exportTrazabilidadExcel(
     { key: "hacia",  width: 32 },
     { key: "doc",    width: 22 },
     { key: "notas",  width: 36 },
+    { key: "estado", width: 14 },
   ];
 
   addReportHeader(ws, `Trazabilidad — ${materialCode}`, COL_COUNT);
-  applyHeaderRow(ws.addRow([]), ["Fecha", "Tipo", "Cantidad", "Desde", "Hacia", "MIC/Factura/Remito", "Notas"]);
+  applyHeaderRow(ws.addRow([]), ["Fecha y hora", "Tipo", "Cantidad", "Desde", "Hacia", "MIC/Factura/Remito", "Notas", "Estado"]);
 
   const TRACE_LABEL: Record<string, string> = {
     ENTRY: "Entrada", EXIT: "Salida", TRANSFER: "Transferencia",
@@ -625,16 +639,21 @@ export async function exportTrazabilidadExcel(
 
   let rowCount = 0;
   history.forEach((e, i) => {
+    const voided = e.voidStatus === "VOIDED";
     const row = ws.addRow([
-      fmtDate(e.at),
+      fmtDateTime(e.at),
       TRACE_LABEL[e.type] ?? e.type,
       e.quantity,
       `${e.fromWarehouseName ?? e.warehouseName ?? "-"}${e.fromLocationCode ? ` / ${e.fromLocationCode}` : ""}`,
       `${e.toWarehouseName ?? "-"}${e.toLocationCode ? ` / ${e.toLocationCode}` : ""}`,
       e.documentNumber ?? "-",
       e.notes ?? "-",
+      voided ? "Anulado" : "Normal",
     ]);
     styleDataRow(row, i, COL_COUNT);
+    if (voided) {
+      for (let col = 1; col <= COL_COUNT; col++) row.getCell(col).font = { ...row.getCell(col).font, strike: true, color: { argb: "FF9C9488" } };
+    }
     row.getCell(3).alignment = { horizontal: "right" };
     row.getCell(3).numFmt = '#,##0';
     rowCount++;

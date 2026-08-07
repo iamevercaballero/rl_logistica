@@ -9,6 +9,8 @@ import { Location } from '../locations/entities/location.entity';
 import { Stock } from '../stocks/entities/stock.entity';
 import { Movement } from '../movements/entities/movement.entity';
 import { MovementDetail } from '../movements/entities/movement-detail.entity';
+import { PilasService } from '../pilas/pilas.service';
+import { roundQuantity } from '../../common/quantity';
 
 export interface EnrichedPallet {
   id: string;
@@ -36,6 +38,7 @@ export class PalletsService {
     @InjectRepository(Pallet) private readonly palletRepo: Repository<Pallet>,
     @InjectRepository(Lot) private readonly lotRepo: Repository<Lot>,
     @InjectRepository(Location) private readonly locationRepo: Repository<Location>,
+    private readonly pilas: PilasService,
   ) {}
 
   async create(dto: CreatePalletDto) {
@@ -235,38 +238,48 @@ export class PalletsService {
   }
 
   async quickTransfer(palletId: string, toLocationId: string, userId: string) {
-    const pallet = await this.palletRepo.findOne({ where: { id: palletId } });
-    if (!pallet) throw new NotFoundException('Pallet no encontrado');
-    if (pallet.status === 'EXITED')
-      throw new BadRequestException('No se puede transferir un pallet despachado');
-    if (pallet.status === 'EMPTY')
-      throw new BadRequestException('No se puede transferir un pallet vacío');
-    if (pallet.currentLocationId === toLocationId)
-      throw new BadRequestException('El pallet ya se encuentra en esa ubicación');
-
-    const toLoc = await this.locationRepo.findOne({
-      where: { id: toLocationId },
-      relations: ['warehouse'],
-    });
-    if (!toLoc) throw new NotFoundException('Ubicación destino no encontrada');
-    if (!toLoc.active) throw new BadRequestException('La ubicación destino no está activa');
-
-    const lot = await this.lotRepo.findOne({ where: { id: pallet.lotId } });
-    if (!lot) throw new NotFoundException('Lote del pallet no encontrado');
-
-    const fromLocationId = pallet.currentLocationId;
-    const toWarehouseId: string | null = (toLoc.warehouse as unknown as { id?: string } | null)?.id ?? null;
-
-    let fromWarehouseId: string | null = null;
-    if (fromLocationId) {
-      const fromLoc = await this.locationRepo.findOne({
-        where: { id: fromLocationId },
-        relations: ['warehouse'],
-      });
-      fromWarehouseId = (fromLoc?.warehouse as unknown as { id?: string } | null)?.id ?? null;
-    }
-
     await this.dataSource.transaction(async (em) => {
+      // Mismo lock que el motor de Movimientos: dos transferencias simultáneas
+      // del mismo pallet no pueden validar ambas contra una ubicación obsoleta.
+      const pallet = await em.getRepository(Pallet).findOne({
+        where: { id: palletId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!pallet) throw new NotFoundException('Pallet no encontrado');
+      if (pallet.status === 'EXITED')
+        throw new BadRequestException('No se puede transferir un pallet despachado');
+      if (pallet.status === 'EMPTY')
+        throw new BadRequestException('No se puede transferir un pallet vacío');
+      if (pallet.currentLocationId === toLocationId)
+        throw new BadRequestException('El pallet ya se encuentra en esa ubicación');
+
+      const toLoc = await em.getRepository(Location).findOne({ where: { id: toLocationId } });
+      if (!toLoc) throw new NotFoundException('Ubicación destino no encontrada');
+      if (!toLoc.active) throw new BadRequestException('La ubicación destino no está activa');
+
+      const lot = await em.getRepository(Lot).findOne({ where: { id: pallet.lotId } });
+      if (!lot) throw new NotFoundException('Lote del pallet no encontrado');
+
+      const fromLocationId = pallet.currentLocationId ?? null;
+      const originPilaId = pallet.pilaId ?? null;
+      const toWarehouseId = toLoc.warehouse?.id ?? null;
+      let fromWarehouseId: string | null = null;
+      if (fromLocationId) {
+        const fromLoc = await em.getRepository(Location).findOne({ where: { id: fromLocationId } });
+        fromWarehouseId = fromLoc?.warehouse?.id ?? null;
+      }
+
+      // La transferencia rápida de Pallets y Localizador pasa por el mismo
+      // motor que Movimientos: factibilidad, apilabilidad, máximo de nivel y
+      // capacidad en bases. Si falla, toda la transacción se revierte.
+      const placement = await this.pilas.placePallets(
+        em,
+        toLocationId,
+        [{ key: pallet.id, productId: lot.productId, lotId: lot.id }],
+        { commit: true },
+      );
+      const destinationPile = placement.piles[0];
+
       // Descontar del origen y aumentar en destino usando exactamente el mismo
       // patrón que MovementsService (findOrCreateStock + IsNull()).
       // El descuento se hace SIEMPRE — aunque el pallet esté a nivel de depósito
@@ -275,18 +288,26 @@ export class PalletsService {
 
       // 1) Decrease at source (product, fromWarehouse, fromLocation)
       const fromStock = await this.findOrCreateStock(em, lot.productId, fromWarehouseId, fromLocationId ?? null);
-      fromStock.currentQuantity = Math.max(0, fromStock.currentQuantity - pallet.quantity);
+      if (roundQuantity(fromStock.currentQuantity - pallet.quantity) < 0) {
+        throw new BadRequestException('Stock insuficiente en la ubicación origen para transferir el pallet');
+      }
+      fromStock.currentQuantity = roundQuantity(fromStock.currentQuantity - pallet.quantity);
       fromStock.updatedAt = new Date();
       await em.save(fromStock);
 
       // 2) Increase at destination (product, toWarehouse, toLocation)
       const toStock = await this.findOrCreateStock(em, lot.productId, toWarehouseId, toLocationId);
-      toStock.currentQuantity += pallet.quantity;
+      toStock.currentQuantity = roundQuantity(toStock.currentQuantity + pallet.quantity);
       toStock.updatedAt = new Date();
       await em.save(toStock);
 
-      // Update pallet location
-      await em.update(Pallet, { id: palletId }, { currentLocationId: toLocationId });
+      // Actualizar ubicación y pila destino antes de evaluar si la base de
+      // origen quedó vacía.
+      pallet.currentLocationId = toLocationId;
+      pallet.pilaId = destinationPile?.pilaId ?? null;
+      pallet.stackPosition = destinationPile?.items[0]?.stackPosition ?? null;
+      await em.save(pallet);
+      await this.pilas.releaseIfEmpty(em, originPilaId);
 
       // Create TRANSFER movement record
       const movement = em.create(Movement);
@@ -310,6 +331,7 @@ export class PalletsService {
       detail.palletId = palletId;
       detail.lotId = lot.id;
       detail.locationId = fromLocationId ?? undefined;
+      detail.pilaId = destinationPile?.pilaId ?? undefined;
       detail.quantity = pallet.quantity;
       await em.save(detail);
     });
@@ -358,6 +380,7 @@ export class PalletsService {
         m.id          AS "movementId",
         m.type,
         m.date,
+        m."createdAt",
         md.quantity,
         m."documentNumber",
         m.supplier,
@@ -366,6 +389,7 @@ export class PalletsService {
         m.destination,
         m.notes,
         m.status,
+        m."voidStatus",
         p.code        AS "productCode",
         p.description AS "productDescription",
         l_from.id     AS "fromLocationId",
@@ -382,7 +406,7 @@ export class PalletsService {
       LEFT JOIN locations l_to   ON l_to.id   = m."toLocationId"
       LEFT JOIN warehouses w_to  ON w_to.id   = m."toWarehouseId"
       WHERE md."palletId" = $1
-      ORDER BY m.date ASC
+      ORDER BY m.date ASC, m."createdAt" ASC
       `,
       [id],
     );
@@ -393,6 +417,7 @@ export class PalletsService {
         m.id          AS "movementId",
         m.type,
         m.date,
+        m."createdAt",
         m.quantity,
         m."documentNumber",
         m.supplier,
@@ -401,6 +426,7 @@ export class PalletsService {
         m.destination,
         m.notes,
         m.status,
+        m."voidStatus",
         p.code        AS "productCode",
         p.description AS "productDescription",
         l_from.id     AS "fromLocationId",
@@ -420,7 +446,7 @@ export class PalletsService {
           SELECT 1 FROM movement_details md2
           WHERE md2."movementId" = m.id AND md2."palletId" = $1
         )
-      ORDER BY m.date ASC
+      ORDER BY m.date ASC, m."createdAt" ASC
       `,
       [id],
     );
@@ -432,7 +458,11 @@ export class PalletsService {
         seen.add(e.movementId);
         return true;
       })
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      .sort((a, b) => {
+        const byBusinessDate = new Date(a.date).getTime() - new Date(b.date).getTime();
+        if (byBusinessDate !== 0) return byBusinessDate;
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      });
 
     const INCREASE_TYPES = ['ENTRY', 'ADJUSTMENT_IN'];
     const NEUTRAL_TYPES  = ['TRANSFER'];
@@ -446,6 +476,7 @@ export class PalletsService {
         movementId: e.movementId,
         type: e.type,
         date: e.date,
+        createdAt: e.createdAt ?? e.date,
         quantity: qty,
         remainingAfter: Math.max(0, running),
         documentNumber: e.documentNumber ?? null,
@@ -455,6 +486,7 @@ export class PalletsService {
         destination: e.destination ?? null,
         notes: e.notes ?? null,
         status: e.status,
+        voidStatus: e.voidStatus ?? 'NONE',
         from: e.fromLocationId
           ? { locationId: e.fromLocationId, locationCode: e.fromLocationCode, warehouseName: e.fromWarehouseName }
           : null,

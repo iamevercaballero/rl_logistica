@@ -204,6 +204,7 @@ export class AlertsService {
         SELECT m.id, m."documentNumber", m.date
         FROM movements m
         WHERE m.status = 'PENDING_REGULARIZATION'
+          AND m."voidStatus" = 'NONE'
           AND m.date < $1
         ORDER BY m.date ASC
         LIMIT 20

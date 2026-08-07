@@ -144,6 +144,32 @@ describe('slotting — recommend', () => {
     expect(res.recommendations.map((r) => r.id)).toContain(loc.id);
   });
 
+  it('un producto no apilable no consolida en una pila OPEN ni se recomienda en un sector lleno', async () => {
+    const product = await mkProduct({ stackable: false });
+    const full = await mkLocation({ code: 'NO-STACK-FULL', capacityBases: 1 });
+    const free = await mkLocation({ code: 'NO-STACK-FREE', capacityBases: 2 });
+    // Simula también datos históricos cuya pila quedó OPEN: la regla debe salir
+    // del producto, no confiar ciegamente en el status persistido.
+    await mkOccupiedBase(full, product.id);
+
+    const res = await service.recommend(product.id);
+    const ids = res.recommendations.map((r) => r.id);
+    expect(ids).toContain(free.id);
+    expect(ids).not.toContain(full.id);
+  });
+
+  it('calcula la recomendación con la cantidad de pallets y el máximo de nivel efectivo', async () => {
+    const product = await mkProduct({ stackable: true, maxStackLevel: 2 });
+    const loc = await mkLocation({ code: 'MAX-LEVEL-REC', capacityBases: 1, defaultMaxStackLevel: 5 });
+    await mkOccupiedBase(loc, product.id); // nivel 1; queda un solo nivel por el tope del producto
+
+    const oneMore = await service.recommend(product.id, 1);
+    expect(oneMore.recommendations.map((r) => r.id)).toContain(loc.id);
+
+    const twoMore = await service.recommend(product.id, 2);
+    expect(twoMore.recommendations.map((r) => r.id)).not.toContain(loc.id);
+  });
+
   it('devuelve mensaje cuando no hay ubicación factible', async () => {
     const product = await mkProduct({ temperatureZone: 'FROZEN' });
     await mkLocation({ code: 'AMB-2', temperatureZone: 'AMBIENT' });

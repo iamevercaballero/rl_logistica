@@ -7,14 +7,13 @@ import {
   searchStock,
   zoneMeta,
   ISSUE_META,
-  MAP_STATE_META,
-  type LocationCell,
   type LocationIssue,
-  type LocationMapState,
 } from "../api/locations";
 import { listWarehouses } from "../api/warehouses";
 import { getPalletHistory, quickTransferPallet } from "../api/pallets";
 import LocationPicker from "../components/LocationPicker";
+import WarehouseMap, { MapLegend } from "../components/WarehouseMap";
+import { fmtQty } from "../utils/number";
 import { useAuth } from "../auth/AuthContext";
 import { canUpdate } from "../auth/rbac";
 import { useToast } from "../design-system/toast";
@@ -34,11 +33,6 @@ const VIEWS: { key: ViewKey; label: string; hint: string }[] = [
   { key: "incidents", label: "Incidencias",        hint: "Diferencias, sobrecapacidad y bloqueos" },
 ];
 
-const nf = new Intl.NumberFormat("es-PY");
-
-function fmtQty(value: number) {
-  return nf.format(Math.round(value * 1000) / 1000);
-}
 
 function fmtDate(value?: string | null) {
   if (!value) return "—";
@@ -63,201 +57,6 @@ const PALLET_STATUS_LABEL: Record<string, string> = {
   IN_TRANSIT: "En tránsito",
 };
 
-/* ── Celda del mapa ─────────────────────────────────────────────────────── */
-
-type CellProps = {
-  cell: LocationCell;
-  /** Texto a mostrar dentro de la celda (cantidad resaltada o nº de pallets). */
-  label: string;
-  highlighted: boolean;
-  /** Hay una búsqueda activa y esta celda no coincide: se atenúa. */
-  dimmed: boolean;
-  selected: boolean;
-  onSelect: (cell: LocationCell) => void;
-  size?: number;
-};
-
-function MapCell({ cell, label, highlighted, dimmed, selected, onSelect, size = 40 }: CellProps) {
-  const meta = MAP_STATE_META[cell.state];
-  const title = [
-    cell.code,
-    `${meta.label}`,
-    `${cell.basesUsed} base(s)${cell.capacityBases ? ` de ${cell.capacityBases}` : ""}`,
-    `${cell.pallets} pallet(s) · ${fmtQty(cell.units)} unid.`,
-    ...cell.issues.map((i) => ISSUE_META[i].label),
-  ].join(" · ");
-
-  return (
-    <button
-      type="button"
-      onClick={() => onSelect(cell)}
-      title={title}
-      aria-label={`Ubicación ${cell.code}, ${meta.label}, ${cell.pallets} pallets`}
-      aria-pressed={selected}
-      style={{
-        width: size,
-        height: size,
-        borderRadius: 6,
-        cursor: "pointer",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontSize: label.length > 4 ? 9 : 10,
-        fontFamily: "monospace",
-        fontWeight: cell.pallets > 0 ? 800 : 400,
-        padding: 0,
-        background: meta.bg,
-        border: meta.border,
-        color: meta.text,
-        opacity: dimmed ? 0.22 : cell.state === "INACTIVE" ? 0.55 : 1,
-        textDecoration: cell.state === "INACTIVE" ? "line-through" : undefined,
-        outline: highlighted ? "2px solid var(--primary)" : selected ? "2px solid var(--text)" : undefined,
-        outlineOffset: 2,
-        boxShadow: highlighted ? "0 0 0 4px var(--primary-light)" : undefined,
-        transition: "opacity .12s ease",
-      }}
-    >
-      {label}
-    </button>
-  );
-}
-
-/* ── Mapa del depósito ──────────────────────────────────────────────────── */
-
-function WarehouseMap({
-  cells,
-  highlight,
-  highlightQty,
-  selectedId,
-  onSelect,
-  emptyMessage,
-}: {
-  cells: LocationCell[];
-  /** null = sin búsqueda activa (no se atenúa nada). */
-  highlight: Set<string> | null;
-  highlightQty?: Map<string, number>;
-  selectedId: string | null;
-  onSelect: (cell: LocationCell) => void;
-  emptyMessage: string;
-}) {
-  /** Sector → Subsectores (cada Subsector es ya una celda única — sin niveles/posiciones). */
-  const aisleGroups = useMemo(() => {
-    const byAisle = new Map<string, LocationCell[]>();
-    for (const c of cells.filter((c) => c.aisle)) {
-      byAisle.set(c.aisle!, [...(byAisle.get(c.aisle!) ?? []), c]);
-    }
-    return [...byAisle.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([aisle, list]) => ({
-        aisle,
-        cells: [...list].sort((a, b) => (a.rack ?? "").localeCompare(b.rack ?? "", undefined, { numeric: true })),
-      }));
-  }, [cells]);
-
-  const flatCells = useMemo(() => cells.filter((c) => !c.aisle), [cells]);
-
-  function cellLabel(c: LocationCell) {
-    const qty = highlightQty?.get(c.id);
-    if (qty != null) return fmtQty(qty);
-    return c.pallets > 0 ? String(c.pallets) : "";
-  }
-
-  if (cells.length === 0) {
-    return (
-      <div style={{ background: "var(--bg)", border: "1px dashed var(--border)", borderRadius: 10, padding: "28px 20px", textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
-        {emptyMessage}
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ display: "grid", gap: 12 }}>
-      {aisleGroups.map((g) => (
-        <div key={g.aisle} style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
-          <div style={{ background: "var(--bg)", padding: "7px 12px", fontSize: 13, fontWeight: 800, borderBottom: "1px solid var(--border)" }}>
-            Sector {g.aisle}
-            <span style={{ fontWeight: 400, color: "var(--muted)", marginLeft: 8, fontSize: 12 }}>
-              {g.cells.length} subsector{g.cells.length !== 1 ? "es" : ""}
-            </span>
-          </div>
-          <div style={{ display: "flex", gap: 8, padding: 12, flexWrap: "wrap" }}>
-            {g.cells.map((c) => (
-              <div key={c.id} style={{ textAlign: "center" }}>
-                <MapCell
-                  cell={c}
-                  label={cellLabel(c)}
-                  highlighted={!!highlight?.has(c.id)}
-                  dimmed={!!highlight && !highlight.has(c.id)}
-                  selected={selectedId === c.id}
-                  onSelect={onSelect}
-                />
-                <div style={{ fontSize: 9, color: "var(--muted)", marginTop: 2, fontFamily: "monospace" }}>{c.rack ?? c.code}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
-
-      {flatCells.length > 0 && (
-        <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
-          <div style={{ background: "var(--bg)", padding: "7px 12px", fontSize: 13, fontWeight: 800, borderBottom: "1px solid var(--border)" }}>
-            {aisleGroups.length > 0 ? "Otras ubicaciones" : "Ubicaciones"}
-          </div>
-          <div style={{ display: "flex", gap: 6, padding: 12, flexWrap: "wrap" }}>
-            {flatCells.map((c) => {
-              const meta = MAP_STATE_META[c.state];
-              const dimmed = !!highlight && !highlight.has(c.id);
-              const qty = highlightQty?.get(c.id);
-              return (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => onSelect(c)}
-                  title={`${meta.label} · ${c.pallets} pallet(s) · ${fmtQty(c.units)} unid.`}
-                  style={{
-                    borderRadius: 7, cursor: "pointer", padding: "6px 10px",
-                    fontSize: 12, fontFamily: "monospace", fontWeight: 600,
-                    background: meta.bg, border: meta.border, color: meta.text,
-                    opacity: dimmed ? 0.22 : c.state === "INACTIVE" ? 0.55 : 1,
-                    outline: highlight?.has(c.id) ? "2px solid var(--primary)" : selectedId === c.id ? "2px solid var(--text)" : undefined,
-                    outlineOffset: 2,
-                  }}
-                >
-                  {c.code}
-                  {qty != null ? ` · ${fmtQty(qty)}` : c.pallets > 0 ? ` · ${c.pallets}` : ""}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ── Leyenda de colores ─────────────────────────────────────────────────── */
-
-function MapLegend({ states }: { states: LocationMapState[] }) {
-  return (
-    <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 11, color: "var(--muted)", marginBottom: 12 }}>
-      {states.map((s) => {
-        const meta = MAP_STATE_META[s];
-        return (
-          <span key={s}>
-            <span
-              style={{
-                display: "inline-block", width: 12, height: 12, borderRadius: 3,
-                background: meta.bg, border: meta.border,
-                verticalAlign: "middle", marginRight: 4,
-              }}
-            />
-            {meta.label}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
 
 /* ── KPI ────────────────────────────────────────────────────────────────── */
 
@@ -297,6 +96,7 @@ function LocationDrawer({
   const { user } = useAuth();
   const allowTransfer = user?.role ? canUpdate("pallets", user.role) : false;
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   const [tracePalletId, setTracePalletId] = useState<string | null>(null);
   const [transferPalletId, setTransferPalletId] = useState<string | null>(null);
@@ -324,6 +124,12 @@ function LocationDrawer({
       setDestination("");
       onTransferred();
       void contentQ.refetch();
+      void queryClient.invalidateQueries({ queryKey: ["pallets"] });
+      void queryClient.invalidateQueries({ queryKey: ["stock"] });
+      void queryClient.invalidateQueries({ queryKey: ["movements"] });
+      void queryClient.invalidateQueries({ queryKey: ["location-availability"] });
+      void queryClient.invalidateQueries({ queryKey: ["location-recommendations"] });
+      void queryClient.invalidateQueries({ queryKey: ["location-map"] });
     },
     onError: (err) => toast.error(getFriendlyApiError(err)),
   });
@@ -478,6 +284,7 @@ function LocationDrawer({
                                 onChange={setDestination}
                                 excludeUnavailable
                                 productId={p.productId}
+                                excludeLocationId={locationId}
                                 placeholder="Ubicación destino"
                               />
                               <div style={{ display: "flex", gap: 8 }}>
@@ -502,20 +309,33 @@ function LocationDrawer({
                                 <p style={{ fontSize: 12, color: "var(--muted)", margin: 0 }}>Sin movimientos registrados.</p>
                               ) : (
                                 <ol style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 6 }}>
-                                  {(historyQ.data?.history ?? []).map((h) => (
-                                    <li key={h.movementId} style={{ fontSize: 11, display: "flex", gap: 8, alignItems: "baseline" }}>
-                                      <span style={{ color: "var(--muted)", fontFamily: "monospace", whiteSpace: "nowrap" }}>
-                                        {new Date(h.date).toLocaleDateString("es-PY", { timeZone: "America/Asuncion" })}
-                                      </span>
-                                      <span style={{ fontWeight: 700 }}>{h.type}</span>
-                                      <span style={{ color: "var(--muted)" }}>
-                                        {fmtQty(h.quantity)} unid.
-                                        {h.from?.locationCode && ` · desde ${h.from.locationCode}`}
-                                        {h.to?.locationCode && ` · hacia ${h.to.locationCode}`}
-                                        {h.documentNumber && ` · doc. ${h.documentNumber}`}
-                                      </span>
-                                    </li>
-                                  ))}
+                                  {(historyQ.data?.history ?? []).map((h) => {
+                                    const voided = h.voidStatus === "VOIDED";
+                                    return (
+                                      <li key={h.movementId} style={{ fontSize: 11, display: "flex", gap: 8, alignItems: "baseline", opacity: voided ? 0.6 : 1 }}>
+                                        <span style={{ color: "var(--muted)", fontFamily: "monospace", whiteSpace: "nowrap" }}>
+                                          {new Date(h.createdAt ?? h.date).toLocaleString("es-PY", {
+                                            timeZone: "America/Asuncion",
+                                            day: "2-digit", month: "2-digit", year: "numeric",
+                                            hour: "2-digit", minute: "2-digit",
+                                          })}
+                                        </span>
+                                        <span style={{ fontWeight: 700 }}>{h.type}</span>
+                                        <span style={{ color: "var(--muted)", textDecoration: voided ? "line-through" : undefined }}>
+                                          {fmtQty(h.quantity)} unid.
+                                          {h.from?.locationCode && ` · desde ${h.from.locationCode}`}
+                                          {h.to?.locationCode && ` · hacia ${h.to.locationCode}`}
+                                          {h.documentNumber && ` · doc. ${h.documentNumber}`}
+                                        </span>
+                                        {voided && (
+                                          <span style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)" }}>· Anulado</span>
+                                        )}
+                                        {h.voidStatus === "VOID_PENDING" && (
+                                          <span style={{ fontSize: 10, fontWeight: 700, color: "var(--warning)" }}>· Anulación pendiente</span>
+                                        )}
+                                      </li>
+                                    );
+                                  })}
                                 </ol>
                               )}
                             </div>
@@ -897,10 +717,10 @@ export default function LocationsPage() {
         <div style={{ display: "grid", gap: 14 }}>
           {summary && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8 }}>
-              <Kpi label="Ubicaciones" value={nf.format(summary.totalLocations)} />
-              <Kpi label="Libres" value={nf.format(summary.freeLocations)} accent="var(--success)" />
-              <Kpi label="Con lugar" value={nf.format(freeCells.length)} />
-              <Kpi label="Llenas" value={nf.format(summary.fullLocations)} accent="var(--warning)" />
+              <Kpi label="Ubicaciones" value={fmtQty(summary.totalLocations)} />
+              <Kpi label="Libres" value={fmtQty(summary.freeLocations)} accent="var(--success)" />
+              <Kpi label="Con lugar" value={fmtQty(freeCells.length)} />
+              <Kpi label="Llenas" value={fmtQty(summary.fullLocations)} accent="var(--warning)" />
               <Kpi
                 label="Ocupación"
                 value={summary.totalLocations > 0 ? `${Math.round((summary.occupiedLocations / summary.totalLocations) * 100)}%` : "0%"}

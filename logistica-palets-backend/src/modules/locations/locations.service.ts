@@ -408,26 +408,66 @@ export class LocationsService {
       .getRawMany<{ locationId: string; bases: string }>();
     const basesByLoc = new Map(baseCounts.map((c) => [c.locationId, Number(c.bases)]));
 
-    // Sectores con una pila abierta del mismo producto (para consolidar sin abrir base nueva).
+    // Pallets vivos por pila del mismo producto. No alcanza con que la fila esté
+    // OPEN: el producto puede ser no apilable, su máximo puede haber cambiado o
+    // el límite del sector puede ser menor que el guardado originalmente.
     const sameProductRows = await this.pilaRepo
       .createQueryBuilder('p')
-      .select('DISTINCT p."locationId"', 'locationId')
+      .leftJoin(
+        'pallets',
+        'pal',
+        'pal."pilaId" = p.id AND pal.status NOT IN (:...deadStatuses)',
+        { deadStatuses: ['EXITED', 'EMPTY'] },
+      )
+      .select('p.id', 'pilaId')
+      .addSelect('p."locationId"', 'locationId')
+      .addSelect('p."maxLevels"', 'maxLevels')
+      .addSelect('p.status', 'status')
+      .addSelect('COUNT(pal.id)', 'levels')
       .where('p."productId" = :productId', { productId })
-      .andWhere("p.status = 'OPEN'")
-      .getRawMany<{ locationId: string }>();
-    const sameProductLocs = new Set(sameProductRows.map((r) => r.locationId));
+      .andWhere("p.status <> 'EMPTY'")
+      .groupBy('p.id')
+      .addGroupBy('p."locationId"')
+      .addGroupBy('p."maxLevels"')
+      .addGroupBy('p.status')
+      .getRawMany<{ pilaId: string; locationId: string; maxLevels: string | number | null; status: string; levels: string }>();
+
+    const pilesByLocation = new Map<string, typeof sameProductRows>();
+    for (const row of sameProductRows) {
+      pilesByLocation.set(row.locationId, [...(pilesByLocation.get(row.locationId) ?? []), row]);
+    }
+
+    const palletCount = Math.max(1, Math.floor(Number(quantity) || 1));
 
     const scored = locations
       .filter((loc) => loc.active)
       .map((loc) => {
         const basesUsed = basesByLoc.get(loc.id) ?? 0;
         const capacity = loc.capacityBases ?? null;
-        const consolidates = sameProductLocs.has(loc.id);
+        const effectiveMax = this.pilas.effectiveMaxStackLevel(loc, product);
+        const slotsInExistingPiles = (pilesByLocation.get(loc.id) ?? []).reduce((sum, pile) => {
+          if (pile.status !== 'OPEN') return sum;
+          const pileMax = this.pilas.effectiveMaxStackLevel(
+            loc,
+            product,
+            pile.maxLevels == null ? null : Number(pile.maxLevels),
+          );
+          return sum + Math.max(0, pileMax - Number(pile.levels));
+        }, 0);
+        const consolidates = slotsInExistingPiles > 0;
         const reasons: string[] = [];
 
-        // Consolidar en una pila ya abierta del mismo producto no exige base
-        // nueva; si no hay dónde consolidar, hace falta lugar para una.
-        const hasRoom = consolidates || capacity == null || basesUsed < capacity;
+        // Primero se consumen niveles libres de pilas compatibles; el resto abre
+        // las bases necesarias. Para no apilables effectiveMax=1, por lo que cada
+        // pallet exige una base propia.
+        const pendingAfterConsolidation = Math.max(0, palletCount - slotsInExistingPiles);
+        const newBasesNeeded = pendingAfterConsolidation === 0
+          ? 0
+          : Number.isFinite(effectiveMax)
+            ? Math.ceil(pendingAfterConsolidation / effectiveMax)
+            : 1;
+        const freeBases = capacity == null ? Infinity : Math.max(0, capacity - basesUsed);
+        const hasRoom = newBasesNeeded <= freeBases;
         const { feasible: tempWeightHeightOk, blockers } = this.pilas.feasibility(loc, product);
         if (!hasRoom) blockers.push('sin bases libres');
         const feasible = hasRoom && tempWeightHeightOk;
@@ -465,7 +505,7 @@ export class LocationsService {
 
     return {
       productId,
-      quantity,
+      quantity: palletCount,
       product: {
         code: product.code,
         description: product.description,
@@ -473,6 +513,10 @@ export class LocationsService {
         fragile: product.fragile,
         rotationPolicy: product.rotationPolicy,
       },
+      // El selector usa esta lista completa para no ocultar un sector que está
+      // FULL en bases pero todavía admite consolidación. `recommendations`
+      // sigue siendo solo el top 3 para no recargar la interfaz.
+      feasibleLocationIds: scored.filter((s) => s.feasible).map((s) => s.loc.id),
       recommendations,
       message: recommendations.length
         ? null

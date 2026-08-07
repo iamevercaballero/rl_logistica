@@ -815,7 +815,24 @@ export class MovementsService {
         s: `%${query.search}%`,
       });
     }
-    return qb.getMany();
+    const documents = await qb.getMany();
+    if (documents.length === 0) return documents.map((d) => ({ ...d, voidedLines: 0 }));
+
+    // El status del documento (APROBADO, etc.) no cambia si una de sus líneas se
+    // anula después — sigue siendo un remito válido como instancia. `voidedLines`
+    // es la señal aparte para no mostrarlo como 100% intacto sin serlo.
+    const voidCounts = await this.dataSource
+      .createQueryBuilder()
+      .from('movements', 'm')
+      .select('m."documentId"', 'documentId')
+      .addSelect('COUNT(*)', 'voided')
+      .where('m."documentId" IN (:...ids)', { ids: documents.map((d) => d.id) })
+      .andWhere('m."voidStatus" <> :none', { none: 'NONE' })
+      .groupBy('m."documentId"')
+      .getRawMany<{ documentId: string; voided: string }>();
+    const voidedByDoc = new Map(voidCounts.map((c) => [c.documentId, Number(c.voided)]));
+
+    return documents.map((d) => ({ ...d, voidedLines: voidedByDoc.get(d.id) ?? 0 }));
   }
 
   /** Detalle de un documento: cabecera + sus movimientos (líneas) + detalles por palet. */
@@ -1450,9 +1467,12 @@ export class MovementsService {
         'movement.destination AS destination',
         'movement.notes AS notes',
         'movement.status AS status',
+        'movement."voidStatus" AS "voidStatus"',
+        'movement."voidAdjRequestId" AS "voidAdjRequestId"',
         'movement."adjustmentReason" AS "adjustmentReason"',
         'movement."adjustmentCategory" AS "adjustmentCategory"',
         'movement.createdById AS "createdById"',
+        'movement.createdAt AS "createdAt"',
         'movement.lotId AS "lotId"',
         'COALESCE(lot."lotCode", dl_agg."lotCodes") AS "lotCode"',
         'COALESCE(lot."sapLot", dl_agg."sapLots") AS "sapLot"',
@@ -1477,7 +1497,8 @@ export class MovementsService {
         'encargado.username AS "encargadoUsername"',
         'encargado."fullName" AS "encargadoFullName"',
       ])
-      .orderBy('movement.date', 'DESC');
+      .orderBy('movement.date', 'DESC')
+      .addOrderBy('movement.createdAt', 'DESC');
 
     if (query.warehouseId) {
       qb.andWhere(
@@ -1568,6 +1589,8 @@ export class MovementsService {
         'movement.destination AS destination',
         'movement.notes AS notes',
         'movement.status AS status',
+        'movement."voidStatus" AS "voidStatus"',
+        'movement."voidAdjRequestId" AS "voidAdjRequestId"',
         'movement."adjustmentReason" AS "adjustmentReason"',
         'movement."adjustmentCategory" AS "adjustmentCategory"',
         'movement.createdById AS "createdById"',
@@ -1774,6 +1797,8 @@ export class MovementsService {
     return {
       id: row.id, type: row.type, date: row.date,
       status: row.status ?? 'NORMAL',
+      voidStatus: row.voidStatus ?? 'NONE',
+      voidAdjRequestId: row.voidAdjRequestId ?? null,
       adjustmentReason: row.adjustmentReason ?? null,
       adjustmentCategory: row.adjustmentCategory ?? null,
       quantity: this.parseNumber(row.quantity),

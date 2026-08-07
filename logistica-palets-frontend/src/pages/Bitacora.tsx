@@ -15,13 +15,6 @@ import { useAuth } from "../auth/AuthContext";
 
 // ── Helpers de formato ───────────────────────────────────────────────────────
 
-function fmtDate(s: string): string {
-  return new Date(s).toLocaleDateString("es-PY", {
-    timeZone: "America/Asuncion",
-    day: "2-digit", month: "2-digit", year: "numeric",
-  });
-}
-
 function fmtDateTime(s: string): string {
   return new Date(s).toLocaleDateString("es-PY", {
     timeZone: "America/Asuncion",
@@ -374,6 +367,21 @@ function DocRow({
             }}>
               {statusCfg.label}
             </span>
+            {/* El status del documento (arriba) no cambia si después se anula una de sus
+                líneas — sigue siendo un remito válido. Esto es la señal aparte: "Aprobado"
+                ya no implica que las N líneas originales sigan todas vigentes. */}
+            {!!doc.voidedLines && (
+              <span
+                title="Al menos un movimiento de este documento fue anulado después de aprobado — el stock ya no refleja todas las líneas originales."
+                style={{
+                  display: "inline-block", padding: "2px 8px", borderRadius: 4,
+                  fontSize: 10, fontWeight: 700, letterSpacing: 0.3,
+                  background: "var(--panel-hi)", color: "var(--muted)", border: "1px dashed var(--border)",
+                }}
+              >
+                ⊘ {doc.voidedLines} línea{doc.voidedLines !== 1 ? "s" : ""} anulada{doc.voidedLines !== 1 ? "s" : ""}
+              </span>
+            )}
           </div>
 
           {/* Fila 2: código interno + stats discretos */}
@@ -394,7 +402,7 @@ function DocRow({
             </span>
             <span style={{ fontSize: 11, color: "var(--border)" }}>·</span>
             <span style={{ fontSize: 11, color: "var(--muted)" }}>
-              {fmtDate(doc.date)}
+              {fmtDateTime(doc.createdAt ?? doc.date)}
             </span>
             {(doc.carrier || doc.vehiclePlate) && (
               <>

@@ -1,5 +1,5 @@
 import { api } from "./client";
-import type { MovementType } from "./movements";
+import type { MovementType, VoidStatus } from "./movements";
 
 export type ReportRange = "today" | "week" | "month";
 
@@ -43,7 +43,10 @@ export type StockReportResponse = {
 export type ReportMovementRow = {
   id: string;
   type: MovementType;
+  /** Día operativo usado por los filtros del reporte. */
   date: string;
+  /** Instante exacto en que el movimiento quedó registrado. */
+  createdAt: string;
   quantity: number;
   pallets?: number | null;
   lotCode?: string | null;       // single code, OR comma-separated when multi-lot palletItems
@@ -51,6 +54,7 @@ export type ReportMovementRow = {
   lotCount?: number;             // 0, 1, or N (N>1 = multi-lot)
   lotsDetail?: Array<{ lotCode: string; sapLot?: string | null; pallets: number; quantity: number }> | null;
   status?: 'NORMAL' | 'PENDING_REGULARIZATION';
+  voidStatus?: VoidStatus;
   adjustmentReason?: string | null;
   documentNumber?: string | null;
   supplier?: string | null;
@@ -84,6 +88,7 @@ export type ReportTraceEvent = {
   supplier?: string | null;
   destination?: string | null;
   notes?: string | null;
+  voidStatus?: VoidStatus;
   warehouseName?: string | null;
   locationCode?: string | null;
   fromWarehouseName?: string | null;

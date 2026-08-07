@@ -8,11 +8,19 @@ import { listPallets } from "../api/pallets";
  * ubicación). Usado en Diferencia de inventario para no cargar la ubicación a mano.
  */
 export default function ProductStockPanel({ productId }: { productId: string }) {
-  const { data: pallets = [], isLoading } = useQuery({
-    queryKey: ["pallets", "available", productId],
-    queryFn: () => listPallets({ productId, status: "AVAILABLE" }),
+  const { data: allPallets = [], isLoading } = useQuery({
+    queryKey: ["pallets", "with-stock", productId],
+    queryFn: () => listPallets({ productId }),
     enabled: !!productId,
   });
+
+  // AVAILABLE y PARTIAL: los parciales son pallets abiertos con saldo y también
+  // son stock (el auto-FEFO los consume igual). Contar solo AVAILABLE mostraba
+  // menos stock del que usa el cálculo de diferencia y simulaba un sobrante.
+  const pallets = useMemo(
+    () => allPallets.filter((p) => (p.status === "AVAILABLE" || p.status === "PARTIAL") && p.quantity > 0),
+    [allPallets],
+  );
 
   const summary = useMemo(() => {
     const stockTotal = pallets.reduce((s, p) => s + p.quantity, 0);

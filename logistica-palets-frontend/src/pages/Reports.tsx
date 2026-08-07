@@ -1,5 +1,11 @@
 import { useMemo, useState } from "react";
-import { fmtDateTime } from "../utils/dateFormat";
+import {
+  fmtDateTime,
+  todayInputValue,
+  shiftInputValue,
+  startOfMonthInputValue,
+  startOfWeekInputValue,
+} from "../utils/dateFormat";
 import { useTableSort, sortArrow } from "../hooks/useTableSort";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -131,7 +137,9 @@ function HighlightMatch({ text, query }: { text: string; query: string }) {
 }
 
 export default function ReportsPage() {
-  const today = new Date().toISOString().slice(0, 10);
+  // Día de hoy en Asunción: con toISOString() el filtro arrancaba en el día
+  // siguiente para cualquier consulta hecha después de las 21:00.
+  const today = todayInputValue();
   const { toast } = useToast();
   const qc = useQueryClient();
 
@@ -355,24 +363,18 @@ export default function ReportsPage() {
 
   function applyDatePreset(preset: string) {
     setDatePreset(preset);
-    const now = new Date();
-    const fmt = (d: Date) => d.toISOString().slice(0, 10);
-    const today = fmt(now);
+    const today = todayInputValue();
     if (preset === "hoy") {
       setFilters((p) => ({ ...p, dateFrom: today, dateTo: today }));
     } else if (preset === "ayer") {
-      const ayer = fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
+      const ayer = shiftInputValue(today, -1);
       setFilters((p) => ({ ...p, dateFrom: ayer, dateTo: ayer }));
     } else if (preset === "semana") {
-      const dow = now.getDay();
-      const lunes = fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((dow + 6) % 7)));
-      setFilters((p) => ({ ...p, dateFrom: lunes, dateTo: today }));
+      setFilters((p) => ({ ...p, dateFrom: startOfWeekInputValue(today), dateTo: today }));
     } else if (preset === "mes") {
-      const primeroDeMes = fmt(new Date(now.getFullYear(), now.getMonth(), 1));
-      setFilters((p) => ({ ...p, dateFrom: primeroDeMes, dateTo: today }));
+      setFilters((p) => ({ ...p, dateFrom: startOfMonthInputValue(today), dateTo: today }));
     } else if (preset === "30dias") {
-      const hace30 = fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30));
-      setFilters((p) => ({ ...p, dateFrom: hace30, dateTo: today }));
+      setFilters((p) => ({ ...p, dateFrom: shiftInputValue(today, -30), dateTo: today }));
     } else if (preset === "todo") {
       setFilters((p) => ({ ...p, dateFrom: "", dateTo: "" }));
     }
@@ -380,39 +382,33 @@ export default function ReportsPage() {
 
   function applyDailyDatePreset(preset: string) {
     setDailyDatePreset(preset);
-    const now = new Date();
-    const fmt = (d: Date) => d.toISOString().slice(0, 10);
-    const t = fmt(now);
+    const t = todayInputValue();
     if (preset === "hoy")    { setDailyDateFrom(t); setDailyDateTo(t); }
-    else if (preset === "ayer") { const d = fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)); setDailyDateFrom(d); setDailyDateTo(d); }
-    else if (preset === "semana") { setDailyDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7)))); setDailyDateTo(t); }
-    else if (preset === "mes")   { setDailyDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), 1))); setDailyDateTo(t); }
-    else if (preset === "30dias"){ setDailyDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30))); setDailyDateTo(t); }
+    else if (preset === "ayer") { const d = shiftInputValue(t, -1); setDailyDateFrom(d); setDailyDateTo(d); }
+    else if (preset === "semana") { setDailyDateFrom(startOfWeekInputValue(t)); setDailyDateTo(t); }
+    else if (preset === "mes")   { setDailyDateFrom(startOfMonthInputValue(t)); setDailyDateTo(t); }
+    else if (preset === "30dias"){ setDailyDateFrom(shiftInputValue(t, -30)); setDailyDateTo(t); }
   }
 
   function applyEntDatePreset(preset: string) {
     setEntDatePreset(preset);
-    const now = new Date();
-    const fmt = (d: Date) => d.toISOString().slice(0, 10);
-    const today = fmt(now);
+    const today = todayInputValue();
     if (preset === "hoy")    { setEntDateFrom(today); setEntDateTo(today); }
-    else if (preset === "ayer") { const d = fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)); setEntDateFrom(d); setEntDateTo(d); }
-    else if (preset === "semana") { setEntDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7)))); setEntDateTo(today); }
-    else if (preset === "mes")   { setEntDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), 1))); setEntDateTo(today); }
-    else if (preset === "30dias"){ setEntDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30))); setEntDateTo(today); }
+    else if (preset === "ayer") { const d = shiftInputValue(today, -1); setEntDateFrom(d); setEntDateTo(d); }
+    else if (preset === "semana") { setEntDateFrom(startOfWeekInputValue(today)); setEntDateTo(today); }
+    else if (preset === "mes")   { setEntDateFrom(startOfMonthInputValue(today)); setEntDateTo(today); }
+    else if (preset === "30dias"){ setEntDateFrom(shiftInputValue(today, -30)); setEntDateTo(today); }
     else if (preset === "todo")  { setEntDateFrom(""); setEntDateTo(""); }
   }
 
   function applySalDatePreset(preset: string) {
     setSalDatePreset(preset);
-    const now = new Date();
-    const fmt = (d: Date) => d.toISOString().slice(0, 10);
-    const today = fmt(now);
+    const today = todayInputValue();
     if (preset === "hoy")    { setSalDateFrom(today); setSalDateTo(today); }
-    else if (preset === "ayer") { const d = fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)); setSalDateFrom(d); setSalDateTo(d); }
-    else if (preset === "semana") { setSalDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7)))); setSalDateTo(today); }
-    else if (preset === "mes")   { setSalDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), 1))); setSalDateTo(today); }
-    else if (preset === "30dias"){ setSalDateFrom(fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30))); setSalDateTo(today); }
+    else if (preset === "ayer") { const d = shiftInputValue(today, -1); setSalDateFrom(d); setSalDateTo(d); }
+    else if (preset === "semana") { setSalDateFrom(startOfWeekInputValue(today)); setSalDateTo(today); }
+    else if (preset === "mes")   { setSalDateFrom(startOfMonthInputValue(today)); setSalDateTo(today); }
+    else if (preset === "30dias"){ setSalDateFrom(shiftInputValue(today, -30)); setSalDateTo(today); }
     else if (preset === "todo")  { setSalDateFrom(""); setSalDateTo(""); }
   }
 
@@ -463,14 +459,14 @@ export default function ReportsPage() {
                     onClick={() => exportStockPDF(stock.items, `stock-${new Date().toISOString().slice(0, 10)}`)}
                     title="Exportar PDF"
                   >
-                    📄 PDF
+                     PDF
                   </button>
                   <button
                     className="btn"
                     onClick={() => void exportStockExcel(stock.items, `stock-${new Date().toISOString().slice(0, 10)}`)}
                     title="Exportar Excel"
                   >
-                    📊 Excel
+                     Excel
                   </button>
                 </>
               )}
@@ -571,10 +567,10 @@ export default function ReportsPage() {
             {movements.length > 0 && (
               <>
                 <button className="btn" onClick={() => exportMovementsPDF(movements, `movimientos-${new Date().toISOString().slice(0,10)}`)} title="Exportar PDF">
-                  📄 PDF
+                   PDF
                 </button>
                 <button className="btn" onClick={() => void exportMovementsExcel(movements, `movimientos-${new Date().toISOString().slice(0,10)}`)} title="Exportar Excel">
-                  📊 Excel
+                   Excel
                 </button>
               </>
             )}
@@ -684,8 +680,8 @@ export default function ReportsPage() {
             </button>
             {lotResults.length > 0 && (
               <>
-                <button className="btn" onClick={() => exportLotesPDF(lotResults, `lotes-${new Date().toISOString().slice(0,10)}`)} title="Exportar PDF">📄 PDF</button>
-                <button className="btn" onClick={() => void exportLotesExcel(lotResults, `lotes-${new Date().toISOString().slice(0,10)}`)} title="Exportar Excel">📊 Excel</button>
+                <button className="btn" onClick={() => exportLotesPDF(lotResults, `lotes-${new Date().toISOString().slice(0,10)}`)} title="Exportar PDF"> PDF</button>
+                <button className="btn" onClick={() => void exportLotesExcel(lotResults, `lotes-${new Date().toISOString().slice(0,10)}`)} title="Exportar Excel"> Excel</button>
               </>
             )}
           </div>
@@ -807,8 +803,8 @@ export default function ReportsPage() {
             }}>Limpiar</button>
             {entries.length > 0 && (
               <>
-                <button className="btn" onClick={() => exportEntradasPDF(entries, `entradas-${new Date().toISOString().slice(0,10)}`)} title="Exportar PDF">📄 PDF</button>
-                <button className="btn" onClick={() => void exportEntradasExcel(entries, `entradas-${new Date().toISOString().slice(0,10)}`)} title="Exportar Excel">📊 Excel</button>
+                <button className="btn" onClick={() => exportEntradasPDF(entries, `entradas-${new Date().toISOString().slice(0,10)}`)} title="Exportar PDF"> PDF</button>
+                <button className="btn" onClick={() => void exportEntradasExcel(entries, `entradas-${new Date().toISOString().slice(0,10)}`)} title="Exportar Excel"> Excel</button>
               </>
             )}
           </div>
@@ -942,11 +938,11 @@ export default function ReportsPage() {
                   <button className="btn" onClick={() => {
                     const label = dailyDateFrom === dailyDateTo ? dailyDateFrom : `${dailyDateFrom} a ${dailyDateTo}`;
                     exportDailyStockPDF(dailyStockFiltered, label, `control-diario-${dailyDateFrom}`);
-                  }} title="Exportar PDF">📄 PDF</button>
+                  }} title="Exportar PDF"> PDF</button>
                   <button className="btn" onClick={() => {
                     const label = dailyDateFrom === dailyDateTo ? dailyDateFrom : `${dailyDateFrom} a ${dailyDateTo}`;
                     void exportDailyStockExcel(dailyStockFiltered, label, `control-diario-${dailyDateFrom}`);
-                  }} title="Exportar Excel">📊 Excel</button>
+                  }} title="Exportar Excel"> Excel</button>
                 </>
               )}
             </div>
@@ -1091,8 +1087,8 @@ export default function ReportsPage() {
             }}>Limpiar</button>
             {salMovements.length > 0 && (
               <>
-                <button className="btn" onClick={() => exportSalidasPDF(salMovements, `salidas-${new Date().toISOString().slice(0,10)}`)} title="Exportar PDF">📄 PDF</button>
-                <button className="btn" onClick={() => void exportSalidasExcel(salMovements, `salidas-${new Date().toISOString().slice(0,10)}`)} title="Exportar Excel">📊 Excel</button>
+                <button className="btn" onClick={() => exportSalidasPDF(salMovements, `salidas-${new Date().toISOString().slice(0,10)}`)} title="Exportar PDF"> PDF</button>
+                <button className="btn" onClick={() => void exportSalidasExcel(salMovements, `salidas-${new Date().toISOString().slice(0,10)}`)} title="Exportar Excel"> Excel</button>
               </>
             )}
           </div>
@@ -1193,8 +1189,8 @@ export default function ReportsPage() {
             </button>
             {traceResult && traceResult.history.length > 0 && (
               <>
-                <button className="btn" onClick={() => exportTrazabilidadPDF(traceResult.material.code, traceResult.history, `trazabilidad-${traceResult.material.code}`)} title="Exportar PDF">📄 PDF</button>
-                <button className="btn" onClick={() => void exportTrazabilidadExcel(traceResult.material.code, traceResult.history, `trazabilidad-${traceResult.material.code}`)} title="Exportar Excel">📊 Excel</button>
+                <button className="btn" onClick={() => exportTrazabilidadPDF(traceResult.material.code, traceResult.history, `trazabilidad-${traceResult.material.code}`)} title="Exportar PDF"> PDF</button>
+                <button className="btn" onClick={() => void exportTrazabilidadExcel(traceResult.material.code, traceResult.history, `trazabilidad-${traceResult.material.code}`)} title="Exportar Excel"> Excel</button>
               </>
             )}
           </div>
@@ -1269,7 +1265,7 @@ export default function ReportsPage() {
                   onClick={() => void exportFreshnessExcel(freshnessData, `control-frescura-${new Date().toISOString().slice(0, 10)}`)}
                   title="Exportar Excel"
                 >
-                  📊 Excel
+                   Excel
                 </button>
               )}
             </div>
@@ -1615,7 +1611,7 @@ export default function ReportsPage() {
                     Stock estancado (sin salidas)
                   </div>
                   {rotationQ.data.deadStock.length === 0 ? (
-                    <p style={{ fontSize: 13, color: "var(--muted)" }}>Sin mercadería estancada. 👌</p>
+                    <p style={{ fontSize: 13, color: "var(--muted)" }}>Sin mercadería estancada. </p>
                   ) : (
                     <table className="table">
                       <thead><tr><th>Material</th><th style={{ textAlign: "right" }}>Stock parado</th></tr></thead>

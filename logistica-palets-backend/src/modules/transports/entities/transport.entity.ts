@@ -31,6 +31,10 @@ export class Transport {
   @Column()
   type: string; // ej: SCANIA, CAMIONETA, CAMION
 
+  /** Transportadora (empresa) dueña del vehículo — se copia al remito. */
+  @Column({ type: 'varchar', length: 160, nullable: true })
+  carrier?: string | null;
+
   @Column({ nullable: true })
   description?: string;
 

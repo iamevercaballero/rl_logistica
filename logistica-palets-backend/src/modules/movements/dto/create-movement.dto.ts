@@ -71,6 +71,16 @@ export class PalletItemDto {
   @IsNumber(WEIGHT_OPTIONS)
   @Min(0)
   weightKg?: number;
+
+  /**
+   * ENTRADA: Sector-Subsector destino de **este** pallet. Si se omite, hereda
+   * el `locationId` de la línea — así el flujo simple (todo el lote al mismo
+   * sector) sigue funcionando sin cambios, y el gestor de pallets puede
+   * repartir el lote entre sectores distintos cuando hace falta.
+   */
+  @IsOptional()
+  @IsUUID()
+  locationId?: string;
 }
 
 export class CreateMovementDto {
@@ -132,6 +142,12 @@ export class CreateMovementDto {
   @IsString()
   @MaxLength(120)
   driver?: string;
+
+  /** CI del chofer — viene de Transportes, no se tipea a mano. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  driverDocument?: string;
 
   @IsOptional()
   @IsString()

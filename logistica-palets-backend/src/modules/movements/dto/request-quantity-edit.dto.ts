@@ -3,6 +3,7 @@ import {
   ArrayMinSize,
   IsDateString,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -27,6 +28,16 @@ export class PalletQuantityEditDto {
   @IsInt()
   @Min(0)
   newQuantity: number;
+
+  /**
+   * Nuevo peso del pallet (kg). Es un dato descriptivo, no mueve stock: se
+   * aplica directo y queda auditado, sin pasar por aprobación.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  weightKg?: number;
 }
 
 export class QuantityEditLotDto {

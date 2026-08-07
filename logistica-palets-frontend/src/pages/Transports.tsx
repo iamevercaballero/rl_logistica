@@ -40,16 +40,19 @@ function formatBytes(b: number): string {
   if (b < 1024 * 1024) return `${(b / 1024).toFixed(0)} KB`;
   return `${(b / 1024 / 1024).toFixed(1)} MB`;
 }
-function fileIcon(m: string): string {
-  if (m.startsWith("image/")) return "🖼️";
-  if (m.includes("pdf")) return "📄";
-  if (m.includes("word")) return "📝";
-  if (m.includes("excel") || m.includes("spreadsheet")) return "📊";
-  return "📎";
+/** Etiqueta corta del tipo de archivo — se muestra como texto, no como emoji. */
+function fileKind(m: string): string {
+  if (m.startsWith("image/")) return "IMG";
+  if (m.includes("pdf")) return "PDF";
+  if (m.includes("word")) return "DOC";
+  if (m.includes("excel") || m.includes("spreadsheet")) return "XLS";
+  return "ARCH";
 }
 
-const EVENT_ICONS: Record<string, string> = {
-  CREADO: "🟢", EDITADO: "✏️", FOTO_ADJUNTADA: "📎", ARCHIVO_ELIMINADO: "🗑️", INSPECCION: "🔍",
+const fileKindChip: React.CSSProperties = {
+  fontSize: 10, fontWeight: 700, fontFamily: "monospace", letterSpacing: 0.3,
+  color: "var(--muted)", border: "1px solid var(--border)", borderRadius: 4,
+  padding: "2px 5px", flexShrink: 0,
 };
 
 /* ── Foto del camión: descarga autenticada → blob URL ─────────────────────── */
@@ -205,14 +208,14 @@ export default function TransportsPage() {
               >
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                   <strong style={{ fontSize: 15, fontFamily: "monospace" }}>{t.plate}</strong>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: meta.color }}>{meta.icon} {meta.label}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: meta.color }}>{meta.label}</span>
                 </div>
                 <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
                   {t.type}{t.description ? ` · ${t.description}` : ""}
                 </div>
                 <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4, display: "flex", gap: 10 }}>
-                  {t.drivers.length > 0 && <span>👤 {t.drivers.length} chofer{t.drivers.length !== 1 ? "es" : ""}</span>}
-                  {t.capacityPallets != null && <span>📦 {t.capacityPallets} pal.</span>}
+                  {t.drivers.length > 0 && <span> {t.drivers.length} chofer{t.drivers.length !== 1 ? "es" : ""}</span>}
+                  {t.capacityPallets != null && <span> {t.capacityPallets} pal.</span>}
                 </div>
               </div>
             );
@@ -294,7 +297,7 @@ function VehicleDetail({
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <h2 style={{ margin: 0, fontSize: 22, fontWeight: 900, fontFamily: "monospace" }}>{vehicle.plate}</h2>
             <span style={{ fontSize: 13, fontWeight: 700, color: meta.color, border: `1.5px solid ${meta.color}`, borderRadius: 20, padding: "2px 12px" }}>
-              {meta.icon} {meta.label}
+              {meta.label}
             </span>
           </div>
           <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--muted)" }}>
@@ -319,7 +322,7 @@ function VehicleDetail({
                   borderColor: vehicle.status === s.value ? s.color : undefined,
                 }}
               >
-                {s.icon} {s.label}
+                {s.label}
               </button>
             ))}
           </div>
@@ -364,6 +367,7 @@ function FichaTab({ vehicle, allowEdit, allowDelete, onDelete, onChanged }: {
 }) {
   const { toast } = useToast();
   const [type, setType] = useState(vehicle.type);
+  const [carrier, setCarrier] = useState(vehicle.carrier ?? "");
   const [description, setDescription] = useState(vehicle.description ?? "");
   const [capacityPallets, setCapacityPallets] = useState(vehicle.capacityPallets != null ? String(vehicle.capacityPallets) : "");
   const [capacityKg, setCapacityKg] = useState(vehicle.capacityKg != null ? String(vehicle.capacityKg) : "");
@@ -372,6 +376,7 @@ function FichaTab({ vehicle, allowEdit, allowDelete, onDelete, onChanged }: {
   const mut = useMutation({
     mutationFn: () => updateTransport(vehicle.id, {
       type: type.trim(),
+      carrier: carrier.trim() || undefined,
       description: description.trim() || undefined,
       capacityPallets: capacityPallets.trim() ? Number(capacityPallets) : undefined,
       capacityKg: capacityKg.trim() ? Number(capacityKg) : undefined,
@@ -391,7 +396,12 @@ function FichaTab({ vehicle, allowEdit, allowDelete, onDelete, onChanged }: {
           <input className="input" value={type} disabled={!allowEdit} onChange={(e) => setType(e.target.value)} />
         </div>
         <div>
-          <label style={label}>Transportadora / descripción</label>
+          <label style={label}>Transportadora</label>
+          <input className="input" value={carrier} disabled={!allowEdit} onChange={(e) => setCarrier(e.target.value)}
+            placeholder="Empresa — se copia al remito" />
+        </div>
+        <div>
+          <label style={label}>Descripción</label>
           <input className="input" value={description} disabled={!allowEdit} onChange={(e) => setDescription(e.target.value)} />
         </div>
         <div>
@@ -572,10 +582,10 @@ function DocsTab({ vehicleId, attachments, photo, loading, allowEdit }: {
               const cat = ATTACHMENT_CATEGORIES.find((c) => c.value === a.category);
               return (
                 <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)" }}>
-                  <span style={{ fontSize: 20 }}>{fileIcon(a.mimeType)}</span>
+                  <span style={fileKindChip}>{fileKind(a.mimeType)}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 700, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</div>
-                    <div style={{ fontSize: 11, color: "var(--muted)" }}>{cat?.icon} {cat?.label} · {a.originalName} · {formatBytes(a.fileSize)} · {fmtDate(a.createdAt)}</div>
+                    <div style={{ fontSize: 11, color: "var(--muted)" }}>{cat?.label} · {a.originalName} · {formatBytes(a.fileSize)} · {fmtDate(a.createdAt)}</div>
                   </div>
                   <button className="btn" style={{ fontSize: 12, padding: "4px 10px" }} onClick={() => void openAttachmentBlob(a.id)}>Ver</button>
                   {allowEdit && (
@@ -690,7 +700,7 @@ function InspeccionesTab({ vehicle, events, allowEdit, onChanged }: {
       {/* Registrar inspección */}
       {allowEdit && (
         <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 14, display: "grid", gap: 10 }}>
-          <div style={{ fontSize: 13, fontWeight: 800 }}>🔍 Registrar inspección</div>
+          <div style={{ fontSize: 13, fontWeight: 800 }}> Registrar inspección</div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {RESULTS.map((r) => (
               <button
@@ -713,7 +723,7 @@ function InspeccionesTab({ vehicle, events, allowEdit, onChanged }: {
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <select className="input" value={setStatus} onChange={(e) => setSetStatus(e.target.value as TransportStatus | "")} style={{ width: 220 }}>
               <option value="">No cambiar estado operativo</option>
-              {TRANSPORT_STATUSES.map((s) => <option key={s.value} value={s.value}>Marcar: {s.icon} {s.label}</option>)}
+              {TRANSPORT_STATUSES.map((s) => <option key={s.value} value={s.value}>Marcar: {s.label}</option>)}
             </select>
             <button className="btn btn--primary" onClick={() => mut.mutate()} disabled={mut.isPending}>
               {mut.isPending ? "Registrando…" : "Registrar inspección"}
@@ -736,7 +746,7 @@ function InspeccionesTab({ vehicle, events, allowEdit, onChanged }: {
               {events.map((ev, idx) => (
                 <div key={ev.id} style={{ display: "flex", gap: 12, paddingBottom: idx < events.length - 1 ? 16 : 0, position: "relative" }}>
                   <div style={{ width: 32, height: 32, borderRadius: "50%", background: "var(--panel)", border: "2px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, flexShrink: 0, zIndex: 1 }}>
-                    {EVENT_ICONS[ev.eventType] ?? "●"}
+                    ●
                   </div>
                   <div style={{ flex: 1, paddingTop: 4 }}>
                     <div style={{ fontSize: 13, fontWeight: 600 }}>{ev.description}</div>

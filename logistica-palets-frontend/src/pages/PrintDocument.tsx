@@ -256,7 +256,14 @@ export default function PrintDocumentPage() {
               )}
               <div className="vehicle-row">
                 <span className="dil">N° Cédula del Conductor:</span>
-                <span className="div" style={{ borderBottom: "1px solid #999", minWidth: 120, display: "inline-block" }}>&nbsp;</span>
+                {/* Sale de la ficha del conductor en Transportes. Si el remito
+                    es viejo (o el vehículo no la tiene cargada), se deja la
+                    línea para completarla a mano. */}
+                {document.driverDocument ? (
+                  <span className="div">{document.driverDocument}</span>
+                ) : (
+                  <span className="div" style={{ borderBottom: "1px solid #999", minWidth: 120, display: "inline-block" }}>&nbsp;</span>
+                )}
               </div>
             </div>
           </>

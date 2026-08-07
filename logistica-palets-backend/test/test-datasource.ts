@@ -18,6 +18,7 @@ import { Attachment } from '../src/modules/uploads/entities/attachment.entity';
 import { DocumentEvent } from '../src/modules/uploads/entities/document-event.entity';
 import { SapStockSnapshot } from '../src/modules/reports/entities/sap-stock.entity';
 import { Pila } from '../src/modules/pilas/entities/pila.entity';
+import { Supplier } from '../src/modules/suppliers/entities/supplier.entity';
 
 /**
  * Conjunto mínimo de entidades que toca el motor de stock. No incluye User /
@@ -25,7 +26,7 @@ import { Pila } from '../src/modules/pilas/entities/pila.entity';
  * así que synchronize crea sólo estas tablas y sus FKs (Lot→Product, Location→Warehouse).
  */
 export const TEST_ENTITIES = [
-  Product, Warehouse, Location, Stock, Lot, Pallet, Pila,
+  Product, Warehouse, Location, Stock, Lot, Pallet, Pila, Supplier,
   Movement, MovementDetail, LogisticsDocument, DocumentSequence, RegularizationLog,
   AdjustmentRequest, AdjustmentRequestLine, Attachment, DocumentEvent, SapStockSnapshot,
 ];
@@ -36,7 +37,7 @@ const TABLES = [
   'logistics_documents', 'regularization_logs',
   'adjustment_request_lines', 'adjustment_requests',
   'attachments', 'document_events', 'document_sequences',
-  'sap_stock_snapshots', 'products', 'locations', 'warehouses',
+  'sap_stock_snapshots', 'products', 'locations', 'warehouses', 'suppliers',
 ];
 
 /**

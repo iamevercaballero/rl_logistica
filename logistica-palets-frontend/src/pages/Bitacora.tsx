@@ -36,13 +36,20 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function fileIcon(mimeType: string): string {
-  if (mimeType.startsWith("image/")) return "🖼️";
-  if (mimeType.includes("pdf"))      return "📄";
-  if (mimeType.includes("word"))     return "📝";
-  if (mimeType.includes("excel") || mimeType.includes("spreadsheet")) return "📊";
-  return "📎";
+/** Etiqueta corta del tipo de archivo — se muestra como texto, no como emoji. */
+function fileKind(mimeType: string): string {
+  if (mimeType.startsWith("image/")) return "IMG";
+  if (mimeType.includes("pdf"))      return "PDF";
+  if (mimeType.includes("word"))     return "DOC";
+  if (mimeType.includes("excel") || mimeType.includes("spreadsheet")) return "XLS";
+  return "ARCH";
 }
+
+const fileKindChip: React.CSSProperties = {
+  fontSize: 10, fontWeight: 700, fontFamily: "monospace", letterSpacing: 0.3,
+  color: "var(--muted)", border: "1px solid var(--border)", borderRadius: 4,
+  padding: "2px 5px", flexShrink: 0,
+};
 
 // ── Configuración visual ─────────────────────────────────────────────────────
 
@@ -59,18 +66,6 @@ const STATUS_CFG: Record<string, { label: string; color: string; bg: string }> =
   ANULADO:              { label: "Anulado",      color: "#4b5563", bg: "#e5e7eb" },
 };
 
-const EVENT_ICONS: Record<string, string> = {
-  CREADO:               "🟢",
-  EDITADO:              "✏️",
-  FOTO_ADJUNTADA:       "📎",
-  ARCHIVO_ELIMINADO:    "🗑️",
-  ENVIADO_APROBACION:   "📤",
-  APROBADO:             "✅",
-  RECHAZADO:            "❌",
-  ANULACION_SOLICITADA: "⊘",
-  ANULADO:              "🔴",
-  NOTA_IMPRESA:         "🖨️",
-};
 
 // ── Panel expandido de un documento ─────────────────────────────────────────
 
@@ -165,7 +160,7 @@ function DocPanel({ doc, onClose }: { doc: LogisticsDocument; onClose: () => voi
             style={{ fontSize: 13, padding: "7px 14px" }}
             onClick={() => window.open(`/print/labels/${doc.id}`, "_blank")}
           >
-            🏷 Etiquetas
+             Etiquetas
           </button>
         </div>
       </div>
@@ -184,7 +179,7 @@ function DocPanel({ doc, onClose }: { doc: LogisticsDocument; onClose: () => voi
             fontSize: 11, fontWeight: 800, color: "var(--muted)",
             textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12,
           }}>
-            📎 Archivos adjuntos
+             Archivos adjuntos
           </div>
 
           {logQ.isLoading ? (
@@ -205,13 +200,13 @@ function DocPanel({ doc, onClose }: { doc: LogisticsDocument; onClose: () => voi
                       background: "var(--bg-base, var(--bg))",
                     }}
                   >
-                    <span style={{ fontSize: 18, flexShrink: 0 }}>{fileIcon(a.mimeType)}</span>
+                    <span style={fileKindChip}>{fileKind(a.mimeType)}</span>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontWeight: 700, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {a.name}
                       </div>
                       <div style={{ fontSize: 10, color: "var(--muted)" }}>
-                        {cat?.icon} {cat?.label} · {formatBytes(a.fileSize)}
+                        {cat?.label} · {formatBytes(a.fileSize)}
                       </div>
                     </div>
                     <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
@@ -251,7 +246,7 @@ function DocPanel({ doc, onClose }: { doc: LogisticsDocument; onClose: () => voi
             fontSize: 11, fontWeight: 800, color: "var(--muted)",
             textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12,
           }}>
-            🕑 Historial de eventos
+             Historial de eventos
           </div>
 
           {logQ.isLoading ? (
@@ -275,7 +270,7 @@ function DocPanel({ doc, onClose }: { doc: LogisticsDocument; onClose: () => voi
                       display: "flex", alignItems: "center", justifyContent: "center",
                       fontSize: 11, flexShrink: 0, zIndex: 1,
                     }}>
-                      {EVENT_ICONS[ev.eventType] ?? "●"}
+                      ●
                     </div>
                     <div style={{ paddingTop: 2 }}>
                       <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>
@@ -405,7 +400,7 @@ function DocRow({
               <>
                 <span style={{ fontSize: 11, color: "var(--border)" }}>·</span>
                 <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                  🚛 {doc.carrier ?? doc.vehiclePlate}
+                   {doc.carrier ?? doc.vehiclePlate}
                 </span>
               </>
             )}
@@ -416,7 +411,7 @@ function DocRow({
                   style={{ fontSize: 11, color: "var(--muted)", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                   title={doc.notes}
                 >
-                  📝 {doc.notes}
+                   {doc.notes}
                 </span>
               </>
             )}
@@ -442,7 +437,7 @@ function DocRow({
             style={{ fontSize: 14, padding: "5px 10px" }}
             onClick={() => window.open(`/print/labels/${doc.id}`, "_blank")}
           >
-            🏷
+            
           </button>
         </div>
 
@@ -635,7 +630,7 @@ export default function BitacoraPage() {
           </div>
         ) : sorted.length === 0 ? (
           <div style={{ padding: "56px 0", textAlign: "center" }}>
-            <div style={{ fontSize: 44, marginBottom: 12 }}>🗄️</div>
+            <div style={{ fontSize: 44, marginBottom: 12 }}></div>
             <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>
               Sin registros
             </div>

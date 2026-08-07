@@ -477,7 +477,7 @@ function BulkImportModal({ onClose, onImported }: { onClose: () => void; onImpor
         >
           {file ? (
             <span style={{ fontSize: 13, fontWeight: 600 }}>
-              📄 {file.name} <span style={{ color: "var(--muted)", fontWeight: 400 }}>({(file.size / 1024).toFixed(0)} KB)</span>
+               {file.name} <span style={{ color: "var(--muted)", fontWeight: 400 }}>({(file.size / 1024).toFixed(0)} KB)</span>
             </span>
           ) : (
             <span style={{ fontSize: 13, color: "var(--muted)" }}>Hacé click para seleccionar un archivo (.xlsx, .xls, .csv)</span>

@@ -9,7 +9,7 @@
  * y — lo más importante — el caso de carrera concurrente que valida los locks
  * pesimistas (dos salidas simultáneas no deben sobre-vender).
  */
-import { DataSource } from 'typeorm';
+import { DataSource, In, Not } from 'typeorm';
 import { MovementsService } from '../src/modules/movements/movements.service';
 import { DocumentSequenceService } from '../src/modules/movements/document-sequence.service';
 import { PilasService } from '../src/modules/pilas/pilas.service';
@@ -22,6 +22,7 @@ import { Location } from '../src/modules/locations/entities/location.entity';
 import { Pila } from '../src/modules/pilas/entities/pila.entity';
 import { Movement } from '../src/modules/movements/entities/movement.entity';
 import { MovementDetail } from '../src/modules/movements/entities/movement-detail.entity';
+import { RegularizationLog } from '../src/modules/movements/entities/regularization-log.entity';
 import { AdjustmentRequest } from '../src/modules/adjustments/entities/adjustment-request.entity';
 import { SapStockSnapshot } from '../src/modules/reports/entities/sap-stock.entity';
 import type { EventsGateway } from '../src/modules/events/events.gateway';
@@ -496,5 +497,299 @@ describe('motor de stock — colocación en pilas', () => {
     // El rechazo no debe dejar stock/pallet a medio escribir.
     const pallets = await ds.getRepository(Pallet).find({ where: { currentLocationId: tight.id } });
     expect(pallets).toHaveLength(1);
+  });
+
+  it('una pila llena (CLOSED) sigue ocupando su base', async () => {
+    // Sector de 1 sola base, producto apilable hasta 2: el primer lote llena la
+    // pila y la cierra. El siguiente pallet necesitaría una base nueva, que no hay.
+    const tight = await ds.getRepository(Location).save(
+      ds.getRepository(Location).create({ code: 'TIGHT-2', type: 'PISO', warehouse: base.warehouse, active: true, capacityBases: 1 }),
+    );
+    await ds.getRepository(Product).update(base.product.id, { stackable: true, maxStackLevel: 2 });
+
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: tight.id,
+      palletItems: [{ lotCode: 'LF-1', quantity: 10 }, { lotCode: 'LF-2', quantity: 10 }],
+    }, USER_ID);
+
+    const pila = await ds.getRepository(Pila).findOne({ where: { locationId: tight.id } });
+    expect(pila!.status).toBe('CLOSED');
+
+    await expect(service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: tight.id,
+      palletItems: [{ lotCode: 'LF-3', quantity: 10 }],
+    }, USER_ID)).rejects.toThrow(/bases libres/);
+  });
+});
+
+describe('corregir movimiento — peso por pallet y sin cambios', () => {
+  /** Entrada de 1 pallet, devuelve el movimiento y su lote/pallet. */
+  async function entradaSimple(weightKg?: number) {
+    const res = await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      palletItems: [{ lotCode: 'LP-1', quantity: 10, weightKg }],
+    }, USER_ID);
+    const lot = await lotByCode(base.product.id, 'LP-1');
+    const [pallet] = await ds.getRepository(Pallet).find({ where: { lotId: lot!.id } });
+    return { movementId: res.movementId, lotId: lot!.id, pallet };
+  }
+
+  it('cambiar solo el peso lo aplica directo, sin generar solicitud de ajuste', async () => {
+    const { movementId, lotId, pallet } = await entradaSimple(800);
+
+    const res = await service.requestQuantityEdit(movementId, {
+      reason: 'Se repesó el pallet en balanza',
+      lots: [{ lotId, palletEdits: [{ palletId: pallet.id, newQuantity: 10, weightKg: 845.5 }] }],
+    }, USER_ID);
+
+    // El peso no mueve stock: no hay nada que aprobar.
+    expect(res.requests).toHaveLength(0);
+
+    const actualizado = await ds.getRepository(Pallet).findOne({ where: { id: pallet.id } });
+    expect(actualizado!.weightKg).toBe(845.5);
+    expect(actualizado!.quantity).toBe(10); // la cantidad no se tocó
+  });
+
+  it('el cambio de peso queda auditado con valor anterior y nuevo', async () => {
+    const { movementId, lotId, pallet } = await entradaSimple(800);
+
+    await service.requestQuantityEdit(movementId, {
+      reason: 'Se repesó el pallet en balanza',
+      lots: [{ lotId, palletEdits: [{ palletId: pallet.id, newQuantity: 10, weightKg: 845.5 }] }],
+    }, USER_ID);
+
+    const logs = await ds.getRepository(RegularizationLog).find({ where: { movementId } });
+    const pesoLog = logs.find((l) => l.field.endsWith('.weightKg'));
+    expect(pesoLog).toBeDefined();
+    expect(pesoLog!.oldValue).toBe('800');
+    expect(pesoLog!.newValue).toBe('845.5');
+    expect(pesoLog!.reason).toContain('repesó');
+  });
+
+  it('sin ningún cambio real, rechaza con "No hay cambios"', async () => {
+    const { movementId, lotId, pallet } = await entradaSimple(800);
+
+    await expect(service.requestQuantityEdit(movementId, {
+      reason: 'Reviso pero no cambio nada',
+      // Misma cantidad y mismo peso que ya tiene.
+      lots: [{ lotId, palletEdits: [{ palletId: pallet.id, newQuantity: 10, weightKg: 800 }] }],
+    }, USER_ID)).rejects.toThrow(/No hay cambios/i);
+
+    // Y no dejó rastro: ni auditoría ni solicitudes.
+    expect(await ds.getRepository(RegularizationLog).count({ where: { movementId } })).toBe(0);
+    expect(await ds.getRepository(AdjustmentRequest).count()).toBe(0);
+  });
+});
+
+describe('movimientos — encargado desde el JWT', () => {
+  const OTRO_USER = '00000000-0000-0000-0000-0000000000bb';
+
+  const entrada = (encargadoRecepcionId: string | undefined, role?: string) =>
+    service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      encargadoRecepcionId,
+      palletItems: [{ lotCode: `LE-${Math.random().toString(36).slice(2, 7)}`, quantity: 10 }],
+    }, USER_ID, role);
+
+  it('sin encargado explícito, queda el usuario logueado', async () => {
+    const res = await entrada(undefined, 'OPERATOR');
+    const mov = await ds.getRepository(Movement).findOne({ where: { id: res.movementId } });
+    expect(mov!.encargadoRecepcionId).toBe(USER_ID);
+  });
+
+  it('un OPERATOR no puede registrar el remito a nombre de otro', async () => {
+    await expect(entrada(OTRO_USER, 'OPERATOR')).rejects.toThrow(/ADMIN o MANAGER/i);
+  });
+
+  it('un OPERATOR sí puede indicarse a sí mismo', async () => {
+    const res = await entrada(USER_ID, 'OPERATOR');
+    const mov = await ds.getRepository(Movement).findOne({ where: { id: res.movementId } });
+    expect(mov!.encargadoRecepcionId).toBe(USER_ID);
+  });
+
+  it('un MANAGER puede reasignar el encargado', async () => {
+    const res = await entrada(OTRO_USER, 'MANAGER');
+    const mov = await ds.getRepository(Movement).findOne({ where: { id: res.movementId } });
+    expect(mov!.encargadoRecepcionId).toBe(OTRO_USER);
+  });
+
+  it('un ADMIN puede reasignar el encargado', async () => {
+    const res = await entrada(OTRO_USER, 'ADMIN');
+    const mov = await ds.getRepository(Movement).findOne({ where: { id: res.movementId } });
+    expect(mov!.encargadoRecepcionId).toBe(OTRO_USER);
+  });
+});
+
+describe('motor de stock — ubicación y peso por pallet', () => {
+  it('reparte un lote entre dos sectores y el stock queda por sector', async () => {
+    const otro = await ds.getRepository(Location).save(
+      ds.getRepository(Location).create({ code: 'SPLIT-2', type: 'PISO', warehouse: base.warehouse, active: true, capacityBases: 10 }),
+    );
+    await ds.getRepository(Product).update(base.product.id, { stackable: false });
+
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      palletItems: [
+        { lotCode: 'LS-1', quantity: 10 },                          // hereda la ubicación de la línea
+        { lotCode: 'LS-2', quantity: 25, locationId: otro.id },     // sector propio
+      ],
+    }, USER_ID);
+
+    const stocks = await ds.getRepository(Stock).find({ where: { productId: base.product.id } });
+    const byLoc = new Map(stocks.map((s) => [s.locationId, s.currentQuantity]));
+    expect(byLoc.get(base.location.id)).toBe(10);
+    expect(byLoc.get(otro.id)).toBe(25);
+
+    // Invariante: el stock total sigue siendo la suma de los pallets.
+    const pallets = await ds.getRepository(Pallet).find();
+    const totalPallets = pallets.reduce((s, p) => s + p.quantity, 0);
+    const totalStock = stocks.reduce((s, x) => s + x.currentQuantity, 0);
+    expect(totalStock).toBe(totalPallets);
+    expect(totalStock).toBe(35);
+  });
+
+  it('cada pallet queda físicamente en su propio sector, con su pila', async () => {
+    const otro = await ds.getRepository(Location).save(
+      ds.getRepository(Location).create({ code: 'SPLIT-3', type: 'PISO', warehouse: base.warehouse, active: true, capacityBases: 10 }),
+    );
+
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      palletItems: [
+        { lotCode: 'LT-A', quantity: 10 },
+        { lotCode: 'LT-B', quantity: 10, locationId: otro.id },
+      ],
+    }, USER_ID);
+
+    const aqui = await ds.getRepository(Pallet).find({ where: { currentLocationId: base.location.id } });
+    const alla = await ds.getRepository(Pallet).find({ where: { currentLocationId: otro.id } });
+    expect(aqui).toHaveLength(1);
+    expect(alla).toHaveLength(1);
+
+    // Cada uno con pila propia en su sector (no comparten base).
+    expect(aqui[0].pilaId).toBeTruthy();
+    expect(alla[0].pilaId).toBeTruthy();
+    expect(aqui[0].pilaId).not.toBe(alla[0].pilaId);
+
+    const pilaAlla = await ds.getRepository(Pila).findOne({ where: { id: alla[0].pilaId! } });
+    expect(pilaAlla!.locationId).toBe(otro.id);
+  });
+
+  it('guarda el peso individual de cada pallet', async () => {
+    await ds.getRepository(Product).update(base.product.id, { stackable: false });
+
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      palletItems: [
+        { lotCode: 'LW-1', quantity: 10, weightKg: 812.5 },
+        { lotCode: 'LW-2', quantity: 10, weightKg: 934.25 },
+        { lotCode: 'LW-3', quantity: 10 }, // sin peso declarado
+      ],
+    }, USER_ID);
+
+    const pallets = await ds.getRepository(Pallet).find({ order: { code: 'ASC' } });
+    const pesos = pallets.map((p) => p.weightKg).sort((a, b) => (a ?? 0) - (b ?? 0));
+    expect(pesos).toEqual([null, 812.5, 934.25]);
+  });
+
+  it('rechaza una ubicación por pallet inexistente sin escribir nada', async () => {
+    const inexistente = '00000000-0000-0000-0000-0000000000ff';
+
+    await expect(service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      palletItems: [
+        { lotCode: 'LX-1', quantity: 10 },
+        { lotCode: 'LX-2', quantity: 10, locationId: inexistente },
+      ],
+    }, USER_ID)).rejects.toThrow();
+
+    expect(await ds.getRepository(Pallet).count()).toBe(0);
+    expect(await ds.getRepository(Stock).count()).toBe(0);
+  });
+});
+
+describe('motor de stock — liberación de bases', () => {
+  it('sacar un pallet de una pila de tres NO libera la base', async () => {
+    await ds.getRepository(Product).update(base.product.id, { stackable: true, maxStackLevel: 3 });
+
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      palletItems: [
+        { lotCode: 'LR-1', quantity: 10 },
+        { lotCode: 'LR-2', quantity: 10 },
+        { lotCode: 'LR-3', quantity: 10 },
+      ],
+    }, USER_ID);
+
+    const pallets = await ds.getRepository(Pallet).find({ where: { currentLocationId: base.location.id } });
+    expect(new Set(pallets.map((p) => p.pilaId)).size).toBe(1);
+    const pilaId = pallets[0].pilaId!;
+
+    // Despachar UN pallet completo de los tres.
+    await service.create({
+      type: 'EXIT', productId: base.product.id,
+      palletItems: [{ palletId: pallets[0].id, quantity: 10 }],
+    }, USER_ID);
+
+    const pila = await ds.getRepository(Pila).findOne({ where: { id: pilaId } });
+    expect(pila!.status).not.toBe('EMPTY');
+
+    const live = await ds.getRepository(Pallet).count({
+      where: { pilaId, status: Not(In(['EXITED', 'EMPTY'])) },
+    });
+    expect(live).toBe(2);
+  });
+
+  it('la base se libera recién cuando sale el último pallet de la pila', async () => {
+    await ds.getRepository(Product).update(base.product.id, { stackable: true, maxStackLevel: 3 });
+
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      palletItems: [{ lotCode: 'LU-1', quantity: 10 }, { lotCode: 'LU-2', quantity: 10 }],
+    }, USER_ID);
+
+    const pallets = await ds.getRepository(Pallet).find({ where: { currentLocationId: base.location.id } });
+    const pilaId = pallets[0].pilaId!;
+
+    await service.create({
+      type: 'EXIT', productId: base.product.id,
+      palletItems: [{ palletId: pallets[0].id, quantity: 10 }],
+    }, USER_ID);
+    expect((await ds.getRepository(Pila).findOne({ where: { id: pilaId } }))!.status).not.toBe('EMPTY');
+
+    // Sale el último → la base queda libre.
+    await service.create({
+      type: 'EXIT', productId: base.product.id,
+      palletItems: [{ palletId: pallets[1].id, quantity: 10 }],
+    }, USER_ID);
+
+    const pila = await ds.getRepository(Pila).findOne({ where: { id: pilaId } });
+    expect(pila!.status).toBe('EMPTY');
+    expect(pila!.closedAt).toBeTruthy();
+  });
+
+  it('una base liberada vuelve a estar disponible para una entrada nueva', async () => {
+    // Sector de 1 base: se llena, se vacía y se debe poder volver a cargar.
+    const tight = await ds.getRepository(Location).save(
+      ds.getRepository(Location).create({ code: 'REUSE-1', type: 'PISO', warehouse: base.warehouse, active: true, capacityBases: 1 }),
+    );
+    await ds.getRepository(Product).update(base.product.id, { stackable: false });
+
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: tight.id,
+      palletItems: [{ lotCode: 'LV-1', quantity: 10 }],
+    }, USER_ID);
+
+    const [pallet] = await ds.getRepository(Pallet).find({ where: { currentLocationId: tight.id } });
+    await service.create({
+      type: 'EXIT', productId: base.product.id,
+      palletItems: [{ palletId: pallet.id, quantity: 10 }],
+    }, USER_ID);
+
+    // Con la base liberada, la entrada nueva entra sin error de capacidad.
+    await expect(service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: tight.id,
+      palletItems: [{ lotCode: 'LV-2', quantity: 10 }],
+    }, USER_ID)).resolves.toBeDefined();
   });
 });

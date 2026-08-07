@@ -153,3 +153,46 @@ describe('slotting — recommend', () => {
     expect(res.message).toBeTruthy();
   });
 });
+
+describe('estructura — Sector-Subsector único', () => {
+  it('rechaza crear dos ubicaciones con el mismo Sector-Subsector', async () => {
+    await service.create({
+      warehouseId: warehouse.id, code: 'B-B2', aisle: 'B', rack: 'B2', capacityBases: 10,
+    });
+
+    // Código distinto, pero mismo subsector → serían dos celdas "B2" idénticas.
+    await expect(service.create({
+      warehouseId: warehouse.id, code: 'B-B22', aisle: 'B', rack: 'B2', capacityBases: 13,
+    })).rejects.toThrow(/subsector B-B2 ya existe/i);
+  });
+
+  it('normaliza a mayúsculas: "b2" choca con "B2"', async () => {
+    await service.create({ warehouseId: warehouse.id, code: 'C-C1', aisle: 'C', rack: 'C1' });
+    await expect(service.create({
+      warehouseId: warehouse.id, code: 'C-OTRO', aisle: 'c', rack: 'c1',
+    })).rejects.toThrow(/ya existe/i);
+  });
+
+  it('permite el mismo subsector en sectores distintos', async () => {
+    await service.create({ warehouseId: warehouse.id, code: 'D-1', aisle: 'D', rack: '1' });
+    await expect(
+      service.create({ warehouseId: warehouse.id, code: 'E-1', aisle: 'E', rack: '1' }),
+    ).resolves.toBeDefined();
+  });
+
+  it('editar una ubicación no choca consigo misma', async () => {
+    const loc = await service.create({
+      warehouseId: warehouse.id, code: 'F-F1', aisle: 'F', rack: 'F1', capacityBases: 5,
+    });
+    await expect(
+      service.update(loc.id, { aisle: 'F', rack: 'F1', capacityBases: 20 }),
+    ).resolves.toBeDefined();
+  });
+
+  it('editar hacia un subsector ya tomado se rechaza', async () => {
+    await service.create({ warehouseId: warehouse.id, code: 'G-G1', aisle: 'G', rack: 'G1' });
+    const otra = await service.create({ warehouseId: warehouse.id, code: 'G-G2', aisle: 'G', rack: 'G2' });
+
+    await expect(service.update(otra.id, { rack: 'G1' })).rejects.toThrow(/ya existe/i);
+  });
+});

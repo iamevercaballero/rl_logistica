@@ -3,11 +3,11 @@ import { api } from "./client";
 export type AttachmentCategory = "CAMION" | "PALLET" | "REMITO" | "OTRO";
 export type AttachmentEntityType = "MOVEMENT" | "DOCUMENT" | "ADJUSTMENT" | "VEHICLE";
 
-export const ATTACHMENT_CATEGORIES: { value: AttachmentCategory; label: string; icon: string }[] = [
-  { value: "REMITO",  label: "MIC/Factura/Remito", icon: "📄" },
-  { value: "CAMION",  label: "Camión / Transporte", icon: "🚛" },
-  { value: "PALLET",  label: "Pallet / Mercadería",  icon: "📦" },
-  { value: "OTRO",    label: "Otro",                icon: "📎" },
+export const ATTACHMENT_CATEGORIES: { value: AttachmentCategory; label: string }[] = [
+  { value: "REMITO",  label: "MIC/Factura/Remito" },
+  { value: "CAMION",  label: "Camión / Transporte" },
+  { value: "PALLET",  label: "Pallet / Mercadería" },
+  { value: "OTRO",    label: "Otro" },
 ];
 
 export type Attachment = {

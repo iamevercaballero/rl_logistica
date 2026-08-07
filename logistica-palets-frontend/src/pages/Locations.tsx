@@ -357,7 +357,7 @@ function LocationDrawer({
               {loc?.code ?? "…"}
             </h3>
             <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--muted)" }}>
-              {zoneMeta(loc?.zone) ? `${zoneMeta(loc?.zone)!.icon} ${zoneMeta(loc?.zone)!.label}` : "Sin zona"}
+              {zoneMeta(loc?.zone) ? `${zoneMeta(loc?.zone)!.label}` : "Sin zona"}
               {loc?.aisle && <> · Sector {loc.aisle}</>}
               {loc?.rack && <> · {loc.rack}</>}
               {loc?.warehouseName && <> · {loc.warehouseName}</>}
@@ -928,7 +928,7 @@ export default function LocationsPage() {
                     onClick={() => setZoneFilter(z.zone)}
                     style={{ fontSize: 12, padding: "4px 12px", background: zoneFilter === z.zone ? "var(--primary)" : undefined, color: zoneFilter === z.zone ? "#fff" : undefined }}
                   >
-                    {meta ? `${meta.icon} ${meta.label}` : z.zone === "SIN_ZONA" ? "Sin zona" : z.zone}
+                    {meta ? `${meta.label}` : z.zone === "SIN_ZONA" ? "Sin zona" : z.zone}
                     {" "}({z.free} libre{z.free !== 1 ? "s" : ""})
                   </button>
                 );

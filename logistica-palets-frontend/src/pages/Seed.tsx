@@ -189,7 +189,7 @@ export default function SeedPage() {
               onClick={handleReset}
               disabled={loading || resetting}
             >
-              {resetting ? "Eliminando..." : "🗑 Eliminar todos los datos"}
+              {resetting ? "Eliminando..." : " Eliminar todos los datos"}
             </button>
           </div>
         </div>

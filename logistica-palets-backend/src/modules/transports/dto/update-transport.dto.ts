@@ -24,6 +24,12 @@ export class UpdateTransportDto {
   @MaxLength(60)
   type?: string;
 
+  /** Transportadora (empresa) — se copia al remito al elegir el vehículo. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  carrier?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(200)

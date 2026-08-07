@@ -8,13 +8,13 @@ export type LocationZone =
   | "CUARENTENA"
   | "DEVOLUCIONES";
 
-export const LOCATION_ZONES: { value: LocationZone; label: string; icon: string }[] = [
-  { value: "RECEPCION",      label: "Recepción",      icon: "📥" },
-  { value: "ALMACENAMIENTO", label: "Almacenamiento", icon: "📦" },
-  { value: "PICKING",        label: "Picking",        icon: "🛒" },
-  { value: "DESPACHO",       label: "Despacho",       icon: "🚚" },
-  { value: "CUARENTENA",     label: "Cuarentena",     icon: "⛔" },
-  { value: "DEVOLUCIONES",   label: "Devoluciones",   icon: "↩️" },
+export const LOCATION_ZONES: { value: LocationZone; label: string }[] = [
+  { value: "RECEPCION",      label: "Recepción" },
+  { value: "ALMACENAMIENTO", label: "Almacenamiento" },
+  { value: "PICKING",        label: "Picking" },
+  { value: "DESPACHO",       label: "Despacho" },
+  { value: "CUARENTENA",     label: "Cuarentena" },
+  { value: "DEVOLUCIONES",   label: "Devoluciones" },
 ];
 
 export function zoneMeta(zone?: string | null) {
@@ -374,8 +374,9 @@ export async function updateLocation(id: string, payload: Partial<{
   type: string;
   aisle: string;
   rack: string;
-  capacityBases: number;
-  defaultMaxStackLevel: number;
+  /** `null` vuelve la capacidad a "sin límite" (omitirla significa "no tocar"). */
+  capacityBases: number | null;
+  defaultMaxStackLevel: number | null;
   active: boolean;
 }>) {
   const { data } = await api.patch<Location>(`/locations/${id}`, payload);

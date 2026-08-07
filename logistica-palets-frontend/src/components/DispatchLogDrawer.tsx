@@ -18,27 +18,21 @@ interface Props {
   onClose: () => void;
 }
 
-const EVENT_ICONS: Record<string, string> = {
-  CREADO:               "🟢",
-  EDITADO:              "✏️",
-  FOTO_ADJUNTADA:       "📎",
-  ARCHIVO_ELIMINADO:    "🗑️",
-  ENVIADO_APROBACION:   "📤",
-  APROBADO:             "✅",
-  RECHAZADO:            "❌",
-  ANULACION_SOLICITADA: "⊘",
-  ANULADO:              "🔴",
-  NOTA_IMPRESA:         "🖨️",
-  INSPECCION:           "🔍",
-};
-
-function fileIcon(mimeType: string): string {
-  if (mimeType.startsWith("image/")) return "🖼️";
-  if (mimeType.includes("pdf"))      return "📄";
-  if (mimeType.includes("word"))     return "📝";
-  if (mimeType.includes("excel") || mimeType.includes("spreadsheet")) return "📊";
-  return "📎";
+/** Etiqueta corta del tipo de archivo — se muestra como texto, no como emoji. */
+function fileKind(mimeType: string): string {
+  if (mimeType.startsWith("image/")) return "IMG";
+  if (mimeType.includes("pdf"))      return "PDF";
+  if (mimeType.includes("word"))     return "DOC";
+  if (mimeType.includes("excel") || mimeType.includes("spreadsheet")) return "XLS";
+  return "ARCH";
 }
+
+/** Estilo del chip de tipo de archivo (mismo look en bitácora, remitos y flota). */
+const fileKindChip: React.CSSProperties = {
+  fontSize: 10, fontWeight: 700, fontFamily: "monospace", letterSpacing: 0.3,
+  color: "var(--muted)", border: "1px solid var(--border)", borderRadius: 4,
+  padding: "2px 5px", flexShrink: 0,
+};
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -111,11 +105,11 @@ export default function DispatchLogDrawer({ entityType, entityId, title, onClose
                   const cat = ATTACHMENT_CATEGORIES.find((c) => c.value === a.category);
                   return (
                     <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)" }}>
-                      <span style={{ fontSize: 20 }}>{fileIcon(a.mimeType)}</span>
+                      <span style={fileKindChip}>{fileKind(a.mimeType)}</span>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: 700, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</div>
                         <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                          {cat?.icon} {cat?.label} · {a.originalName} · {formatBytes(a.fileSize)}
+                          {cat?.label} · {a.originalName} · {formatBytes(a.fileSize)}
                         </div>
                         <div style={{ fontSize: 11, color: "var(--muted)" }}>
                           {new Date(a.createdAt).toLocaleDateString("es-PY", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
@@ -167,7 +161,7 @@ export default function DispatchLogDrawer({ entityType, entityId, title, onClose
                     <div key={ev.id} style={{ display: "flex", gap: 12, paddingBottom: idx < events.length - 1 ? 16 : 0, position: "relative" }}>
                       {/* Ícono del evento */}
                       <div style={{ width: 32, height: 32, borderRadius: "50%", background: "var(--panel)", border: "2px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, flexShrink: 0, zIndex: 1 }}>
-                        {EVENT_ICONS[ev.eventType] ?? "●"}
+                        ●
                       </div>
                       <div style={{ flex: 1, paddingTop: 4 }}>
                         <div style={{ fontSize: 13, fontWeight: 600 }}>{ev.description}</div>

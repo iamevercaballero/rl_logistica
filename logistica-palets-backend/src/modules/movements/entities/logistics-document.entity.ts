@@ -73,6 +73,10 @@ export class LogisticsDocument {
   @Column({ type: 'varchar', length: 120, nullable: true })
   driver?: string | null;
 
+  /** CI del chofer — se imprime en la nota de entrada/entrega. */
+  @Column({ type: 'varchar', length: 40, nullable: true })
+  driverDocument?: string | null;
+
   /** Chapa / patente del vehículo. */
   @Column({ type: 'varchar', length: 30, nullable: true })
   vehiclePlate?: string | null;

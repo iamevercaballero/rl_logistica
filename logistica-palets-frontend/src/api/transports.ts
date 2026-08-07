@@ -3,11 +3,11 @@ import type { LogisticsDocument } from "./movements";
 
 export type TransportStatus = "DISPONIBLE" | "EN_RUTA" | "MANTENIMIENTO" | "FUERA_DE_SERVICIO";
 
-export const TRANSPORT_STATUSES: { value: TransportStatus; label: string; icon: string; color: string }[] = [
-  { value: "DISPONIBLE",        label: "Disponible",        icon: "🟢", color: "var(--success)" },
-  { value: "EN_RUTA",           label: "En ruta",           icon: "🚚", color: "var(--primary)" },
-  { value: "MANTENIMIENTO",     label: "Mantenimiento",     icon: "🔧", color: "var(--warning)" },
-  { value: "FUERA_DE_SERVICIO", label: "Fuera de servicio", icon: "⛔", color: "var(--danger)" },
+export const TRANSPORT_STATUSES: { value: TransportStatus; label: string; color: string }[] = [
+  { value: "DISPONIBLE",        label: "Disponible", color: "var(--success)" },
+  { value: "EN_RUTA",           label: "En ruta", color: "var(--primary)" },
+  { value: "MANTENIMIENTO",     label: "Mantenimiento", color: "var(--warning)" },
+  { value: "FUERA_DE_SERVICIO", label: "Fuera de servicio", color: "var(--danger)" },
 ];
 
 export function transportStatusMeta(status?: string | null) {
@@ -29,6 +29,8 @@ export type Transport = {
   id: string;
   plate: string;
   type: string;
+  /** Transportadora (empresa) — se copia al remito al elegir el vehículo. */
+  carrier?: string | null;
   description?: string;
   status: TransportStatus | string;
   capacityPallets?: number | null;
@@ -41,6 +43,7 @@ export type Transport = {
 export type TransportPayload = {
   plate?: string;
   type?: string;
+  carrier?: string;
   description?: string;
   status?: TransportStatus;
   capacityPallets?: number;

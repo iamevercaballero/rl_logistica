@@ -294,9 +294,9 @@ function MovementRow({ movement: m, onEdit, onVoid, onLog, voiding }: {
           </div>
           <div style={{ fontSize: 11, color: "var(--muted)" }}>{m.material.unitOfMeasure ?? "unid."}</div>
         </div>
-        <button className="btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={(e) => { e.stopPropagation(); onLog(); }} title="Ver bitácora y adjuntos">📎</button>
+        <button className="btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={(e) => { e.stopPropagation(); onLog(); }} title="Ver bitácora y adjuntos"></button>
         {!isVoided && (
-          <button className="btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={(e) => { e.stopPropagation(); onEdit(); }}>✏ Editar</button>
+          <button className="btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={(e) => { e.stopPropagation(); onEdit(); }}> Editar</button>
         )}
         {canVoid && (
           <button className="btn" style={{ fontSize: 12, padding: "5px 10px", color: "var(--danger)", whiteSpace: "nowrap" }}

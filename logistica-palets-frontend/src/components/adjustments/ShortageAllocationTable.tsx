@@ -116,7 +116,7 @@ export default function ShortageAllocationTable({
                 <span style={{ fontSize: 12, fontWeight: 600, fontFamily: "monospace", paddingTop: 5 }}>{p.code}</span>
                 <span style={{ fontSize: 12, color: "var(--muted)", paddingTop: 5 }}>{p.currentLocationId ? locationMap[p.currentLocationId] ?? p.currentLocationId.slice(0, 8) : "—"}</span>
                 <span style={{ textAlign: "right", fontSize: 13, paddingTop: 5 }}>{fmt(p.quantity)}</span>
-                <div style={{ display: "grid", gap: 2 }}>
+                <div style={{ display: "grid", gap: 2, minWidth: 0 }}>
                   <input
                     className="input"
                     type="number"
@@ -125,7 +125,7 @@ export default function ShortageAllocationTable({
                     readOnly={readOnly}
                     tabIndex={readOnly ? -1 : undefined}
                     onChange={(e) => onPhysicalChange(p.id, e.target.value)}
-                    style={{ fontSize: 13, padding: "3px 6px", borderColor: !valid ? "var(--danger)" : undefined, opacity: readOnly ? 0.75 : undefined, cursor: readOnly ? "default" : undefined }}
+                    style={{ width: "100%", fontSize: 13, padding: "3px 6px", borderColor: !valid ? "var(--danger)" : undefined, opacity: readOnly ? 0.75 : undefined, cursor: readOnly ? "default" : undefined }}
                     aria-label={`Conteo físico del pallet ${p.code}`}
                   />
                   {canClose && (

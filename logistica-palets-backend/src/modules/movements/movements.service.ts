@@ -368,11 +368,30 @@ export class MovementsService {
       // EXIT sin palletItems usa auto-FEFO: stock se reduce palet a palet después de guardar el movimiento
       let useAutoFefo = false;
 
-      // Ubicación efectiva de cada ítem: la suya propia si el gestor de pallets
-      // la definió, si no la de la línea. Permite repartir un lote entre
-      // sectores sin romper el flujo simple (todos al mismo sector).
-      const itemLocationId = (item: { locationId?: string }): string | null =>
-        item.locationId ?? resolved.locationId ?? null;
+      // Ubicación real de los pallets existentes que referencian los ítems (p.ej.
+      // al restaurar cantidad a un pallet ya EXITED, corrigiendo una salida): sin
+      // esto, si el movimiento no trae depósito/ubicación propios —como CUALQUIER
+      // salida, que nunca los pide— el aumento de stock cae en un balde sin
+      // ubicación mientras el pallet físico queda con el saldo en su sector real,
+      // y el localizador reporta una diferencia fantasma en esa ubicación.
+      const palletIdsForLocation = [...new Set(
+        (dto.palletItems ?? []).map((i) => i.palletId).filter((v): v is string => !!v),
+      )];
+      const palletLocationById = new Map<string, string | null>();
+      if (palletIdsForLocation.length) {
+        const referenced = await manager.getRepository(Pallet).find({ where: { id: In(palletIdsForLocation) } });
+        for (const p of referenced) palletLocationById.set(p.id, p.currentLocationId ?? null);
+      }
+
+      // Ubicación efectiva de cada ítem: la suya propia si el gestor de pallets la
+      // definió; si no, pero el ítem apunta a un pallet existente, la de ese pallet;
+      // si no, la de la línea.
+      const itemLocationId = (item: { locationId?: string; palletId?: string }): string | null => {
+        if (item.locationId) return item.locationId;
+        const palletLoc = item.palletId ? palletLocationById.get(item.palletId) : undefined;
+        if (palletLoc) return palletLoc;
+        return resolved.locationId ?? null;
+      };
 
       if (dto.palletItems?.length) {
         // ENTRY/ADJUSTMENT_IN: aumentar stock ahora, **por ubicación**.
@@ -865,11 +884,21 @@ export class MovementsService {
       ...movements.map((m) => m.lotId).filter(Boolean),
       ...details.map((d) => d.lotId).filter(Boolean),
     ])] as string[];
+    const palletIds = [...new Set(details.map((d) => d.palletId).filter(Boolean))] as string[];
+
+    // Depósito real de una SALIDA: el remito no lo pide (el producto puede salir
+    // de pallets en distintas ubicaciones), así que la nota lo deriva de dónde
+    // salió cada pallet — la ubicación que ya se guarda por línea en el detalle.
+    const detailLocationIds = [...new Set(details.map((d) => d.locationId).filter(Boolean))] as string[];
+    const locations = detailLocationIds.length
+      ? await this.dataSource.getRepository(Location).findByIds(detailLocationIds)
+      : [];
+
     const warehouseIds = [...new Set([
       document.warehouseId,
       ...movements.flatMap((m) => [m.warehouseId, m.toWarehouseId, m.fromWarehouseId]).filter(Boolean),
+      ...locations.map((l) => l.warehouse?.id),
     ].filter((v): v is string => !!v))];
-    const palletIds = [...new Set(details.map((d) => d.palletId).filter(Boolean))] as string[];
 
     const [products, lots, warehouses, pallets] = await Promise.all([
       productIds.length ? this.dataSource.getRepository(Product).findByIds(productIds) : Promise.resolve([] as Product[]),
@@ -878,7 +907,7 @@ export class MovementsService {
       palletIds.length ? this.dataSource.getRepository(Pallet).findByIds(palletIds) : Promise.resolve([] as Pallet[]),
     ]);
 
-    return { document, movements, details, products, lots, warehouses, pallets };
+    return { document, movements, details, products, lots, warehouses, pallets, locations };
   }
 
   /**
@@ -1641,6 +1670,19 @@ export class MovementsService {
     if (dto.type === 'TRANSFER' && dto.fromLocationId === dto.toLocationId) {
       throw new BadRequestException('Origen y destino no pueden ser la misma ubicación');
     }
+
+    // Fecha de vencimiento obligatoria en toda entrada — salvo las provisorias
+    // (carga inicial con datos incompletos), que se completan después al
+    // regularizar. Se valida acá, no solo en el formulario, para que no se
+    // pueda saltear pegándole directo a la API.
+    if (dto.type === 'ENTRY' && !dto.isProvisional && dto.palletItems?.length) {
+      const missing = dto.palletItems.find((i) => i.lotCode && !i.fechaVencimiento);
+      if (missing) {
+        throw new BadRequestException(
+          `Falta la fecha de vencimiento del lote "${missing.lotCode}" — es obligatoria para registrar una entrada.`,
+        );
+      }
+    }
   }
 
   private async resolveLocationsAndWarehouses(manager: EntityManager, dto: CreateMovementDto) {
@@ -1740,6 +1782,11 @@ export class MovementsService {
   ): Promise<Lot> {
     const repo = manager.getRepository(Lot);
     lotCode = normalizeLotCode(lotCode);
+    // El formulario de Entrada no tiene un campo propio para "lote proveedor" —
+    // por defecto es el mismo código de lote que se cargó. `supplierLot` sigue
+    // existiendo aparte por si algún día se necesita distinguirlo (el caller que
+    // lo pase explícito gana).
+    const effectiveSupplierLot = supplierLot ?? lotCode;
     let lot = await repo.findOne({ where: { productId, lotCode } });
     if (!lot) {
       lot = repo.create({
@@ -1748,7 +1795,7 @@ export class MovementsService {
         fechaFabricacion: fechaFabricacion ?? null,
         proveedor: proveedor ?? null,
         sapLot: sapLot ?? null,
-        supplierLot: supplierLot ?? null,
+        supplierLot: effectiveSupplierLot,
         stockActual: 0,
         status,
       });
@@ -1759,7 +1806,7 @@ export class MovementsService {
       if (proveedor && !lot.proveedor) { lot.proveedor = proveedor; changed = true; }
       if (fechaFabricacion && !lot.fechaFabricacion) { lot.fechaFabricacion = fechaFabricacion; changed = true; }
       if (sapLot && !lot.sapLot) { lot.sapLot = sapLot; changed = true; }
-      if (supplierLot && !lot.supplierLot) { lot.supplierLot = supplierLot; changed = true; }
+      if (!lot.supplierLot) { lot.supplierLot = effectiveSupplierLot; changed = true; }
       if (changed) lot = await repo.save(lot);
     }
     return lot;

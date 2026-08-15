@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { getDocumentForPrint, type DocumentPrintData, type PrintProduct, type PrintLot, type PrintWarehouse, type PrintPallet, type RawMovement } from "../api/movements";
+import { getDocumentForPrint, type DocumentPrintData, type PrintProduct, type PrintLot, type PrintWarehouse, type PrintPallet, type PrintLocation, type RawMovement } from "../api/movements";
 
 function fmt(date?: string | null): string {
   if (!date) return "—";
@@ -16,7 +16,25 @@ function buildMaps(data: DocumentPrintData) {
   const lotMap: Record<string, PrintLot> = Object.fromEntries(data.lots.map((l) => [l.id, l]));
   const warehouseMap: Record<string, PrintWarehouse> = Object.fromEntries(data.warehouses.map((w) => [w.id, w]));
   const palletMap: Record<string, PrintPallet> = Object.fromEntries(data.pallets.map((p) => [p.id, p]));
-  return { productMap, lotMap, warehouseMap, palletMap };
+  const locationMap: Record<string, PrintLocation> = Object.fromEntries(data.locations.map((l) => [l.id, l]));
+  return { productMap, lotMap, warehouseMap, palletMap, locationMap };
+}
+
+/**
+ * Nombre del depósito para el encabezado. La entrada sí pide Depósito y queda
+ * en `document.warehouseId`; la salida no lo pide (los pallets pueden salir de
+ * ubicaciones distintas), así que ahí se deriva de dónde salió cada pallet —
+ * la ubicación que ya se guarda por línea en `details`.
+ */
+function resolveWarehouseName(data: DocumentPrintData): string {
+  const { warehouseMap, locationMap } = buildMaps(data);
+  if (data.document.warehouseId) return warehouseMap[data.document.warehouseId]?.name ?? "—";
+  const names = [...new Set(
+    data.details
+      .map((d) => (d.locationId ? locationMap[d.locationId]?.warehouse?.name : null))
+      .filter((v): v is string => !!v),
+  )];
+  return names.length > 0 ? names.join(", ") : "—";
 }
 
 export default function PrintDocumentPage() {
@@ -59,10 +77,9 @@ export default function PrintDocumentPage() {
   }
 
   const { document } = data;
-  const { warehouseMap } = buildMaps(data);
   const isEntry = document.type === "ENTRY";
   const docTypeLabel = isEntry ? "NOTA DE ENTRADA" : "NOTA DE ENTREGA";
-  const warehouseName = document.warehouseId ? (warehouseMap[document.warehouseId]?.name ?? "—") : "—";
+  const warehouseName = resolveWarehouseName(data);
   const totalQty  = lines.reduce((s, l) => s + l.movement.quantity, 0);
   const totalPallets = lines.reduce((s, l) => s + l.palletCount, 0);
 

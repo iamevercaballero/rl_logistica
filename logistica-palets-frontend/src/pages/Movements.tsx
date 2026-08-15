@@ -718,6 +718,8 @@ export default function MovementsPage() {
     if (isEntry) {
       const validGroups = lotGroups.filter((g) => g.lotCode.trim() && Number(g.quantity) > 0);
       if (validGroups.length === 0) return { error: "Agregá al menos un lote con código y cantidad." };
+      const missingVenc = validGroups.find((g) => !g.fechaVencimiento);
+      if (missingVenc) return { error: `Lote ${missingVenc.lotCode.trim()}: falta la fecha de vencimiento.` };
       // Validación WMS: la suma por pallet debe coincidir con el total del lote.
       for (const g of validGroups) {
         if (g.palletLines.length > 0) {
@@ -1627,7 +1629,7 @@ export default function MovementsPage() {
                           onChange={(e) => updateGroup(group.id, "lotCode", e.target.value)} style={{ fontSize: 13, fontWeight: 700 }} />
                       </div>
                       <div>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 2 }}>F. Vencimiento</div>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: "var(--danger)", textTransform: "uppercase", marginBottom: 2 }}>F. Vencimiento *</div>
                         <input className="input" type="date" value={group.fechaVencimiento}
                           onChange={(e) => updateGroup(group.id, "fechaVencimiento", e.target.value)} style={{ fontSize: 12, padding: "5px 6px" }} />
                       </div>

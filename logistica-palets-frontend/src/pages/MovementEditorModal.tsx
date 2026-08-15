@@ -559,13 +559,15 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                           </div>
                         </div>
 
-                        {/* Pallets del lote */}
+                        {/* Pallets del lote. El peso es un dato de ENTRADA (se imprime en la
+                            etiqueta al recibir la mercadería) — en una salida el pallet ya
+                            existe con su peso cargado, no hay nada que pesar de nuevo acá. */}
                         <div style={{ padding: "8px 12px" }}>
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 100px 110px 110px", gap: 8, padding: "2px 0 6px", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>
+                          <div style={{ display: "grid", gridTemplateColumns: isExit ? "1fr 100px 110px" : "1fr 100px 110px 110px", gap: 8, padding: "2px 0 6px", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>
                             <span>Pallet</span>
                             <span style={{ textAlign: "right" }}>{isExit ? "Salió" : "Actual"}</span>
                             <span>{isExit ? "Cantidad correcta" : "Nueva cantidad"}</span>
-                            <span>Peso (kg)</span>
+                            {!isExit && <span>Peso (kg)</span>}
                           </div>
                           <div style={{ display: "grid", gap: 4 }}>
                             {activePallets.map((p) => {
@@ -576,7 +578,7 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                               const valid = raw.trim() !== "" && Number.isInteger(n) && n >= 0 && n <= max;
                               const reduced = valid && n < base;
                               return (
-                                <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1fr 100px 110px 110px", gap: 8, alignItems: "center" }}>
+                                <div key={p.id} style={{ display: "grid", gridTemplateColumns: isExit ? "1fr 100px 110px" : "1fr 100px 110px 110px", gap: 8, alignItems: "center" }}>
                                   <span style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                     {p.code}
                                     {p.status === "PARTIAL" && <span className="badge badge--estado-pendiente" style={{ fontSize: 9, marginLeft: 6 }}>PARCIAL</span>}
@@ -601,30 +603,32 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                                     }}
                                     aria-label={`${isExit ? "Cantidad correcta" : "Nueva cantidad"} del pallet ${p.code}`}
                                   />
-                                  {/* Peso: dato descriptivo, se aplica directo y queda auditado. */}
-                                  <input
-                                    className="input"
-                                    type="number"
-                                    min={0}
-                                    step="0.01"
-                                    placeholder="—"
-                                    value={edit.weights[p.id] ?? ""}
-                                    onChange={(e) => updateLotWeight(l, p.id, e.target.value)}
-                                    style={{ fontSize: 13, padding: "4px 8px" }}
-                                    aria-label={`Peso del pallet ${p.code}`}
-                                  />
+                                  {/* Peso: dato descriptivo, se aplica directo y queda auditado. Solo entradas. */}
+                                  {!isExit && (
+                                    <input
+                                      className="input"
+                                      type="number"
+                                      min={0}
+                                      step="0.01"
+                                      placeholder="—"
+                                      value={edit.weights[p.id] ?? ""}
+                                      onChange={(e) => updateLotWeight(l, p.id, e.target.value)}
+                                      style={{ fontSize: 13, padding: "4px 8px" }}
+                                      aria-label={`Peso del pallet ${p.code}`}
+                                    />
+                                  )}
                                 </div>
                               );
                             })}
                             {exitedPallets.map((p) => (
-                              <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1fr 100px 110px 110px", gap: 8, alignItems: "center", opacity: 0.55 }}>
+                              <div key={p.id} style={{ display: "grid", gridTemplateColumns: isExit ? "1fr 100px 110px" : "1fr 100px 110px 110px", gap: 8, alignItems: "center", opacity: 0.55 }}>
                                 <span style={{ fontFamily: "monospace", fontSize: 12 }}>
                                   {p.code}
                                   <span className="badge" style={{ fontSize: 9, marginLeft: 6, background: "var(--muted)", color: "#fff" }}>DESPACHADO</span>
                                 </span>
                                 <span style={{ textAlign: "right", fontSize: 12, color: "var(--muted)" }} title={`Ingresó con ${p.quantityInMovement.toLocaleString("es-PY")} unid.`}>—</span>
                                 <span style={{ fontSize: 11, color: "var(--muted)" }}>No editable</span>
-                                <span style={{ fontSize: 11, color: "var(--muted)" }}>{p.weightKg != null ? `${p.weightKg} kg` : "—"}</span>
+                                {!isExit && <span style={{ fontSize: 11, color: "var(--muted)" }}>{p.weightKg != null ? `${p.weightKg} kg` : "—"}</span>}
                               </div>
                             ))}
                             {activePallets.length === 0 && exitedPallets.length === 0 && (

@@ -217,6 +217,7 @@ export async function getDocument(id: string): Promise<{
 export type PrintProduct = { id: string; code: string; description: string; unitOfMeasure?: string | null };
 export type PrintLot = { id: string; lotCode: string; productId: string; fechaVencimiento?: string | null; fechaFabricacion?: string | null; sapLot?: string | null };
 export type PrintWarehouse = { id: string; name: string };
+export type PrintLocation = { id: string; code: string; warehouse?: { id: string; name: string } | null };
 export type PrintPallet = { id: string; code: string; quantity: number; lotId: string; weightKg?: number | null };
 export type PrintDetail = { id: string; movementId: string; palletId?: string | null; lotId?: string | null; locationId?: string | null; quantity: number };
 
@@ -247,6 +248,7 @@ export type DocumentPrintData = {
   lots: PrintLot[];
   warehouses: PrintWarehouse[];
   pallets: PrintPallet[];
+  locations: PrintLocation[];
 };
 
 export async function getDocumentForPrint(id: string): Promise<DocumentPrintData> {

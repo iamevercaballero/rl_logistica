@@ -47,3 +47,7 @@ caddy_config/
 coverage/
 .nyc_output/
 
+# Adjuntos subidos por usuarios (el backend crea el directorio en runtime y
+# en Docker lo cubre un volumen; nunca deben versionarse)
+uploads/
+

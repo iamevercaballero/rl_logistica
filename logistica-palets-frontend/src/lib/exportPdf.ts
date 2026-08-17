@@ -6,6 +6,7 @@ import type { StockItemRow, ReportMovementRow, DailyStockRow, ReportTraceEvent }
 import type { PalletHistoryEvent } from "../api/pallets";
 import type { Movement } from "../api/movements";
 import type { Lot } from "../api/lots";
+import { buildSalidasExportRows, DOCUMENTO_MATERIAL_PENDING } from "./salidasExportRows";
 
 /* ── Constants ────────────────────────────────────────────────────────────── */
 
@@ -257,52 +258,51 @@ export function exportSalidasPDF(data: Movement[], filename = "salidas"): void {
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const startY = addDocHeader(doc, "Reporte de Salidas");
 
-  const body: (string | number)[][] = [];
-  for (const m of data) {
-    const lots = (m.lotsDetail && m.lotsDetail.length > 0)
-      ? m.lotsDetail
-      : [{ lotCode: m.lotCode ?? null, sapLot: m.sapLot ?? null, pallets: m.pallets ?? null, quantity: m.quantity }];
-
-    for (const ld of lots) {
-      body.push([
-        fmtDateTime(m.createdAt ?? m.date),
-        `${m.material.code} · ${m.material.description}`,
-        ld.lotCode ?? "-",
-        ld.sapLot ?? "-",
-        `${ld.quantity.toLocaleString("es-PY")} ${m.material.unitOfMeasure ?? ""}`.trim(),
-        ld.pallets != null ? String(ld.pallets) : "-",
-        `${m.warehouse?.name ?? m.from?.warehouseName ?? "-"}${(m.location?.code ?? m.from?.locationCode) ? ` / ${m.location?.code ?? m.from?.locationCode}` : ""}`,
-        m.destination ?? "-",
-        m.carrier ?? "-",
-        m.driver ?? "-",
-        m.notes ?? "-",
-        m.voidStatus === "VOIDED" ? "Anulado" : "Normal",
-      ]);
-    }
-  }
+  const body: (string | number)[][] = buildSalidasExportRows(data).map((item) => [
+    item.fecha,
+    item.material,
+    item.lote,
+    item.sapLot,
+    item.documentoMaterial,
+    `${item.quantity.toLocaleString("es-PY")} ${item.unit}`.trim(),
+    String(item.pallets),
+    item.desde,
+    item.destino,
+    item.carrier,
+    item.driver,
+    item.notes,
+    item.estado,
+  ]);
 
   autoTable(doc, {
     ...baseStyles,
     startY,
     margin: { left: 10, right: 10 },
-    head: [["Fecha y hora", "Material", "Lote", "Lote SAP", "Cantidad", "Pal.", "Desde", "Destino", "Transportista", "Chofer", "Notas", "Estado"]],
+    head: [["Fecha y hora", "Material", "Lote", "Lote SAP", "Documento Material", "Cantidad", "Pal.", "Desde", "Destino", "Transportista", "Chofer", "Notas", "Estado"]],
     body,
     columnStyles: {
-      0: { cellWidth: 22 },
-      1: { cellWidth: 48 },
-      2: { cellWidth: 18 },
-      3: { cellWidth: 18 },
-      4: { halign: "right", cellWidth: 18 },
-      5: { halign: "center", cellWidth: 10 },
-      6: { cellWidth: 30 },
-      7: { cellWidth: 28 },
-      8: { cellWidth: 24 },
+      0: { cellWidth: 19 },
+      1: { cellWidth: 38 },
+      2: { cellWidth: 15 },
+      3: { cellWidth: 15 },
+      4: { cellWidth: 19 },
+      5: { halign: "right", cellWidth: 16 },
+      6: { halign: "center", cellWidth: 8 },
+      7: { cellWidth: 25 },
+      8: { cellWidth: 23 },
       9: { cellWidth: 20 },
-      10: { cellWidth: 25 },
-      11: { cellWidth: 18 },
+      10: { cellWidth: 17 },
+      11: { cellWidth: 20 },
+      12: { cellWidth: 12 },
     },
     didParseCell: (data) => {
-      if (data.section === "body" && (data.row.raw as (string | number)[])[11] === "Anulado") {
+      const row = data.row.raw as (string | number)[];
+      if (data.section === "body" && data.column.index === 4 && row[4] === DOCUMENTO_MATERIAL_PENDING) {
+        data.cell.styles.fillColor = [254, 249, 195];
+        data.cell.styles.textColor = [146, 64, 14];
+        data.cell.styles.fontStyle = "bold";
+      }
+      if (data.section === "body" && row[12] === "Anulado") {
         data.cell.styles.textColor = [156, 148, 136];
       }
     },

@@ -1,7 +1,6 @@
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
-  IsDateString,
   IsInt,
   IsNumber,
   IsOptional,
@@ -13,6 +12,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import { IsBusinessDateString } from '../../../common/is-business-date-string.validator';
 
 /**
  * Nueva cantidad de un pallet existente del movimiento.
@@ -57,11 +57,11 @@ export class QuantityEditLotDto {
   sapLot?: string;
 
   @IsOptional()
-  @IsDateString()
+  @IsBusinessDateString()
   fechaVencimiento?: string;
 
   @IsOptional()
-  @IsDateString()
+  @IsBusinessDateString()
   fechaFabricacion?: string;
 
   @IsOptional()

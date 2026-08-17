@@ -11,6 +11,7 @@ import {
 } from "../api/movements";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
+import { formatDateOnly } from "../utils/dateFormat";
 
 const STATUS_LABELS: Record<StockSnapshotProductStatus, string> = {
   ADJUSTED: "Ajustado",
@@ -333,7 +334,7 @@ export default function StockSnapshotPage() {
                               <li key={i}>
                                 <strong>{l.lotCode}</strong>
                                 {l.sapLot ? ` · SAP ${l.sapLot}` : ""} — {l.quantity.toLocaleString("es-PY")}
-                                {l.fechaVencimiento ? ` — vto. ${l.fechaVencimiento}` : " — sin vto."}
+                                {l.fechaVencimiento ? ` — vto. ${formatDateOnly(l.fechaVencimiento)}` : " — sin vto."}
                               </li>
                             ))}
                           </ul>

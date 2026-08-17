@@ -5,6 +5,7 @@ import { DataSource, Repository } from 'typeorm';
 import { AlertRule } from './entities/alert-rule.entity';
 import { CreateAlertRuleDto } from './dto/create-alert-rule.dto';
 import { EventsGateway } from '../events/events.gateway';
+import { businessDaysUntil, businessToday, shiftBusinessDate } from '../../common/date';
 
 /* ── Active alert types ────────────────────────────────────────────────────── */
 
@@ -146,9 +147,12 @@ export class AlertsService {
   }
 
   private async evaluateExpiryAlerts(): Promise<ActiveAlert[]> {
-    const now = new Date();
-    const in15 = new Date(now); in15.setDate(in15.getDate() + 15);
-    const in60 = new Date(now); in60.setDate(in60.getDate() + 60);
+    // fechaVencimiento es fecha calendario: los umbrales y la comparación se
+    // hacen en "YYYY-MM-DD", nunca con un Date real — comparar contra un
+    // instante desalinea el resultado según la zona del proceso/servidor.
+    const today = businessToday();
+    const in15 = shiftBusinessDate(today, 15);
+    const in60 = shiftBusinessDate(today, 60);
 
     const rows: Array<{
       id: string;
@@ -169,13 +173,12 @@ export class AlertsService {
       ORDER BY l."fechaVencimiento" ASC
       LIMIT 50
       `,
-      [in60, now],
+      [in60, today],
     );
 
     return rows.map((r) => {
-      const expDate = new Date(r.fechaVencimiento);
-      const daysLeft = Math.round((expDate.getTime() - now.getTime()) / 86_400_000);
-      const isCritical = expDate <= in15;
+      const daysLeft = businessDaysUntil(r.fechaVencimiento, today)!;
+      const isCritical = r.fechaVencimiento <= in15;
       return {
         id: `expiry-${r.id}`,
         type: isCritical ? ('LOT_EXPIRING_CRITICAL' as const) : ('LOT_EXPIRING_WARNING' as const),
@@ -195,8 +198,10 @@ export class AlertsService {
   }
 
   private async evaluateStaleRegularizations(): Promise<ActiveAlert[]> {
-    const cutoff = new Date();
-    cutoff.setHours(cutoff.getHours() - 48);
+    // 48hs de margen real transcurrido — resta directa sobre el instante en
+    // vez de getHours()/setHours() (que pasan por los campos locales del
+    // proceso) para que sea correcto sin depender de razonar sobre DST.
+    const cutoff = new Date(Date.now() - 48 * 3_600_000);
 
     const rows: Array<{ id: string; documentNumber: string | null; date: string }> =
       await this.dataSource.query(

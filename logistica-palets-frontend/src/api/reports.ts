@@ -61,6 +61,7 @@ export type ReportMovementRow = {
   carrier?: string | null;
   driver?: string | null;
   destination?: string | null;
+  documentoMaterial?: string | null;
   notes?: string | null;
   material: {
     id: string;
@@ -87,6 +88,7 @@ export type ReportTraceEvent = {
   documentNumber?: string | null;
   supplier?: string | null;
   destination?: string | null;
+  documentoMaterial?: string | null;
   notes?: string | null;
   voidStatus?: VoidStatus;
   warehouseName?: string | null;

@@ -50,6 +50,11 @@ export class CreateExitDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(80)
+  documentoMaterial?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(500)
   notes?: string;
 

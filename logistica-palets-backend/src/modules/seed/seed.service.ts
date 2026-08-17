@@ -8,6 +8,7 @@ import { Product } from '../products/entities/product.entity';
 import { Lot } from '../lots/entities/lot.entity';
 import { Warehouse } from '../warehouses/entities/warehouse.entity';
 import { Location } from '../locations/entities/location.entity';
+import { businessToday } from '../../common/date';
 
 @Injectable()
 export class SeedService {
@@ -98,7 +99,7 @@ export class SeedService {
   private leerExcel(XLSX: any, excelPath: string, maxMov: number) {
     const wb = XLSX.readFile(excelPath);
     const dateToISO = (serial: any) => {
-      if (!serial || typeof serial !== 'number') return new Date().toISOString().slice(0, 10);
+      if (!serial || typeof serial !== 'number') return businessToday();
       return new Date(Math.round((serial - 25569) * 86400 * 1000)).toISOString().slice(0, 10);
     };
 
@@ -159,7 +160,12 @@ export class SeedService {
 
     let deposito = await wr.findOne({ where: { name: 'DEPÓSITO RL LOGÍSTICA' } });
     if (!deposito) {
-      deposito = await wr.save(wr.create({ name: 'DEPÓSITO RL LOGÍSTICA', address: 'Asunción, Paraguay' }));
+      deposito = await wr.save(wr.create({ name: 'DEPÓSITO RL LOGÍSTICA', documentCode: '01', address: 'Asunción, Paraguay' }));
+    } else if (!deposito.documentCode) {
+      // Este seed conoce explícitamente la identidad operativa de su depósito;
+      // no calcula códigos por posición ni por orden de creación.
+      deposito.documentCode = '01';
+      deposito = await wr.save(deposito);
     }
 
     // Location usa code (no name) y warehouse relation (no warehouseId directo)

@@ -15,7 +15,7 @@ import { useAuth } from "../auth/AuthContext";
 import { canCreate, canDelete } from "../auth/rbac";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
-import { fmtDateTimeLong } from "../utils/dateFormat";
+import { fmtDateLong, fmtDateTimeLong } from "../utils/dateFormat";
 import LocationPicker from "../components/LocationPicker";
 
 /* ── Constants ───────────────────────────────────────────────────────────── */
@@ -468,14 +468,12 @@ function PalletDetailModal({
               <InfoRow label="Cantidad" value={pallet.quantity.toLocaleString("es-PY")} />
               <InfoRow
                 label="Creado"
-                value={pallet.createdAt
-                  ? new Date(pallet.createdAt).toLocaleDateString("es-PY", { day: "2-digit", month: "short", year: "numeric" })
-                  : "—"}
+                value={pallet.createdAt ? fmtDateLong(pallet.createdAt) : "—"}
               />
               {pallet.exitedAt && (
                 <InfoRow
                   label="Despachado"
-                  value={new Date(pallet.exitedAt).toLocaleDateString("es-PY", { day: "2-digit", month: "short", year: "numeric" })}
+                  value={fmtDateLong(pallet.exitedAt)}
                 />
               )}
             </dl>
@@ -494,7 +492,7 @@ function PalletDetailModal({
                 {pallet.fechaVencimiento && (
                   <InfoRow
                     label="Vencimiento"
-                    value={new Date(pallet.fechaVencimiento).toLocaleDateString("es-PY", { day: "2-digit", month: "short", year: "numeric" })}
+                    value={fmtDateLong(pallet.fechaVencimiento)}
                   />
                 )}
               </dl>

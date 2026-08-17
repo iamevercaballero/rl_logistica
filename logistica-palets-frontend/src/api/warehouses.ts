@@ -3,6 +3,7 @@ import { api } from "./client";
 export type Warehouse = {
   id: string;
   name: string;
+  documentCode?: string | null;
   address?: string;
   active: boolean;
 };
@@ -47,10 +48,21 @@ export async function getWarehouseLayout(id: string): Promise<WarehouseLayout> {
 
 export async function createWarehouse(payload: {
   name: string;
+  documentCode: string;
   address?: string;
   active?: boolean;
 }) {
   const { data } = await api.post<Warehouse>("/warehouses", payload);
+  return data;
+}
+
+export async function updateWarehouse(id: string, payload: {
+  name?: string;
+  documentCode?: string;
+  address?: string;
+  active?: boolean;
+}) {
+  const { data } = await api.patch<Warehouse>(`/warehouses/${id}`, payload);
   return data;
 }
 

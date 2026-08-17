@@ -30,6 +30,7 @@ import * as nodemailer from 'nodemailer';
 import { ReportsService } from '../reports/reports.service';
 import { AlertsService } from '../alerts/alerts.service';
 import type { ActiveAlert } from '../alerts/alerts.service';
+import { APP_TIME_ZONE } from '../../common/date';
 
 /* ── Local types ──────────────────────────────────────────────────────────── */
 interface StockRow {
@@ -85,8 +86,8 @@ export class MailService {
     }
   }
 
-  /** 07:00 AM every day */
-  @Cron('0 7 * * *', { name: 'daily-stock-report' })
+  /** 07:00 AM every day, Asunción time — sin `timeZone` el cron corre en la zona del proceso (UTC en producción). */
+  @Cron('0 7 * * *', { name: 'daily-stock-report', timeZone: APP_TIME_ZONE })
   async sendDailyReport(): Promise<void> {
     if (!this.enabled) return;
     if (!this.recipients.length) {
@@ -95,6 +96,7 @@ export class MailService {
     }
 
     const dateStr = new Date().toLocaleDateString('es-PY', {
+      timeZone: APP_TIME_ZONE,
       weekday: 'long',
       year: 'numeric',
       month: 'long',

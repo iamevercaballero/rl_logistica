@@ -24,8 +24,9 @@ import { fefoLots, generateSapLot, type Lot } from "../api/lots";
 import { uploadAttachment, ATTACHMENT_CATEGORIES, type AttachmentCategory } from "../api/attachments";
 import AttachmentUploader from "../components/AttachmentUploader";
 import { listPallets, type LotPallet } from "../api/pallets";
-import { listTransports } from "../api/transports";
+import { listTransports, type Transport, type TransportDriver } from "../api/transports";
 import { listSuppliers, createSupplier } from "../api/suppliers";
+import { createDestination, listDestinations } from "../api/destinations";
 import { listWarehouses } from "../api/warehouses";
 import { listLocations } from "../api/locations";
 import { listActiveUsers } from "../api/users";
@@ -36,7 +37,9 @@ import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { useAuth } from "../auth/AuthContext";
 import { canCreate } from "../auth/rbac";
 import SearchableSelect from "../design-system/SearchableSelect";
-import { todayInputValue } from "../utils/dateFormat";
+import HybridSearchInput from "../design-system/HybridSearchInput";
+import { formatDateOnly, formatDateTimePY, todayInputValue } from "../utils/dateFormat";
+import { responsibleFieldLabel, showsExternalDocumentNumber } from "./movementFormModel";
 
 /**
  * Un pallet físico de la entrada: su cantidad, su peso y su sector destino.
@@ -58,7 +61,6 @@ type CartLine = {
   totalQty: number;
   palletsCount: number;
   summary: string;
-  locationId?: string;
 };
 let _cartKey = 0;
 
@@ -70,6 +72,8 @@ let _pfId = 0;
 type LotGroup = {
   id: number; lotCode: string; quantity: string; palletCount: string;
   palletLines: PalletLine[];
+  /** Valores rápidos del gestor: solo se copian a los pallets al pulsar Aplicar. */
+  bulkLocationId: string; bulkWeightKg: string;
   fechaVencimiento: string; fechaFabricacion: string;
 };
 
@@ -157,6 +161,7 @@ function distributeQty(totalQty: number, count: number, previous: PalletLine[] =
 const newLotGroup = (): LotGroup => ({
   id: ++_gid, lotCode: "", quantity: "", palletCount: "",
   palletLines: [],
+  bulkLocationId: "", bulkWeightKg: "",
   fechaVencimiento: "", fechaFabricacion: "",
 });
 
@@ -177,17 +182,21 @@ export default function MovementsPage() {
     ],
   });
   const warehouses = warehousesQ.data ?? [];
-  const locations = locationsQ.data ?? [];
+  const locations = useMemo(() => locationsQ.data ?? [], [locationsQ.data]);
   const users = usersQ.data ?? [];
   const pending = pendingQ.data ?? [];
 
   // Flota registrada — para elegir vehículo (patente) en el remito
   const transportsQ = useQuery({ queryKey: ["transports"], queryFn: listTransports, staleTime: 60_000 });
-  const transports = transportsQ.data ?? [];
+  const transports = useMemo(() => transportsQ.data ?? [], [transportsQ.data]);
 
   // Catálogo de proveedores para el selector de Entrada
   const suppliersQ = useQuery({ queryKey: ["suppliers"], queryFn: () => listSuppliers(), staleTime: 60_000 });
   const suppliers = suppliersQ.data ?? [];
+
+  // Catálogo reutilizable de destinos. La RLNS guarda aparte el nombre como snapshot.
+  const destinationsQ = useQuery({ queryKey: ["destinations"], queryFn: () => listDestinations(), staleTime: 60_000 });
+  const destinations = destinationsQ.data ?? [];
 
   const [formError, setFormError] = useState("");
 
@@ -226,7 +235,6 @@ export default function MovementsPage() {
   const documents: LogisticsDocument[] = docsQ.data ?? [];
   const [product, setProduct] = useState<Product | null>(null);
   const [warehouseId, setWarehouseId] = useState("");
-  const [locationId, setLocationId] = useState("");
   const [fromLocationId, setFromLocationId] = useState("");
   const [toLocationId, setToLocationId] = useState("");
   const [documentNumber, setDocumentNumber] = useState("");
@@ -239,15 +247,50 @@ export default function MovementsPage() {
   const [driver, setDriver] = useState("");
   const [vehiclePlate, setVehiclePlate] = useState("");
 
-  /** Conductores activos del vehículo elegido — no se pide nada que ya esté en Transportes. */
-  const selectedVehicleDrivers = useMemo(() => {
-    const vehicle = transports.find((t) => t.plate === vehiclePlate);
-    return (vehicle?.drivers ?? []).filter((d) => d.status !== "INACTIVO");
-  }, [transports, vehiclePlate]);
+  /**
+   * Choferes activos de TODA la flota (no solo del vehículo elegido): el
+   * conductor es un campo híbrido independiente, no debe bloquearse a la
+   * espera de que se elija primero el vehículo. Se dedupe por nombre y se
+   * junta la patente de cada vehículo asociado para mostrarla como badge.
+   */
+  const allDrivers = useMemo(() => {
+    const map = new Map<string, TransportDriver & { plates: string[] }>();
+    for (const t of transports) {
+      if (!t.active) continue;
+      for (const d of t.drivers) {
+        if (d.status === "INACTIVO") continue;
+        const key = d.name.trim().toLowerCase();
+        const existing = map.get(key);
+        if (existing) {
+          if (!existing.plates.includes(t.plate)) existing.plates.push(t.plate);
+          if (!existing.document && d.document) existing.document = d.document;
+        } else {
+          map.set(key, { ...d, plates: [t.plate] });
+        }
+      }
+    }
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, "es"));
+  }, [transports]);
+
+  /** Transportadoras conocidas (de la ficha de cada vehículo), para sugerir sin obligar a tipear desde cero. */
+  const carrierOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const t of transports) {
+      if (t.active && t.carrier?.trim()) set.add(t.carrier.trim());
+    }
+    return [...set].sort((a, b) => a.localeCompare(b, "es"));
+  }, [transports]);
   const [destination, setDestination] = useState("");
+  const [documentoMaterial, setDocumentoMaterial] = useState("");
   const [notes, setNotes] = useState("");
   const [encargadoId, setEncargadoId] = useState("");
   const [date, setDate] = useState(todayISO);
+
+  // El backend también lo fuerza por RBAC, pero precargarlo deja visible quién
+  // quedará como responsable antes de confirmar el remito.
+  useEffect(() => {
+    if (user?.userId && !encargadoId) setEncargadoId(user.userId);
+  }, [encargadoId, user?.userId]);
 
   // ENTRADA
   const [entrySapLot, setEntrySapLot] = useState(() => generateSapLot());
@@ -337,7 +380,6 @@ export default function MovementsPage() {
         else toast.error(`Palet "${rawCode.trim()}" no está en la ubicación origen`);
       }, 0);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [toast],
   );
 
@@ -386,12 +428,12 @@ export default function MovementsPage() {
   const palletsByLocation = useMemo(() => {
     const map = new Map<string, number>();
     for (const r of palletRows) {
-      const loc = r.line.locationId || locationId;
+      const loc = r.line.locationId;
       if (!loc) continue;
       map.set(loc, (map.get(loc) ?? 0) + 1);
     }
     return [...map.entries()];
-  }, [palletRows, locationId]);
+  }, [palletRows]);
 
   const placementQueries = useQueries({
     queries: palletsByLocation.map(([locId, count]) => ({
@@ -441,12 +483,12 @@ export default function MovementsPage() {
   const rowNumbersByLocation = useMemo(() => {
     const map = new Map<string, number[]>();
     palletRows.forEach((r, globalIdx) => {
-      const loc = r.line.locationId || locationId;
+      const loc = r.line.locationId;
       if (!loc) return;
       map.set(loc, [...(map.get(loc) ?? []), globalIdx + 1]);
     });
     return map;
-  }, [palletRows, locationId]);
+  }, [palletRows]);
 
   /**
    * Lectura por-fila del plan de colocación de cada sector: a qué pila entra
@@ -478,8 +520,8 @@ export default function MovementsPage() {
   }, [fefoQ.data, fefoEnabled]);
 
   function resetForm() {
-    setProduct(null); setWarehouseId(""); setLocationId(""); setFromLocationId(""); setToLocationId("");
-    setDocumentNumber(""); setSupplier(""); setCarrier(""); setDriver(""); setVehiclePlate(""); setDestination(""); setNotes("");
+    setProduct(null); setWarehouseId(""); setFromLocationId(""); setToLocationId("");
+    setDocumentNumber(""); setSupplier(""); setCarrier(""); setDriver(""); setDriverDocument(""); setVehiclePlate(""); setDestination(""); setDocumentoMaterial(""); setNotes("");
     setEncargadoId(""); setDate(todayISO());
     setEntrySapLot(generateSapLot()); setLotGroups([newLotGroup()]);
     setFefoRows([]);
@@ -564,14 +606,26 @@ export default function MovementsPage() {
     }));
   }
 
-  /** Aplica un sector a todos los pallets de todos los lotes del producto actual. */
-  function applyLocationToAllPallets(locId: string) {
-    setLotGroups((g) => g.map((x) => ({
-      ...x,
-      palletLines: x.palletLines.length > 0
-        ? x.palletLines.map((l) => ({ ...l, locationId: locId }))
-        : x.palletLines,
-    })));
+  /** Copia la ubicación general de un lote a todos sus pallets; luego cada fila sigue editable. */
+  function applyLocationToLot(groupId: number) {
+    setLotGroups((groups) => groups.map((group) => {
+      if (group.id !== groupId || !group.bulkLocationId) return group;
+      return {
+        ...group,
+        palletLines: group.palletLines.map((line) => ({ ...line, locationId: group.bulkLocationId })),
+      };
+    }));
+  }
+
+  /** Copia el peso general de un lote a todos sus pallets; luego cada fila sigue editable. */
+  function applyWeightToLot(groupId: number) {
+    setLotGroups((groups) => groups.map((group) => {
+      if (group.id !== groupId || group.bulkWeightKg === "") return group;
+      return {
+        ...group,
+        palletLines: group.palletLines.map((line) => ({ ...line, weightKg: group.bulkWeightKg })),
+      };
+    }));
   }
 
   // ── Helpers FEFO
@@ -685,6 +739,17 @@ export default function MovementsPage() {
     onError: (err) => toast.error(getFriendlyApiError(err)),
   });
 
+  /** Alta rápida dentro del selector: guarda en catálogo y deja el destino seleccionado. */
+  const createDestinationMut = useMutation({
+    mutationFn: createDestination,
+    onSuccess: (created) => {
+      toast.success(`Destino ${created.name} agregado`);
+      void queryClient.invalidateQueries({ queryKey: ["destinations"] });
+      setDestination(created.name);
+    },
+    onError: (err) => toast.error(getFriendlyApiError(err)),
+  });
+
   const createDocumentMut = useMutation({
     mutationFn: (payload: CreateDocumentPayload) => createDocument(payload),
     onSuccess: (res, variables) => {
@@ -736,8 +801,7 @@ export default function MovementsPage() {
           fechaFabricacion: g.fechaFabricacion || undefined,
           sapLot: entrySapLot.trim() || undefined,
         };
-        // Peso y sector van por pallet: se cargan en el gestor de pallets.
-        // Sin sector propio, el backend usa el de la línea.
+        // Peso y sector se definen exclusivamente por pallet en el gestor.
         if (g.palletLines.length > 0) {
           return g.palletLines.map((l) => ({
             ...base,
@@ -758,7 +822,6 @@ export default function MovementsPage() {
           totalQty,
           palletsCount: palletItems.length,
           summary: `Lotes: ${validGroups.map((g) => g.lotCode.trim()).join(", ")}`,
-          locationId: locationId || undefined,
         },
       };
     }
@@ -861,9 +924,10 @@ export default function MovementsPage() {
     const payload: CreateDocumentPayload = {
       type: isEntry ? "ENTRY" : "EXIT",
       date: date || undefined,
-      documentNumber: documentNumber || undefined,
+      documentNumber: isEntry ? documentNumber || undefined : undefined,
       supplier: isEntry ? supplier || undefined : undefined,
       destination: !isEntry ? destination || undefined : undefined,
+      documentoMaterial: !isEntry ? documentoMaterial.trim() || undefined : undefined,
       warehouseId: warehouseId || undefined,
       carrier: carrier || undefined,
       driver: driver || undefined,
@@ -873,7 +937,6 @@ export default function MovementsPage() {
       encargadoId: encargadoId || undefined,
       lines: lines.map((l) => ({
         productId: l.productId,
-        locationId: l.locationId,
         palletItems: l.palletItems,
       })),
     };
@@ -988,7 +1051,7 @@ export default function MovementsPage() {
               <tbody>
                 {pending.map((m) => (
                   <tr key={m.id}>
-                    <td style={{ fontSize: 12, whiteSpace: "nowrap", color: "var(--muted)" }}>{new Date(m.createdAt ?? m.date).toLocaleString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
+                    <td style={{ fontSize: 12, whiteSpace: "nowrap", color: "var(--muted)" }}>{formatDateTimePY(m.createdAt ?? m.date)}</td>
                     <td><strong>{m.material.code}</strong><span style={{ color: "var(--muted)", fontSize: 12 }}> · {m.material.description}</span></td>
                     <td style={{ fontWeight: 700 }}>{m.quantity.toLocaleString("es-PY")}</td>
                     <td style={{ fontSize: 12, color: "var(--muted)", maxWidth: 220 }}>{m.notes || "—"}</td>
@@ -1016,7 +1079,7 @@ export default function MovementsPage() {
             <div style={{ background: "var(--bg)", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13 }}>
               <strong>{regMovement.material.code}</strong> · {regMovement.material.description}
               <span style={{ marginLeft: 12, color: "var(--muted)" }}>{regMovement.quantity.toLocaleString("es-PY")} unid.</span>
-              <span style={{ marginLeft: 12, color: "var(--muted)" }}>{new Date(regMovement.date).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" })}</span>
+              <span style={{ marginLeft: 12, color: "var(--muted)" }}>{formatDateOnly(regMovement.date)}</span>
             </div>
             <form onSubmit={handleRegularize} style={{ display: "grid", gap: 10 }}>
               <div>
@@ -1209,7 +1272,7 @@ export default function MovementsPage() {
                         {doc.code}
                       </td>
                       <td style={{ fontSize: 12, whiteSpace: "nowrap", color: "var(--muted)" }}>
-                        {new Date(doc.date).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" })}
+                        {formatDateOnly(doc.date)}
                       </td>
                       <td style={{ fontSize: 13 }}>{(movType === "ENTRY" ? doc.supplier : doc.destination) ?? "—"}</td>
                       <td style={{ fontSize: 12, color: "var(--muted)", fontFamily: "monospace" }}>{doc.documentNumber ?? "—"}</td>
@@ -1364,25 +1427,18 @@ export default function MovementsPage() {
           </div>
           )}
 
-          {/* Depósito/Ubicación — no se muestra en EXIT (ubicación viene del pallet) */}
+          {/* Entrada: el depósito se define aquí; la ubicación física se asigna después por pallet. */}
           {(movType !== "ENTRY" || wizardStep === 1) && !isTransfer && movType !== "EXIT" && (
             <>
-              <div className="form-section-title">Depósito y ubicación</div>
-              <div style={{ display: "grid", gap: 8 }}>
+              <div className="form-section-title">Depósito</div>
+              <div style={{ display: "grid", gap: 8, maxWidth: 420 }}>
                 <SearchableSelect
                   options={warehouses}
                   value={warehouses.find((w) => w.id === warehouseId) ?? null}
-                  onChange={(w) => { setWarehouseId(w?.id ?? ""); setLocationId(""); }}
+                  onChange={(w) => setWarehouseId(w?.id ?? "")}
                   getKey={(w) => w.id}
                   getLabel={(w) => w.name}
                   placeholder="Depósito"
-                />
-                <LocationPicker
-                  value={locationId}
-                  onChange={setLocationId}
-                  warehouseId={warehouseId || undefined}
-                  placeholder="Ubicación (opcional)"
-                  productId={product?.id}
                 />
               </div>
             </>
@@ -1564,7 +1620,7 @@ export default function MovementsPage() {
                                   <span style={{ fontSize: 13, fontWeight: 700 }}>{p.quantity.toLocaleString("es-PY")} unid.</span>
                                   {p.fechaVencimiento && (
                                     <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                                      Vence {new Date(p.fechaVencimiento).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" })}
+                                      Vence {formatDateOnly(p.fechaVencimiento)}
                                       {expiryBadge(days)}
                                     </span>
                                   )}
@@ -1659,7 +1715,7 @@ export default function MovementsPage() {
                     {group.palletLines.length > 0 && (() => {
                       const sum = group.palletLines.reduce((s, l) => s + (Number(l.qty) || 0), 0);
                       const total = Number(group.quantity);
-                      const sinSector = group.palletLines.filter((l) => !(l.locationId || locationId)).length;
+                      const sinSector = group.palletLines.filter((l) => !l.locationId).length;
                       return (
                         <div style={{ padding: "6px 10px", borderTop: "1px solid var(--border)", background: "var(--bg-base)", fontSize: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
                           <span style={{ color: "var(--muted)" }}>{group.palletLines.length} pallets</span>
@@ -1767,7 +1823,7 @@ export default function MovementsPage() {
                           <div style={{ display: "flex", gap: 14, alignItems: "center", fontSize: 12 }}>
                             {row.lot.fechaVencimiento && (
                               <span style={{ color: "var(--muted)" }}>
-                                Vence: {new Date(row.lot.fechaVencimiento).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" })}
+                                Vence: {formatDateOnly(row.lot.fechaVencimiento)}
                                 {expiryBadge(days)}
                               </span>
                             )}
@@ -1954,7 +2010,7 @@ export default function MovementsPage() {
             <>
               <div className="form-section-title">Datos logísticos</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8 }}>
-                {!isTransfer && <input className="input" placeholder="N° MIC/Factura/Remito" value={documentNumber} onChange={(e) => setDocumentNumber(e.target.value)} />}
+                {showsExternalDocumentNumber(movType) && <input className="input" placeholder="N° MIC/Factura/Remito" value={documentNumber} onChange={(e) => setDocumentNumber(e.target.value)} />}
                 {/* Proveedor: del catálogo. Si no existe, se da de alta sin salir del formulario. */}
                 {isEntry && (
                   <div style={{ display: "grid", gap: 4 }}>
@@ -1976,16 +2032,18 @@ export default function MovementsPage() {
                     </button>
                   </div>
                 )}
+                {/* Vehículo/patente: campo híbrido — busca en Transportes o acepta uno nuevo sin registrarlo antes. */}
                 {!isTransfer && (
-                  <SearchableSelect
+                  <HybridSearchInput<Transport>
                     options={transports.filter((t) => t.active)}
-                    value={transports.find((t) => t.plate === vehiclePlate) ?? null}
-                    onChange={(v) => {
-                      setVehiclePlate(v?.plate ?? "");
-                      // Patente y transportadora salen de la ficha del vehículo;
-                      // el conductor se elige entre los activos de ESE vehículo.
-                      setCarrier(v?.carrier || v?.description || "");
-                      const activos = (v?.drivers ?? []).filter((d) => d.status !== "INACTIVO");
+                    value={vehiclePlate}
+                    onChange={setVehiclePlate}
+                    onSelect={(t) => {
+                      // Patente registrada: autocompleta transportadora y, si el
+                      // vehículo tiene un único chofer activo, también el conductor y su CI.
+                      setVehiclePlate(t.plate);
+                      setCarrier(t.carrier || t.description || "");
+                      const activos = t.drivers.filter((d) => d.status !== "INACTIVO");
                       if (activos.length === 1) {
                         setDriver(activos[0].name);
                         setDriverDocument(activos[0].document ?? "");
@@ -1997,55 +2055,99 @@ export default function MovementsPage() {
                     getKey={(t) => t.id}
                     getLabel={(t) => t.plate}
                     getDescription={(t) => [t.carrier, t.type].filter(Boolean).join(" · ")}
-                    placeholder="Vehículo / patente"
+                    placeholder="Vehículo / chapa"
                   />
                 )}
-                {/* Transportadora: viene del vehículo, no se tipea. */}
+                {/* Transportadora: campo híbrido — sugiere transportadoras ya cargadas en Transportes, pero admite cualquier texto. */}
                 {!isTransfer && (
-                  <input
-                    className="input"
-                    placeholder="Transportadora"
+                  <HybridSearchInput<string>
+                    options={carrierOptions}
                     value={carrier}
-                    readOnly
-                    disabled
-                    title="Se completa al elegir el vehículo (ficha de Transportes)"
+                    onChange={setCarrier}
+                    onSelect={setCarrier}
+                    getKey={(c) => c}
+                    getLabel={(c) => c}
+                    placeholder="Transportadora"
                   />
                 )}
-                {/* Conductor: solo los activos del vehículo elegido; guarda nombre y CI. */}
+                {/* Conductor: campo híbrido sobre TODA la flota (no depende de elegir vehículo primero); al elegir uno registrado completa la CI. */}
                 {!isTransfer && (
-                  <SearchableSelect
-                    options={selectedVehicleDrivers}
-                    value={selectedVehicleDrivers.find((d) => d.name === driver) ?? null}
-                    onChange={(d) => { setDriver(d?.name ?? ""); setDriverDocument(d?.document ?? ""); }}
+                  <HybridSearchInput<TransportDriver & { plates: string[] }>
+                    options={allDrivers}
+                    value={driver}
+                    onChange={(text) => { setDriver(text); setDriverDocument(""); }}
+                    onSelect={(d) => { setDriver(d.name); setDriverDocument(d.document ?? ""); }}
                     getKey={(d) => d.name}
                     getLabel={(d) => d.name}
                     getDescription={(d) => (d.document ? `CI ${d.document}` : "")}
-                    placeholder={vehiclePlate ? "Conductor" : "Elegí primero el vehículo"}
+                    getBadge={(d) => d.plates.join(", ") || undefined}
+                    placeholder="Conductor"
                   />
                 )}
-                {movType === "EXIT" && <input className="input" placeholder="Destino" value={destination} onChange={(e) => setDestination(e.target.value)} />}
-                {/* Encargado: siempre el usuario logueado. Solo ADMIN/MANAGER
-                    pueden reasignarlo; el backend rechaza lo demás. */}
-                {!isTransfer && (canReassignEncargado ? (
-                  <SearchableSelect
-                    options={users}
-                    value={users.find((u) => u.id === encargadoId) ?? null}
-                    onChange={(u) => setEncargadoId(u?.id ?? "")}
-                    getKey={(u) => u.id}
-                    getLabel={(u) => u.fullName || u.username}
-                    getBadge={(u) => u.role}
-                    placeholder="Encargado recepción"
-                  />
-                ) : (
+                {/* CI del conductor: se autocompleta al elegir un chofer registrado, pero queda editable para choferes manuales o correcciones. */}
+                {!isTransfer && (
                   <input
                     className="input"
-                    value={users.find((u) => u.id === user?.userId)?.fullName || user?.username || ""}
-                    readOnly
-                    disabled
-                    title="El remito queda a tu nombre"
-                    aria-label="Encargado recepción"
+                    placeholder="CI del conductor (opcional)"
+                    value={driverDocument}
+                    onChange={(e) => setDriverDocument(e.target.value)}
                   />
-                ))}
+                )}
+                {movType === "EXIT" && (
+                  <HybridSearchInput
+                    options={destinations}
+                    value={destination}
+                    onChange={setDestination}
+                    onSelect={(selected) => setDestination(selected.name)}
+                    getKey={(selected) => selected.id}
+                    getLabel={(selected) => selected.name}
+                    getDescription={(selected) => selected.notes ?? ""}
+                    placeholder="Buscar o escribir destino"
+                    onCreate={(name) => createDestinationMut.mutate({ name })}
+                    getCreateLabel={(name) => `Agregar nuevo destino: ${name}`}
+                    creating={createDestinationMut.isPending}
+                    registeredTitle="Destino guardado en el catálogo"
+                  />
+                )}
+                {movType === "EXIT" && (
+                  <input
+                    className="input"
+                    placeholder="Documento Material (opcional)"
+                    value={documentoMaterial}
+                    onChange={(e) => setDocumentoMaterial(e.target.value)}
+                    maxLength={80}
+                    aria-label="Documento Material"
+                  />
+                )}
+                {/* Encargado: siempre el usuario logueado. Solo ADMIN/MANAGER
+                    pueden reasignarlo; el backend rechaza lo demás. */}
+                {!isTransfer && (
+                  <div style={{ display: "grid", gap: 3 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>
+                      {responsibleFieldLabel(movType)}
+                    </span>
+                    {canReassignEncargado ? (
+                      <SearchableSelect
+                        options={users}
+                        value={users.find((u) => u.id === encargadoId) ?? null}
+                        onChange={(u) => setEncargadoId(u?.id ?? "")}
+                        getKey={(u) => u.id}
+                        getLabel={(u) => u.fullName || u.username}
+                        getBadge={(u) => u.role}
+                        placeholder={responsibleFieldLabel(movType)}
+                      />
+                    ) : (
+                      <input
+                        className="input"
+                        value={users.find((u) => u.id === user?.userId)?.fullName || user?.username || ""}
+                        readOnly
+                        disabled
+                        title="El remito queda a tu nombre"
+                        aria-label={responsibleFieldLabel(movType)}
+                      />
+                    )}
+                  </div>
+                )}
               </div>
               <textarea className="input"
                 placeholder="Observaciones (opcional)"
@@ -2232,7 +2334,7 @@ export default function MovementsPage() {
         </div>
       )}
 
-      {/* ── Gestor de pallets: peso y sector de cada pallet ── */}
+      {/* ── Gestor jerárquico: Producto → Lote → Pallets ── */}
       {showPalletManager && (
         <div
           style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
@@ -2240,7 +2342,7 @@ export default function MovementsPage() {
         >
           <div
             className="card"
-            style={{ width: "min(920px, 100%)", maxHeight: "90vh", overflowY: "auto", display: "grid", gap: 12 }}
+            style={{ width: "min(1100px, 100%)", maxHeight: "90vh", overflowY: "auto", display: "grid", gap: 14 }}
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
@@ -2250,119 +2352,190 @@ export default function MovementsPage() {
               <div>
                 <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Gestionar pallets y ubicación</h3>
                 <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--muted)" }}>
-                  {totalPalletLines} pallet{totalPalletLines !== 1 ? "s" : ""} · el peso y el sector se guardan por pallet
+                  Cargá los valores generales por lote y editá debajo solamente las excepciones.
                 </p>
               </div>
               <button type="button" onClick={() => setShowPalletManager(false)}
                 style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "var(--muted)" }} aria-label="Cerrar">×</button>
             </div>
 
-            {/* Aplicar un sector a todos de una sola vez */}
-            <div style={{ display: "grid", gap: 6, padding: 10, border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg)" }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>
-                Aplicar ubicación a todos
-              </span>
-              <LocationPicker
-                value=""
-                onChange={(locId) => { if (locId) applyLocationToAllPallets(locId); }}
-                warehouseId={warehouseId || undefined}
-                productId={product?.id}
-                sessionUsage={locationSessionUsage}
-                placeholder="Elegí un sector para todos los pallets"
-              />
-            </div>
+            {/* Producto */}
+            <div style={{ border: "1.5px solid var(--primary)", borderRadius: 10, overflow: "hidden" }}>
+              <div style={{ padding: "10px 12px", background: "var(--primary-light)", display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4 }}>Producto</div>
+                  <strong style={{ fontSize: 14 }}>{product ? `${product.code} · ${product.description}` : "Producto actual"}</strong>
+                </div>
+                <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 700 }}>
+                  {lotGroups.filter((group) => group.palletLines.length > 0).length} lote(s) · {totalPalletLines} pallet{totalPalletLines !== 1 ? "s" : ""}
+                </span>
+              </div>
 
-            <div style={{ overflowX: "auto" }}>
-              <table className="table" style={{ margin: 0 }}>
-                <thead>
-                  <tr>
-                    <th scope="col">Pallet</th>
-                    <th scope="col">Lote</th>
-                    <th scope="col" style={{ textAlign: "right" }}>Cantidad</th>
-                    <th scope="col" style={{ textAlign: "right" }}>Peso (kg)</th>
-                    <th scope="col">Sector-Subsector</th>
-                    <th scope="col">Colocación</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {palletRows.map((row, globalIdx) => {
-                    const effectiveLoc = row.line.locationId || locationId;
-                    const state = effectiveLoc ? planByLocation.get(effectiveLoc) : undefined;
-                    const view = effectiveLoc ? locationPlanViews.get(effectiveLoc) : undefined;
-                    // Cuántos pallets de este mismo sector vienen antes: da la
-                    // posición de esta fila dentro del plan de ese sector.
-                    const posInLocation = palletRows
-                      .slice(0, globalIdx)
-                      .filter((r) => (r.line.locationId || locationId) === effectiveLoc).length;
-                    const pile = view?.keyToPile.get(String(posInLocation));
-                    const item = pile?.items.find((it) => it.key === String(posInLocation));
-                    const basesFreeHere = view?.runningBasesFree[posInLocation] ?? null;
+              {/* Lotes */}
+              <div style={{ padding: 12, display: "grid", gap: 12 }}>
+                {lotGroups.filter((group) => group.palletLines.length > 0).map((group) => {
+                  const locatedCount = group.palletLines.filter((line) => !!line.locationId).length;
+                  const weightedCount = group.palletLines.filter((line) => line.weightKg !== "").length;
+                  return (
+                    <section key={group.id} aria-label={`Lote ${group.lotCode || "sin código"}`} style={{ border: "1px solid var(--border)", borderRadius: 9, overflow: "hidden" }}>
+                      <div style={{ padding: "9px 10px", background: "var(--bg)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", borderBottom: "1px solid var(--border)" }}>
+                        <div>
+                          <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4 }}>Lote</div>
+                          <strong style={{ fontFamily: "monospace", fontSize: 14 }}>{group.lotCode || "Sin código"}</strong>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <div style={{ padding: "5px 9px", border: "1px solid var(--border-dim)", borderRadius: 6, background: "var(--bg-base)" }}>
+                            <div style={{ fontSize: 9, color: "var(--muted)", fontWeight: 700, textTransform: "uppercase" }}>Cantidad total</div>
+                            <strong style={{ fontSize: 13 }}>{(Number(group.quantity) || 0).toLocaleString("es-PY")} unid.</strong>
+                          </div>
+                          <div style={{ padding: "5px 9px", border: "1px solid var(--border-dim)", borderRadius: 6, background: "var(--bg-base)" }}>
+                            <div style={{ fontSize: 9, color: "var(--muted)", fontWeight: 700, textTransform: "uppercase" }}>Cantidad de pallets</div>
+                            <strong style={{ fontSize: 13 }}>{group.palletLines.length}</strong>
+                          </div>
+                        </div>
+                      </div>
 
-                    let placement: { text: string; color: string };
-                    if (!effectiveLoc) {
-                      placement = { text: "Elegí un sector", color: "var(--warning)" };
-                    } else if (state?.loading) {
-                      placement = { text: "Calculando…", color: "var(--muted)" };
-                    } else if (state?.error) {
-                      placement = { text: state.error, color: "var(--danger)" };
-                    } else if (pile && item) {
-                      // El nivel solo se muestra si esta pila realmente junta más de un
-                      // pallet de esta carga — si no, "nivel 1/3" sugeriría un apilado
-                      // que en los hechos no está pasando (producto no apilable, o
-                      // este es el único pallet que le tocó a esa base).
-                      const levelTxt = pile.items.length > 1 && pile.maxLevel ? `nivel ${item.stackPosition}/${pile.maxLevel}` : null;
-                      if (item.stackPosition === 1) {
-                        // Único pallet de la pila que realmente consume una base — el
-                        // resto (nivel 2, 3…) se apila encima sin ocupar otra base.
-                        const basesTxt = basesFreeHere != null ? `quedan ${basesFreeHere} bases` : null;
-                        placement = { text: ["Abre base nueva", levelTxt, basesTxt].filter(Boolean).join(" · "), color: "var(--muted)" };
-                      } else {
-                        const baseRef = pile.isNew ? "la base nueva" : "la pila existente";
-                        const siblings = (view?.pileRowNumbers.get(pile.sequence) ?? []).filter((n) => n !== globalIdx + 1);
-                        const withTxt = siblings.length ? `con P${siblings.join(", P")}` : null;
-                        placement = { text: [`Se apila sobre ${baseRef}`, levelTxt, withTxt].filter(Boolean).join(" · "), color: "var(--success)" };
-                      }
-                    } else {
-                      placement = { text: "—", color: "var(--muted)" };
-                    }
-
-                    return (
-                      <tr key={`${row.groupId}-${row.idx}`}>
-                        <td style={{ fontWeight: 700, fontFamily: "monospace" }}>P{globalIdx + 1}</td>
-                        <td style={{ fontFamily: "monospace", fontSize: 12 }}>{row.lotCode || "—"}</td>
-                        <td style={{ textAlign: "right" }}>
-                          <input
-                            className="input" type="number" min={0} value={row.line.qty}
-                            onChange={(e) => updatePalletLine(row.groupId, row.idx, { qty: e.target.value })}
-                            style={{ fontSize: 12, padding: "3px 6px", width: 90, textAlign: "right" }}
-                            aria-label={`Cantidad del pallet ${globalIdx + 1}`}
-                          />
-                        </td>
-                        <td style={{ textAlign: "right" }}>
-                          <input
-                            className="input" type="number" min={0} step="0.01" placeholder="—"
-                            value={row.line.weightKg}
-                            onChange={(e) => updatePalletLine(row.groupId, row.idx, { weightKg: e.target.value })}
-                            style={{ fontSize: 12, padding: "3px 6px", width: 90, textAlign: "right" }}
-                            aria-label={`Peso del pallet ${globalIdx + 1}`}
-                          />
-                        </td>
-                        <td style={{ minWidth: 210 }}>
+                      {/* Carga rápida por lote */}
+                      <div style={{ padding: 10, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 10, borderBottom: "1px solid var(--border)", background: "var(--bg-base)" }}>
+                        <div style={{ display: "grid", gap: 5, alignContent: "start" }}>
+                          <label style={{ fontSize: 10, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase" }}>Ubicación recomendada</label>
                           <LocationPicker
-                            value={row.line.locationId}
-                            onChange={(locId) => updatePalletLine(row.groupId, row.idx, { locationId: locId })}
+                            value={group.bulkLocationId}
+                            onChange={(locId) => updateGroup(group.id, "bulkLocationId", locId)}
                             warehouseId={warehouseId || undefined}
                             productId={product?.id}
                             sessionUsage={locationSessionUsage}
-                            placeholder={locationId ? "Igual que la línea" : "Elegí un sector"}
+                            placeholder="Elegí un sector para el lote"
                           />
-                        </td>
-                        <td style={{ fontSize: 12, color: placement.color, fontWeight: 600 }}>{placement.text}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                          <button
+                            type="button"
+                            className="btn"
+                            disabled={!group.bulkLocationId}
+                            onClick={() => applyLocationToLot(group.id)}
+                            style={{ justifySelf: "start", fontSize: 12, fontWeight: 700, borderColor: "var(--primary)", color: "var(--primary)" }}
+                          >
+                            Aplicar ubicación al lote
+                          </button>
+                        </div>
+
+                        <div style={{ display: "grid", gap: 5, alignContent: "start" }}>
+                          <label htmlFor={`lot-weight-${group.id}`} style={{ fontSize: 10, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase" }}>Peso general del lote (kg por pallet)</label>
+                          <input
+                            id={`lot-weight-${group.id}`}
+                            className="input"
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            placeholder="Ej: 850"
+                            value={group.bulkWeightKg}
+                            onChange={(e) => updateGroup(group.id, "bulkWeightKg", e.target.value)}
+                          />
+                          <button
+                            type="button"
+                            className="btn"
+                            disabled={group.bulkWeightKg === "" || !Number.isFinite(Number(group.bulkWeightKg)) || Number(group.bulkWeightKg) < 0}
+                            onClick={() => applyWeightToLot(group.id)}
+                            style={{ justifySelf: "start", fontSize: 12, fontWeight: 700, borderColor: "var(--primary)", color: "var(--primary)" }}
+                          >
+                            Aplicar peso al lote
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Pallets */}
+                      <div style={{ padding: "7px 10px", display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", background: "var(--bg)" }}>
+                        <strong style={{ fontSize: 12 }}>Pallets · desglose editable</strong>
+                        <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                          {locatedCount}/{group.palletLines.length} ubicados · {weightedCount}/{group.palletLines.length} con peso
+                        </span>
+                      </div>
+                      <div style={{ overflowX: "auto" }}>
+                        <table className="table" style={{ margin: 0 }}>
+                          <thead>
+                            <tr>
+                              <th scope="col">Pallet</th>
+                              <th scope="col" style={{ textAlign: "right" }}>Cantidad</th>
+                              <th scope="col" style={{ textAlign: "right" }}>Peso (kg)</th>
+                              <th scope="col">Sector-Subsector</th>
+                              <th scope="col">Colocación</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {group.palletLines.map((line, lineIdx) => {
+                              const globalIdx = palletRows.findIndex((row) => row.groupId === group.id && row.idx === lineIdx);
+                              const effectiveLoc = line.locationId;
+                              const state = effectiveLoc ? planByLocation.get(effectiveLoc) : undefined;
+                              const view = effectiveLoc ? locationPlanViews.get(effectiveLoc) : undefined;
+                              const posInLocation = effectiveLoc
+                                ? palletRows.slice(0, globalIdx).filter((row) => row.line.locationId === effectiveLoc).length
+                                : -1;
+                              const pile = posInLocation >= 0 ? view?.keyToPile.get(String(posInLocation)) : undefined;
+                              const item = pile?.items.find((it) => it.key === String(posInLocation));
+                              const basesFreeHere = posInLocation >= 0 ? (view?.runningBasesFree[posInLocation] ?? null) : null;
+
+                              let placement: { text: string; color: string };
+                              if (!effectiveLoc) {
+                                placement = { text: "Elegí un sector", color: "var(--warning)" };
+                              } else if (state?.loading) {
+                                placement = { text: "Calculando…", color: "var(--muted)" };
+                              } else if (state?.error) {
+                                placement = { text: state.error, color: "var(--danger)" };
+                              } else if (pile && item) {
+                                const levelTxt = pile.items.length > 1 && pile.maxLevel ? `nivel ${item.stackPosition}/${pile.maxLevel}` : null;
+                                if (item.stackPosition === 1) {
+                                  const basesTxt = basesFreeHere != null ? `quedan ${basesFreeHere} bases` : null;
+                                  placement = { text: ["Abre base nueva", levelTxt, basesTxt].filter(Boolean).join(" · "), color: "var(--muted)" };
+                                } else {
+                                  const baseRef = pile.isNew ? "la base nueva" : "la pila existente";
+                                  const siblings = (view?.pileRowNumbers.get(pile.sequence) ?? []).filter((n) => n !== globalIdx + 1);
+                                  const withTxt = siblings.length ? `con P${siblings.join(", P")}` : null;
+                                  placement = { text: [`Se apila sobre ${baseRef}`, levelTxt, withTxt].filter(Boolean).join(" · "), color: "var(--success)" };
+                                }
+                              } else {
+                                placement = { text: "—", color: "var(--muted)" };
+                              }
+
+                              return (
+                                <tr key={`${group.id}-${lineIdx}`}>
+                                  <td style={{ fontWeight: 700, fontFamily: "monospace" }}>P{lineIdx + 1}</td>
+                                  <td style={{ textAlign: "right" }}>
+                                    <input
+                                      className="input" type="number" min={0} value={line.qty}
+                                      onChange={(e) => updatePalletLine(group.id, lineIdx, { qty: e.target.value })}
+                                      style={{ fontSize: 12, padding: "3px 6px", width: 90, textAlign: "right" }}
+                                      aria-label={`Cantidad del pallet ${lineIdx + 1} del lote ${group.lotCode}`}
+                                    />
+                                  </td>
+                                  <td style={{ textAlign: "right" }}>
+                                    <input
+                                      className="input" type="number" min={0} step="0.01" placeholder="—"
+                                      value={line.weightKg}
+                                      onChange={(e) => updatePalletLine(group.id, lineIdx, { weightKg: e.target.value })}
+                                      style={{ fontSize: 12, padding: "3px 6px", width: 90, textAlign: "right" }}
+                                      aria-label={`Peso del pallet ${lineIdx + 1} del lote ${group.lotCode}`}
+                                    />
+                                  </td>
+                                  <td style={{ minWidth: 230 }}>
+                                    <LocationPicker
+                                      value={line.locationId}
+                                      onChange={(locId) => updatePalletLine(group.id, lineIdx, { locationId: locId })}
+                                      warehouseId={warehouseId || undefined}
+                                      productId={product?.id}
+                                      sessionUsage={locationSessionUsage}
+                                      placeholder="Elegí un sector"
+                                    />
+                                  </td>
+                                  <td style={{ minWidth: 190, fontSize: 12, color: placement.color, fontWeight: 600 }}>{placement.text}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
             </div>
 
             <div style={{ display: "flex", gap: 10 }}>

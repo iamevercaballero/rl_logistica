@@ -49,4 +49,9 @@ export class MovementsQueryDto {
   @IsOptional()
   @IsIn(movementStatuses)
   status?: string;
+
+  /** Filtra Salidas según tengan o no Documento Material SAP. */
+  @IsOptional()
+  @IsIn(['PENDING', 'COMPLETED'])
+  documentoMaterialStatus?: 'PENDING' | 'COMPLETED';
 }

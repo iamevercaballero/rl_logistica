@@ -29,13 +29,17 @@ export class WarehousesService {
 
   async create(dto: CreateWarehouseDto) {
     const name = dto.name.trim();
+    const documentCode = dto.documentCode.trim();
     if (!name) throw new BadRequestException('El nombre del depósito es obligatorio');
 
     // Dos depósitos homónimos son indistinguibles en los selectores y en los reportes.
     const existing = await this.warehouseRepo.findOne({ where: { name } });
     if (existing) throw new BadRequestException(`Ya existe un depósito con el nombre "${name}"`);
 
-    const warehouse = this.warehouseRepo.create({ ...dto, name });
+    const codeInUse = await this.warehouseRepo.findOne({ where: { documentCode } });
+    if (codeInUse) throw new BadRequestException(`El código documental ${documentCode} ya pertenece a otro depósito`);
+
+    const warehouse = this.warehouseRepo.create({ ...dto, name, documentCode });
     return this.warehouseRepo.save(warehouse);
   }
 
@@ -110,7 +114,22 @@ export class WarehousesService {
 
   async update(id: string, dto: UpdateWarehouseDto) {
     const warehouse = await this.findOne(id);
-    Object.assign(warehouse, dto);
+    if (dto.documentCode !== undefined) {
+      const documentCode = dto.documentCode.trim();
+      if (warehouse.documentCode && warehouse.documentCode !== documentCode) {
+        throw new BadRequestException(
+          `El código documental ${warehouse.documentCode} es estable y no puede modificarse`,
+        );
+      }
+      const codeInUse = await this.warehouseRepo.findOne({ where: { documentCode } });
+      if (codeInUse && codeInUse.id !== id) {
+        throw new BadRequestException(`El código documental ${documentCode} ya pertenece a otro depósito`);
+      }
+      warehouse.documentCode = documentCode;
+    }
+    if (dto.name !== undefined) warehouse.name = dto.name.trim();
+    if (dto.address !== undefined) warehouse.address = dto.address.trim();
+    if (dto.active !== undefined) warehouse.active = dto.active;
     return this.warehouseRepo.save(warehouse);
   }
 

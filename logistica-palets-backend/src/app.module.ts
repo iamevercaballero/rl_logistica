@@ -21,6 +21,7 @@ import { AdjustmentsModule } from './modules/adjustments/adjustments.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { TransportsModule } from './modules/transports/transports.module';
 import { SuppliersModule } from './modules/suppliers/suppliers.module';
+import { DestinationsModule } from './modules/destinations/destinations.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { SeedModule } from './modules/seed/seed.module';
@@ -116,6 +117,7 @@ import { AppController } from './app.controller';
     UploadsModule,
     TransportsModule,
     SuppliersModule,
+    DestinationsModule,
     ReportsModule,
     BillingModule,
     SeedModule,

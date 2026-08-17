@@ -27,6 +27,12 @@ services:
     container_name: rl_logistica_db_staging
     restart: unless-stopped
     env_file: [.env.staging]
+    environment:
+      # Sin esto Postgres corre en UTC — el backend ya trata todas las fechas
+      # de forma explícita (ver src/common/date.ts), pero esto es defensa en
+      # profundidad para cualquier función SQL que use la zona de la sesión.
+      TZ:   America/Asuncion
+      PGTZ: America/Asuncion
     volumes:
       - postgres_data_staging:/var/lib/postgresql/data
     healthcheck:
@@ -61,6 +67,8 @@ services:
     env_file: [.env.staging]
     environment:
       # ── Overrides fijos (no pueden ser cambiados desde .env.staging) ───────
+      # Zona horaria del proceso — defensa en profundidad (ver nota en `db`).
+      TZ:                America/Asuncion
       PORT:              3000
       DB_HOST:           db
       DB_PORT:           5432

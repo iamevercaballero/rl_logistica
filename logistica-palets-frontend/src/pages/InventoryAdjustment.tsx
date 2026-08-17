@@ -15,6 +15,7 @@ import { listWarehouses } from "../api/warehouses";
 import { listLocations } from "../api/locations";
 import { generateSapLot, fefoLots } from "../api/lots";
 import type { LotPallet } from "../api/pallets";
+import { formatDateOnly } from "../utils/dateFormat";
 import {
   createAdjustmentDraft,
   submitAdjustmentForApproval,
@@ -959,7 +960,7 @@ function RequestCard({ adj, canApprove, rejectingId, rejectReason, onApprove, on
             <span className="badge" style={{ fontSize: 11 }}>{adj.reason.replace(/_/g, " ")}</span>
           </div>
           <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4, display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <span>{new Date(adj.createdAt).toLocaleDateString("es-PY")}</span>
+            <span>{formatDateOnly(adj.createdAt)}</span>
             <span>{adj.totalLines} material{adj.totalLines !== 1 ? "es" : ""}</span>
             <span style={{ fontWeight: 700 }}>{adj.totalQuantity.toLocaleString("es-PY")} unid.</span>
             {adj.notes && <span style={{ fontStyle: "italic" }}>"{adj.notes}"</span>}

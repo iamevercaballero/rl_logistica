@@ -18,6 +18,7 @@ import { useAuth } from "../auth/AuthContext";
 import { canUpdate } from "../auth/rbac";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
+import { daysUntil, fmtDate, fmtDateTime } from "../utils/dateFormat";
 
 /* ── Vistas del localizador ────────────────────────────────────────────────
    1. Buscar inventario → ¿dónde está este material?
@@ -33,21 +34,6 @@ const VIEWS: { key: ViewKey; label: string; hint: string }[] = [
   { key: "incidents", label: "Incidencias",        hint: "Diferencias, sobrecapacidad y bloqueos" },
 ];
 
-
-function fmtDate(value?: string | null) {
-  if (!value) return "—";
-  const [y, m, d] = value.slice(0, 10).split("-");
-  return d && m && y ? `${d}/${m}/${y}` : value;
-}
-
-function daysUntil(value?: string | null): number | null {
-  if (!value) return null;
-  const target = new Date(`${value.slice(0, 10)}T00:00:00`);
-  if (Number.isNaN(target.getTime())) return null;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return Math.round((target.getTime() - today.getTime()) / 86_400_000);
-}
 
 const PALLET_STATUS_LABEL: Record<string, string> = {
   AVAILABLE: "Disponible",
@@ -314,11 +300,7 @@ function LocationDrawer({
                                     return (
                                       <li key={h.movementId} style={{ fontSize: 11, display: "flex", gap: 8, alignItems: "baseline", opacity: voided ? 0.6 : 1 }}>
                                         <span style={{ color: "var(--muted)", fontFamily: "monospace", whiteSpace: "nowrap" }}>
-                                          {new Date(h.createdAt ?? h.date).toLocaleString("es-PY", {
-                                            timeZone: "America/Asuncion",
-                                            day: "2-digit", month: "2-digit", year: "numeric",
-                                            hour: "2-digit", minute: "2-digit",
-                                          })}
+                                          {fmtDateTime(h.createdAt ?? h.date)}
                                         </span>
                                         <span style={{ fontWeight: 700 }}>{h.type}</span>
                                         <span style={{ color: "var(--muted)", textDecoration: voided ? "line-through" : undefined }}>

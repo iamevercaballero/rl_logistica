@@ -10,6 +10,7 @@ import { Factura } from './entities/factura.entity';
 import { ItemFactura } from './entities/item-factura.entity';
 import { XmlGeneratorService, EmisorConfig } from './xml-generator.service';
 import { SifenService } from './sifen.service';
+import { parseBusinessDate, shiftBusinessDate, toBusinessDateString } from '../../common/date';
 
 @Injectable()
 export class BillingService {
@@ -62,7 +63,7 @@ export class BillingService {
 
     return this.dataSource.transaction(async (manager) => {
       const timbrado = this.config.get<string>('FACTURA_TIMBRADO', '12345678');
-      const vigencia = this.config.get<string>('FACTURA_VIGENCIA', new Date(Date.now() + 365 * 86400000).toISOString());
+      const vigencia = this.config.get<string>('FACTURA_VIGENCIA', shiftBusinessDate(toBusinessDateString(new Date())!, 365));
       const establecimiento = this.config.get<string>('FACTURA_ESTABLECIMIENTO', '001');
       const puntoExpedicion = this.config.get<string>('FACTURA_PUNTO_EXPEDICION', '001');
 
@@ -78,14 +79,14 @@ export class BillingService {
         tipoDE: dto.tipoDE,
         clienteId: dto.clienteId,
         cliente,
-        fecha: dto.fecha ? new Date(dto.fecha) : new Date(),
+        fecha: parseBusinessDate(dto.fecha),
         condicionPago: dto.condicionPago,
         moneda: dto.moneda ?? 'PYG',
         establecimiento,
         puntoExpedicion,
         numeroDocumento,
         timbrado,
-        fechaVigenciaTimbrado: new Date(vigencia),
+        fechaVigenciaTimbrado: toBusinessDateString(vigencia)!,
         movimientoId: dto.movimientoId,
         observaciones: dto.observaciones,
         estado: 'BORRADOR',

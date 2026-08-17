@@ -13,6 +13,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { adjustmentReasons, movementTypes, MovementType } from '../entities/movement.entity';
+import { IsBusinessDateString } from '../../../common/is-business-date-string.validator';
 
 /**
  * Las cantidades del inventario son decimales (TS, KG, HL admiten fracciones).
@@ -41,11 +42,11 @@ export class PalletItemDto {
   quantity: number;
 
   @IsOptional()
-  @IsDateString()
+  @IsBusinessDateString()
   fechaVencimiento?: string;
 
   @IsOptional()
-  @IsDateString()
+  @IsBusinessDateString()
   fechaFabricacion?: string;
 
   /** Lote SAP del día (ej: Z051308201) — agrupa lotes proveedor del mismo día */
@@ -153,6 +154,12 @@ export class CreateMovementDto {
   @IsString()
   @MaxLength(120)
   destination?: string;
+
+  /** Documento de material informado por SAP (solo EXIT). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  documentoMaterial?: string;
 
   @IsOptional()
   @IsString()

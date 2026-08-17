@@ -1,4 +1,5 @@
-import { IsDateString, IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsBusinessDateString } from '../../../common/is-business-date-string.validator';
 
 export class CreateLotDto {
   @IsString()
@@ -8,11 +9,11 @@ export class CreateLotDto {
   productId: string;
 
   @IsOptional()
-  @IsDateString()
+  @IsBusinessDateString()
   fechaVencimiento?: string;
 
   @IsOptional()
-  @IsDateString()
+  @IsBusinessDateString()
   fechaFabricacion?: string;
 
   @IsOptional()

@@ -19,6 +19,10 @@ import { DocumentEvent } from '../src/modules/uploads/entities/document-event.en
 import { SapStockSnapshot } from '../src/modules/reports/entities/sap-stock.entity';
 import { Pila } from '../src/modules/pilas/entities/pila.entity';
 import { Supplier } from '../src/modules/suppliers/entities/supplier.entity';
+import { Destination } from '../src/modules/destinations/entities/destination.entity';
+import { User } from '../src/modules/users/entities/user.entity';
+
+export const TEST_USER_ID = '00000000-0000-0000-0000-0000000000aa';
 
 /**
  * Conjunto mínimo de entidades que toca el motor de stock. No incluye User /
@@ -26,7 +30,7 @@ import { Supplier } from '../src/modules/suppliers/entities/supplier.entity';
  * así que synchronize crea sólo estas tablas y sus FKs (Lot→Product, Location→Warehouse).
  */
 export const TEST_ENTITIES = [
-  Product, Warehouse, Location, Stock, Lot, Pallet, Pila, Supplier,
+  Product, Warehouse, Location, Stock, Lot, Pallet, Pila, Supplier, Destination, User,
   Movement, MovementDetail, LogisticsDocument, DocumentSequence, RegularizationLog,
   AdjustmentRequest, AdjustmentRequestLine, Attachment, DocumentEvent, SapStockSnapshot,
 ];
@@ -37,7 +41,7 @@ const TABLES = [
   'logistics_documents', 'regularization_logs',
   'adjustment_request_lines', 'adjustment_requests',
   'attachments', 'document_events', 'document_sequences',
-  'sap_stock_snapshots', 'products', 'locations', 'warehouses', 'suppliers',
+  'sap_stock_snapshots', 'products', 'locations', 'warehouses', 'suppliers', 'destinations', 'users',
 ];
 
 /**
@@ -64,7 +68,7 @@ export async function resetDb(ds: DataSource): Promise<void> {
   await ds.query(`TRUNCATE TABLE ${TABLES.map((t) => `"${t}"`).join(', ')} RESTART IDENTITY CASCADE`);
 }
 
-export type Basics = { product: Product; warehouse: Warehouse; location: Location };
+export type Basics = { product: Product; warehouse: Warehouse; location: Location; user: User };
 
 /** Inserta un producto, un depósito y una ubicación de prueba. */
 export async function seedBasics(ds: DataSource): Promise<Basics> {
@@ -72,10 +76,18 @@ export async function seedBasics(ds: DataSource): Promise<Basics> {
     ds.getRepository(Product).create({ code: 'P-TEST', description: 'Producto de prueba', unitOfMeasure: 'UN', active: true }),
   );
   const warehouse = await ds.getRepository(Warehouse).save(
-    ds.getRepository(Warehouse).create({ name: 'Depósito de prueba', active: true }),
+    ds.getRepository(Warehouse).create({ name: 'Depósito de prueba', documentCode: '01', active: true }),
   );
   const location = await ds.getRepository(Location).save(
     ds.getRepository(Location).create({ code: 'A-1', type: 'RACK', warehouse, active: true }),
   );
-  return { product, warehouse, location };
+  const user = await ds.getRepository(User).save(ds.getRepository(User).create({
+    id: TEST_USER_ID,
+    username: 'operador.test',
+    fullName: 'Operador de Prueba',
+    passwordHash: 'not-used-in-tests',
+    role: 'OPERATOR',
+    active: true,
+  }));
+  return { product, warehouse, location, user };
 }

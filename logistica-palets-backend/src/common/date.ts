@@ -95,3 +95,104 @@ export function toBusinessDateString(input?: string | Date | null): string | nul
 export function businessToday(): string {
   return toBusinessDateString(new Date())!;
 }
+
+/**
+ * DD/MM/AAAA legible para texto de auditoría/notas (ej. "Anulación... del
+ * 15/08/2026") — un instante real, convertido a la zona del depósito antes
+ * de tomar el día. Reemplaza `new Date(x).toLocaleDateString('es-PY')` sin
+ * `timeZone`, que usa la zona implícita del proceso (UTC en producción).
+ */
+export function formatBusinessDate(input: Date): string {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: APP_TIME_ZONE, day: '2-digit', month: '2-digit', year: 'numeric',
+  }).formatToParts(input);
+  const pick = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  return `${pick('day')}/${pick('month')}/${pick('year')}`;
+}
+
+/**
+ * Suma/resta días de calendario a "YYYY-MM-DD". Ancla en UTC a propósito:
+ * es aritmética de calendario, no debe depender del huso del proceso.
+ */
+export function shiftBusinessDate(value: string, days: number): string {
+  const [y, m, d] = value.slice(0, 10).split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
+/**
+ * Días de calendario entre `from` (por defecto, hoy en el depósito) y `value`
+ * — ambos "YYYY-MM-DD". Ancla los dos lados en UTC antes de restar, para que
+ * "cuántos días faltan para el vencimiento" no dependa de a qué hora ni en
+ * qué huso corre el proceso. Reemplaza al patrón `new Date(fechaVencimiento)`
+ * comparado contra `new Date()` que tenían `reports.service.ts` (freshness,
+ * kpis) y `alerts.service.ts` — mezclar una fecha calendario anclada en UTC
+ * con un instante real corre el resultado un día.
+ */
+export function businessDaysUntil(value?: string | null, from: string = businessToday()): number | null {
+  if (!value) return null;
+  const [vy, vm, vd] = value.slice(0, 10).split('-').map(Number);
+  const [fy, fm, fd] = from.slice(0, 10).split('-').map(Number);
+  return Math.round((Date.UTC(vy, vm - 1, vd) - Date.UTC(fy, fm - 1, fd)) / 86_400_000);
+}
+
+/**
+ * Medianoche del día siguiente a `value` menos 1ms, en la zona del depósito:
+ * el límite superior (inclusive) de "todo el día `value` en Asunción". Junto
+ * con `parseBusinessDate(value)` como límite inferior, arma un rango
+ * [inicio, fin] correcto para filtrar timestamps por fecha calendario —
+ * reemplaza los `toStartDate`/`toEndDate` que anclaban en UTC (duplicados en
+ * movements.service.ts y reports.service.ts) mezclando el día calendario
+ * pedido con timestamps guardados en la zona del depósito.
+ */
+export function endOfBusinessDay(value: string): Date {
+  return new Date(parseBusinessDate(value).getTime() + 86_400_000 - 1);
+}
+
+/**
+ * Parsea una celda de fecha de un Excel/CSV importado (carga inicial de
+ * stock, `stockSnapshotFromLotList`). SheetJS entrega estas celdas como
+ * texto ya formateado con el formato regional de la planilla — DD/MM/AAAA,
+ * como el resto de la app — no como el `Date` que sugeriría `cellDates`.
+ *
+ * `new Date("05/08/2026")` lo interpreta como MM/DD/AAAA (inglés) e invierte
+ * día y mes **en silencio** para cualquier día ≤12: un vencimiento 05/08
+ * (5 de agosto) se guardaba como 08/05 (8 de mayo). Por eso acá se parsea
+ * DD/MM/AAAA explícitamente antes de delegar a cualquier otro formato.
+ *
+ * `undefined` = celda vacía (sin vencimiento); `null` = valor presente pero inválido.
+ */
+export function parseExcelDateCell(value: unknown): string | null | undefined {
+  if (value instanceof Date) return toBusinessDateString(value);
+  const str = String(value ?? '').trim();
+  if (!str) return undefined;
+
+  const ddmmyyyy = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (ddmmyyyy) {
+    const [, d, m, y] = ddmmyyyy;
+    const day = Number(d);
+    const month = Number(m);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return `${y}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+  return toBusinessDateString(str);
+}
+
+/**
+ * Fecha y hora de un instante, como componentes separados en la zona del
+ * depósito — para armar XML/exports que necesitan la fecha y la hora en
+ * campos distintos (ej. SIFEN). `hourCycle: 'h23'` evita que ICU renderice
+ * la medianoche como "24:00".
+ */
+export function businessDateTimeParts(input: Date): { date: string; time: string } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: APP_TIME_ZONE,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(input);
+  const pick = (type: string) => parts.find((p) => p.type === type)?.value ?? '00';
+  return {
+    date: `${pick('year')}-${pick('month')}-${pick('day')}`,
+    time: `${pick('hour')}:${pick('minute')}:${pick('second')}`,
+  };
+}

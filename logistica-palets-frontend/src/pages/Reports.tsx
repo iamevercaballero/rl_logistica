@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import {
+  fmtDate,
   fmtDateTime,
   todayInputValue,
   shiftInputValue,
@@ -28,6 +29,8 @@ import { getFriendlyApiError } from "../utils/apiError";
 import { DataTable, createColumnHelper } from "../design-system/DataTable";
 import { exportStockPDF, exportMovementsPDF, exportDailyStockPDF, exportEntradasPDF, exportSalidasPDF, exportLotesPDF, exportTrazabilidadPDF } from "../lib/exportPdf";
 import { exportStockExcel, exportMovementsExcel, exportDailyStockExcel, exportEntradasExcel, exportSalidasExcel, exportLotesExcel, exportTrazabilidadExcel, exportFreshnessExcel } from "../lib/exportExcel";
+import { exportSalidasCsv } from "../lib/exportCsv";
+import { DOCUMENTO_MATERIAL_PENDING } from "../lib/salidasExportRows";
 
 /* ── DataTable column defs for stock tab ──────────────────────────────────── */
 const stockColHelper = createColumnHelper<StockItemRow>();
@@ -188,7 +191,8 @@ export default function ReportsPage() {
   const [salDateFrom, setSalDateFrom] = useState("");
   const [salDateTo, setSalDateTo] = useState("");
   const [salDatePreset, setSalDatePreset] = useState("");
-  const [salApplied, setSalApplied] = useState({ productId: "", dateFrom: "", dateTo: "" });
+  const [salDocumentoMaterialStatus, setSalDocumentoMaterialStatus] = useState<"" | "PENDING" | "COMPLETED">("");
+  const [salApplied, setSalApplied] = useState({ productId: "", dateFrom: "", dateTo: "", documentoMaterialStatus: "" as "" | "PENDING" | "COMPLETED" });
   const [salPage, setSalPage] = useState(1);
   const [salLimit, setSalLimit] = useState(20);
 
@@ -266,6 +270,7 @@ export default function ReportsPage() {
       productId: salApplied.productId || undefined,
       dateFrom:  salApplied.dateFrom  || undefined,
       dateTo:    salApplied.dateTo    || undefined,
+      documentoMaterialStatus: salApplied.documentoMaterialStatus || undefined,
     }),
     enabled:  activeTab === "salidas",
     placeholderData: (prev) => prev,
@@ -338,7 +343,7 @@ export default function ReportsPage() {
   const entMeta      = entQ.data?.meta ?? { page: entPage, limit: entLimit, total: 0, totalPages: 1 };
   const salMovements = salQ.data?.data ?? [];
   const salMeta      = salQ.data?.meta ?? { page: salPage, limit: salLimit, total: 0, totalPages: 1 };
-  const dailyStock   = dailyQ.data ?? [];
+  const dailyStock   = useMemo(() => dailyQ.data ?? [], [dailyQ.data]);
   const traceResult  = traceQ.data ?? null;
   const freshnessData = freshnessQ.data ?? [];
 
@@ -470,14 +475,14 @@ export default function ReportsPage() {
                 <>
                   <button
                     className="btn"
-                    onClick={() => exportStockPDF(stock.items, `stock-${new Date().toISOString().slice(0, 10)}`)}
+                    onClick={() => exportStockPDF(stock.items, `stock-${todayInputValue()}`)}
                     title="Exportar PDF"
                   >
                      PDF
                   </button>
                   <button
                     className="btn"
-                    onClick={() => void exportStockExcel(stock.items, `stock-${new Date().toISOString().slice(0, 10)}`)}
+                    onClick={() => void exportStockExcel(stock.items, `stock-${todayInputValue()}`)}
                     title="Exportar Excel"
                   >
                      Excel
@@ -509,7 +514,7 @@ export default function ReportsPage() {
                 enableFiltering
                 enableColumnVisibility
                 enableExport
-                exportFilename={`stock-${new Date().toISOString().slice(0, 10)}`}
+                exportFilename={`stock-${todayInputValue()}`}
                 maxHeight={480}
                 emptyMessage="Sin posiciones de stock"
                 caption="Stock actual por depósito"
@@ -580,10 +585,10 @@ export default function ReportsPage() {
             </button>
             {movements.length > 0 && (
               <>
-                <button className="btn" onClick={() => exportMovementsPDF(movements, `movimientos-${new Date().toISOString().slice(0,10)}`)} title="Exportar PDF">
+                <button className="btn" onClick={() => exportMovementsPDF(movements, `movimientos-${todayInputValue()}`)} title="Exportar PDF">
                    PDF
                 </button>
-                <button className="btn" onClick={() => void exportMovementsExcel(movements, `movimientos-${new Date().toISOString().slice(0,10)}`)} title="Exportar Excel">
+                <button className="btn" onClick={() => void exportMovementsExcel(movements, `movimientos-${todayInputValue()}`)} title="Exportar Excel">
                    Excel
                 </button>
               </>
@@ -697,8 +702,8 @@ export default function ReportsPage() {
             </button>
             {lotResults.length > 0 && (
               <>
-                <button className="btn" onClick={() => exportLotesPDF(lotResults, `lotes-${new Date().toISOString().slice(0,10)}`)} title="Exportar PDF"> PDF</button>
-                <button className="btn" onClick={() => void exportLotesExcel(lotResults, `lotes-${new Date().toISOString().slice(0,10)}`)} title="Exportar Excel"> Excel</button>
+                <button className="btn" onClick={() => exportLotesPDF(lotResults, `lotes-${todayInputValue()}`)} title="Exportar PDF"> PDF</button>
+                <button className="btn" onClick={() => void exportLotesExcel(lotResults, `lotes-${todayInputValue()}`)} title="Exportar Excel"> Excel</button>
               </>
             )}
           </div>
@@ -742,10 +747,10 @@ export default function ReportsPage() {
                         : <span style={{ color: "var(--muted)", fontSize: 12 }}>{lot.productId}</span>}
                     </td>
                     <td style={{ color: "var(--muted)", fontSize: 12 }}>
-                      {lot.fechaVencimiento ? new Date(lot.fechaVencimiento).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" }) : "—"}
+                      {fmtDate(lot.fechaVencimiento)}
                     </td>
                     <td style={{ color: "var(--muted)", fontSize: 12 }}>
-                      {lot.fechaFabricacion ? new Date(lot.fechaFabricacion).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" }) : "—"}
+                      {fmtDate(lot.fechaFabricacion)}
                     </td>
                     <td style={{ fontSize: 12 }}>{lot.proveedor ?? "—"}</td>
                     <td>
@@ -820,8 +825,8 @@ export default function ReportsPage() {
             }}>Limpiar</button>
             {entries.length > 0 && (
               <>
-                <button className="btn" onClick={() => exportEntradasPDF(entries, `entradas-${new Date().toISOString().slice(0,10)}`)} title="Exportar PDF"> PDF</button>
-                <button className="btn" onClick={() => void exportEntradasExcel(entries, `entradas-${new Date().toISOString().slice(0,10)}`)} title="Exportar Excel"> Excel</button>
+                <button className="btn" onClick={() => exportEntradasPDF(entries, `entradas-${todayInputValue()}`)} title="Exportar PDF"> PDF</button>
+                <button className="btn" onClick={() => void exportEntradasExcel(entries, `entradas-${todayInputValue()}`)} title="Exportar Excel"> Excel</button>
               </>
             )}
           </div>
@@ -894,7 +899,7 @@ export default function ReportsPage() {
                               className="btn btn--primary"
                               style={{ fontSize: 12, padding: "4px 10px", whiteSpace: "nowrap" }}
                               onClick={() => {
-                                setRegModal({ id: m.id, label: `${m.material.code} · ${new Date(m.date).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" })}` });
+                                setRegModal({ id: m.id, label: `${m.material.code} · ${fmtDate(m.date)}` });
                                 setRegForm(emptyReg);
                                 setRegError("");
                               }}
@@ -1096,19 +1101,30 @@ export default function ReportsPage() {
                   onChange={(e) => setSalDateTo(e.target.value)} />
               </>
             )}
+            <select
+              className="input"
+              value={salDocumentoMaterialStatus}
+              aria-label="Estado de Documento Material"
+              onChange={(e) => setSalDocumentoMaterialStatus(e.target.value as "" | "PENDING" | "COMPLETED")}
+            >
+              <option value="">Todos los documentos SAP</option>
+              <option value="PENDING">Documento Material pendiente</option>
+              <option value="COMPLETED">Documento Material completo</option>
+            </select>
             <button className="btn btn--primary" onClick={() => {
-              setSalApplied({ productId: salProductId, dateFrom: salDateFrom, dateTo: salDateTo });
+              setSalApplied({ productId: salProductId, dateFrom: salDateFrom, dateTo: salDateTo, documentoMaterialStatus: salDocumentoMaterialStatus });
               setSalPage(1);
             }}>Buscar</button>
             <button className="btn" onClick={() => {
-              setSalProductId(""); setSalDateFrom(""); setSalDateTo(""); setSalDatePreset("");
-              setSalApplied({ productId: "", dateFrom: "", dateTo: "" });
+              setSalProductId(""); setSalDateFrom(""); setSalDateTo(""); setSalDatePreset(""); setSalDocumentoMaterialStatus("");
+              setSalApplied({ productId: "", dateFrom: "", dateTo: "", documentoMaterialStatus: "" });
               setSalPage(1);
             }}>Limpiar</button>
             {salMovements.length > 0 && (
               <>
-                <button className="btn" onClick={() => exportSalidasPDF(salMovements, `salidas-${new Date().toISOString().slice(0,10)}`)} title="Exportar PDF"> PDF</button>
-                <button className="btn" onClick={() => void exportSalidasExcel(salMovements, `salidas-${new Date().toISOString().slice(0,10)}`)} title="Exportar Excel"> Excel</button>
+                <button className="btn" onClick={() => exportSalidasPDF(salMovements, `salidas-${todayInputValue()}`)} title="Exportar PDF"> PDF</button>
+                <button className="btn" onClick={() => void exportSalidasExcel(salMovements, `salidas-${todayInputValue()}`)} title="Exportar Excel"> Excel</button>
+                <button className="btn" onClick={() => exportSalidasCsv(salMovements, `salidas-${todayInputValue()}`)} title="Exportar CSV"> CSV</button>
               </>
             )}
           </div>
@@ -1123,13 +1139,14 @@ export default function ReportsPage() {
           {salMovements.length > 0 && (
             <>
               <div style={{ overflowX: "auto" }}>
-                <table className="table" style={{ minWidth: 960 }}>
+                <table className="table" style={{ minWidth: 1120 }}>
                   <thead>
                     <tr>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("createdAt")}>Fecha y hora{sortArrow(salidasSort.sortConfig, "createdAt")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("material.code")}>Material{sortArrow(salidasSort.sortConfig, "material.code")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("lotCode")}>Lote{sortArrow(salidasSort.sortConfig, "lotCode")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("sapLot")}>Lote SAP{sortArrow(salidasSort.sortConfig, "sapLot")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("documentoMaterial")}>Documento Material{sortArrow(salidasSort.sortConfig, "documentoMaterial")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("quantity")}>Cantidad{sortArrow(salidasSort.sortConfig, "quantity")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("pallets")}>Pallets{sortArrow(salidasSort.sortConfig, "pallets")}</th>
                       <th scope="col">Desde</th>
@@ -1154,6 +1171,11 @@ export default function ReportsPage() {
                         <td><strong>{m.material.code}</strong><span style={{ color: "var(--muted)", marginLeft: 4 }}>· {m.material.description}</span></td>
                         <td style={{ fontSize: 12 }}>{r.lot ?? "—"}</td>
                         <td style={{ fontFamily: "monospace", fontSize: 12 }}>{r.sapLot ?? "—"}</td>
+                        <td style={{ fontFamily: "monospace", fontSize: 12 }}>
+                          {m.documentoMaterial?.trim() ? m.documentoMaterial : (
+                            <span className="badge badge--estado-pendiente">{DOCUMENTO_MATERIAL_PENDING}</span>
+                          )}
+                        </td>
                         <td style={{ fontWeight: 600, textDecoration: voided ? "line-through" : undefined }}>{r.quantity.toLocaleString("es-PY")} {m.material.unitOfMeasure ?? ""}</td>
                         <td style={{ textAlign: "center" }}>{r.pallets != null ? r.pallets : "—"}</td>
                         <td style={{ fontSize: 12 }}>
@@ -1265,6 +1287,9 @@ export default function ReportsPage() {
                     {event.documentNumber && (
                       <span>MIC/Fac/Rem.: <strong style={{ color: "var(--text)" }}>{event.documentNumber}</strong></span>
                     )}
+                    {event.type === "EXIT" && (
+                      <span>Documento Material: <strong style={{ color: "var(--text)" }}>{event.documentoMaterial?.trim() || DOCUMENTO_MATERIAL_PENDING}</strong></span>
+                    )}
                     <span>Origen: {event.fromWarehouseName || event.warehouseName || "-"} / {event.fromLocationCode || "-"}</span>
                     <span>Destino: {event.toWarehouseName || event.destination || event.warehouseName || "-"} / {event.toLocationCode || event.locationCode || "-"}</span>
                     {event.notes && <span>Notas: {event.notes}</span>}
@@ -1290,7 +1315,7 @@ export default function ReportsPage() {
               {freshnessData.length > 0 && (
                 <button
                   className="btn"
-                  onClick={() => void exportFreshnessExcel(freshnessData, `control-frescura-${new Date().toISOString().slice(0, 10)}`)}
+                  onClick={() => void exportFreshnessExcel(freshnessData, `control-frescura-${todayInputValue()}`)}
                   title="Exportar Excel"
                 >
                    Excel
@@ -1390,7 +1415,7 @@ export default function ReportsPage() {
                           <td style={{ fontSize: 12 }}>{r.lotCode}</td>
                           <td style={{ fontFamily: "monospace", fontSize: 12, color: "var(--muted)" }}>{r.sapLot ?? "—"}</td>
                           <td style={{ fontWeight: 600, textAlign: "right" }}>{r.stockActual.toLocaleString("es-PY")}</td>
-                          <td style={{ fontSize: 12 }}>{new Date(r.fechaVencimiento).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" })}</td>
+                          <td style={{ fontSize: 12 }}>{fmtDate(r.fechaVencimiento)}</td>
                           <td style={{ fontWeight: 700, color: diasColor, textAlign: "right" }}>
                             {r.diasRestantes < 0 ? `${r.diasRestantes}` : `+${r.diasRestantes}`}
                           </td>

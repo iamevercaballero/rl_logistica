@@ -14,6 +14,7 @@ import {
 } from 'class-validator';
 import { adjustmentRequestTypes, AdjustmentRequestType } from '../entities/adjustment-request.entity';
 import { PalletItemDto } from '../../movements/dto/create-movement.dto';
+import { IsBusinessDateString } from '../../../common/is-business-date-string.validator';
 
 export class AdjustmentLineDto {
   @IsUUID()
@@ -123,11 +124,11 @@ export class AdjustmentQueryDto {
   search?: string;
 
   @IsOptional()
-  @IsString()
+  @IsBusinessDateString()
   from?: string;
 
   @IsOptional()
-  @IsString()
+  @IsBusinessDateString()
   to?: string;
 
   @IsOptional()

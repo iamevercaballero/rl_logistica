@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { fmtDateMonthShort, fmtDateShort, fmtDateLong } from "../utils/dateFormat";
+import { daysUntil, fmtDateMonthShort, fmtDateShort, fmtDateLong } from "../utils/dateFormat";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CartesianGrid,
@@ -51,14 +51,6 @@ function formatRelativeDate(value: string) {
   const diffH = Math.floor(diffMin / 60);
   if (diffH < 24) return `Hace ${diffH} h`;
   return fmtDateMonthShort(date);
-}
-
-function daysUntil(dateStr: string): number {
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  const target = new Date(dateStr);
-  target.setHours(0, 0, 0, 0);
-  return Math.round((target.getTime() - now.getTime()) / 86_400_000);
 }
 
 function expiryColor(days: number): string {
@@ -407,7 +399,7 @@ export default function DashboardPage() {
     const lots = expiringQ.data ?? [];
     return lots
       .filter((l) => l.fechaVencimiento && l.stockActual > 0)
-      .map((l) => ({ ...l, daysUntilExpiry: daysUntil(l.fechaVencimiento!) }))
+      .map((l) => ({ ...l, daysUntilExpiry: daysUntil(l.fechaVencimiento!)! }))
       .filter((l) => l.daysUntilExpiry <= 60)
       .sort((a, b) => a.daysUntilExpiry - b.daysUntilExpiry)
       .slice(0, 12);

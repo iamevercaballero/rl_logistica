@@ -4,6 +4,7 @@ import ExcelJS from "exceljs";
 import type { StockItemRow, ReportMovementRow, DailyStockRow, ReportTraceEvent, FreshnessRow } from "../api/reports";
 import type { Movement } from "../api/movements";
 import type { Lot } from "../api/lots";
+import { buildSalidasExportRows, DOCUMENTO_MATERIAL_PENDING } from "./salidasExportRows";
 
 /* ── Brand colors ─────────────────────────────────────────────────────────── */
 
@@ -415,7 +416,7 @@ export async function exportEntradasExcel(data: Movement[], filename = "entradas
 /* ── Salidas report (expands lotsDetail like the UI table) ───────────────── */
 
 export async function exportSalidasExcel(data: Movement[], filename = "salidas"): Promise<void> {
-  const COL_COUNT = 12;
+  const COL_COUNT = 13;
   const wb = buildBaseWorkbook();
   const ws = wb.addWorksheet("Salidas");
 
@@ -424,6 +425,7 @@ export async function exportSalidasExcel(data: Movement[], filename = "salidas")
     { key: "material", width: 40 },
     { key: "lote",     width: 20 },
     { key: "sapLot",   width: 20 },
+    { key: "documentoMaterial", width: 22 },
     { key: "qty",      width: 16 },
     { key: "pallets",  width: 10 },
     { key: "desde",    width: 28 },
@@ -436,40 +438,29 @@ export async function exportSalidasExcel(data: Movement[], filename = "salidas")
 
   addReportHeader(ws, "Reporte de Salidas", COL_COUNT);
   applyHeaderRow(ws.addRow([]), [
-    "Fecha y hora", "Material", "Lote", "Lote SAP", "Cantidad", "Pallets",
+    "Fecha y hora", "Material", "Lote", "Lote SAP", "Documento Material", "Cantidad", "Pallets",
     "Desde", "Destino", "Transportista", "Chofer", "Notas", "Estado",
   ]);
 
   let rowCount = 0;
-  for (const m of data) {
-    const lots = (m.lotsDetail && m.lotsDetail.length > 0)
-      ? m.lotsDetail
-      : [{ lotCode: m.lotCode ?? null, sapLot: m.sapLot ?? null, pallets: m.pallets ?? null, quantity: m.quantity }];
-
-    lots.forEach((ld) => {
-      const row = ws.addRow([
-        fmtDateTime(m.createdAt ?? m.date),
-        `${m.material.code} - ${m.material.description}`,
-        ld.lotCode ?? "-",
-        ld.sapLot ?? "-",
-        ld.quantity,
-        ld.pallets ?? "-",
-        `${m.warehouse?.name ?? m.from?.warehouseName ?? "-"}${(m.location?.code ?? m.from?.locationCode) ? ` / ${m.location?.code ?? m.from?.locationCode}` : ""}`,
-        m.destination ?? "-",
-        m.carrier ?? "-",
-        m.driver ?? "-",
-        m.notes ?? "-",
-        m.voidStatus === "VOIDED" ? "Anulado" : "Normal",
-      ]);
-      styleDataRow(row, rowCount, COL_COUNT);
-      if (m.voidStatus === "VOIDED") {
-        for (let col = 1; col <= COL_COUNT; col++) row.getCell(col).font = { ...row.getCell(col).font, strike: true, color: { argb: "FF9C9488" } };
-      }
-      row.getCell(5).alignment = { horizontal: "right" };
-      row.getCell(5).numFmt = '#,##0';
-      row.getCell(6).alignment = { horizontal: "center" };
-      rowCount++;
-    });
+  for (const item of buildSalidasExportRows(data)) {
+    const row = ws.addRow([
+      item.fecha, item.material, item.lote, item.sapLot, item.documentoMaterial,
+      item.quantity, item.pallets, item.desde, item.destino, item.carrier,
+      item.driver, item.notes, item.estado,
+    ]);
+    styleDataRow(row, rowCount, COL_COUNT);
+    if (item.documentoMaterial === DOCUMENTO_MATERIAL_PENDING) {
+      row.getCell(5).fill = { type: "pattern", pattern: "solid", fgColor: { argb: `FF${YELLOW_LIGHT}` } };
+      row.getCell(5).font = { bold: true, color: { argb: "FF92400E" } };
+    }
+    if (item.estado === "Anulado") {
+      for (let col = 1; col <= COL_COUNT; col++) row.getCell(col).font = { ...row.getCell(col).font, strike: true, color: { argb: "FF9C9488" } };
+    }
+    row.getCell(6).alignment = { horizontal: "right" };
+    row.getCell(6).numFmt = '#,##0';
+    row.getCell(7).alignment = { horizontal: "center" };
+    rowCount++;
   }
 
   ws.views = [{ state: "frozen", ySplit: 3 }];

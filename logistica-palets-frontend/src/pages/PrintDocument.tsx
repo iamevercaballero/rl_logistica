@@ -1,40 +1,15 @@
 import { useEffect, useMemo } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { getDocumentForPrint, type DocumentPrintData, type PrintProduct, type PrintLot, type PrintWarehouse, type PrintPallet, type PrintLocation, type RawMovement } from "../api/movements";
-
-function fmt(date?: string | null): string {
-  if (!date) return "—";
-  return new Date(date).toLocaleDateString("es-PY", {
-    timeZone: "America/Asuncion",
-    day: "2-digit", month: "2-digit", year: "numeric",
-  });
-}
+import { getDocumentForPrint, type DocumentPrintData, type PrintProduct, type PrintLot, type PrintPallet, type RawMovement } from "../api/movements";
+import { formatDateOnly } from "../utils/dateFormat";
+import { buildPrintPresentation, PRINT_PLATE_LABEL } from "./printDocumentModel";
 
 function buildMaps(data: DocumentPrintData) {
   const productMap: Record<string, PrintProduct> = Object.fromEntries(data.products.map((p) => [p.id, p]));
   const lotMap: Record<string, PrintLot> = Object.fromEntries(data.lots.map((l) => [l.id, l]));
-  const warehouseMap: Record<string, PrintWarehouse> = Object.fromEntries(data.warehouses.map((w) => [w.id, w]));
   const palletMap: Record<string, PrintPallet> = Object.fromEntries(data.pallets.map((p) => [p.id, p]));
-  const locationMap: Record<string, PrintLocation> = Object.fromEntries(data.locations.map((l) => [l.id, l]));
-  return { productMap, lotMap, warehouseMap, palletMap, locationMap };
-}
-
-/**
- * Nombre del depósito para el encabezado. La entrada sí pide Depósito y queda
- * en `document.warehouseId`; la salida no lo pide (los pallets pueden salir de
- * ubicaciones distintas), así que ahí se deriva de dónde salió cada pallet —
- * la ubicación que ya se guarda por línea en `details`.
- */
-function resolveWarehouseName(data: DocumentPrintData): string {
-  const { warehouseMap, locationMap } = buildMaps(data);
-  if (data.document.warehouseId) return warehouseMap[data.document.warehouseId]?.name ?? "—";
-  const names = [...new Set(
-    data.details
-      .map((d) => (d.locationId ? locationMap[d.locationId]?.warehouse?.name : null))
-      .filter((v): v is string => !!v),
-  )];
-  return names.length > 0 ? names.join(", ") : "—";
+  return { productMap, lotMap, palletMap };
 }
 
 export default function PrintDocumentPage() {
@@ -76,10 +51,10 @@ export default function PrintDocumentPage() {
     return <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh", fontFamily: "sans-serif", color: "red" }}>Error cargando el documento.</div>;
   }
 
-  const { document } = data;
+  const { document, logistics } = data;
   const isEntry = document.type === "ENTRY";
   const docTypeLabel = isEntry ? "NOTA DE ENTRADA" : "NOTA DE ENTREGA";
-  const warehouseName = resolveWarehouseName(data);
+  const presentation = buildPrintPresentation(data);
   const totalQty  = lines.reduce((s, l) => s + l.movement.quantity, 0);
   const totalPallets = lines.reduce((s, l) => s + l.palletCount, 0);
 
@@ -183,7 +158,7 @@ export default function PrintDocumentPage() {
 
         /* ── Firmas ── */
         .signatures {
-          display: grid; grid-template-columns: 1fr 1fr 1fr;
+          display: grid;
           gap: 0; border: 1.5px solid #000; margin-top: 16px;
         }
         .sig-cell {
@@ -191,7 +166,9 @@ export default function PrintDocumentPage() {
           border-right: 1.5px solid #000;
         }
         .sig-cell:last-child { border-right: none; }
-        .sig-header { font-size: 11px; font-weight: 900; text-transform: uppercase; border-bottom: 1px solid #000; padding-bottom: 3px; margin-bottom: 28px; color: #000; }
+        .sig-header { font-size: 11px; font-weight: 900; text-transform: uppercase; border-bottom: 1px solid #000; padding-bottom: 3px; margin-bottom: 5px; color: #000; }
+        .sig-prefill { min-height: 15px; font-size: 10px; font-weight: 700; color: #000; }
+        .sig-space { height: 24px; }
         .sig-line-label { font-size: 10px; color: #333; border-top: 1px solid #555; padding-top: 3px; }
         .sig-ruc { font-size: 10px; color: #333; margin-top: 6px; }
 
@@ -230,15 +207,15 @@ export default function PrintDocumentPage() {
         <div className="doc-issuer">
           <div className="doc-issuer-row">
             <span className="dil">Fecha de Emisión:</span>
-            <span className="div">{fmt(document.date)}</span>
+            <span className="div">{formatDateOnly(document.date)}</span>
           </div>
           <div className="doc-issuer-row">
             <span className="dil">{isEntry ? "Proveedor:" : "Destino:"}</span>
             <span className="div">{(isEntry ? document.supplier : document.destination) ?? "—"}</span>
           </div>
           <div className="doc-issuer-row">
-            <span className="dil">Depósito:</span>
-            <span className="div">{warehouseName}</span>
+            <span className="dil">{presentation.warehouseLabel}:</span>
+            <span className="div">{presentation.warehouseName}</span>
           </div>
           {document.documentNumber && (
             <div className="doc-issuer-row">
@@ -249,26 +226,26 @@ export default function PrintDocumentPage() {
         </div>
 
         {/* ── DATOS DEL VEHÍCULO ── */}
-        {(document.carrier || document.vehiclePlate || document.driver) && (
+        {(logistics.carrier || logistics.vehiclePlate || logistics.driver || logistics.driverDocument) && (
           <>
             <div className="section-title">Datos del Vehículo de Transporte</div>
             <div className="vehicle-grid">
-              {document.carrier && (
+              {logistics.carrier && (
                 <div className="vehicle-row">
                   <span className="dil">Transportadora / Marca:</span>
-                  <span className="div">{document.carrier}</span>
+                  <span className="div">{logistics.carrier}</span>
                 </div>
               )}
-              {document.vehiclePlate && (
+              {logistics.vehiclePlate && (
                 <div className="vehicle-row">
-                  <span className="dil">Patente / RUA:</span>
-                  <span className="div" style={{ fontFamily: "monospace", fontWeight: 700 }}>{document.vehiclePlate}</span>
+                  <span className="dil">{PRINT_PLATE_LABEL}:</span>
+                  <span className="div" style={{ fontFamily: "monospace", fontWeight: 700 }}>{logistics.vehiclePlate}</span>
                 </div>
               )}
-              {document.driver && (
+              {logistics.driver && (
                 <div className="vehicle-row">
                   <span className="dil">Nombre del Conductor:</span>
-                  <span className="div">{document.driver}</span>
+                  <span className="div">{logistics.driver}</span>
                 </div>
               )}
               <div className="vehicle-row">
@@ -276,8 +253,8 @@ export default function PrintDocumentPage() {
                 {/* Sale de la ficha del conductor en Transportes. Si el remito
                     es viejo (o el vehículo no la tiene cargada), se deja la
                     línea para completarla a mano. */}
-                {document.driverDocument ? (
-                  <span className="div">{document.driverDocument}</span>
+                {logistics.driverDocument ? (
+                  <span className="div">{logistics.driverDocument}</span>
                 ) : (
                   <span className="div" style={{ borderBottom: "1px solid #999", minWidth: 120, display: "inline-block" }}>&nbsp;</span>
                 )}
@@ -320,7 +297,7 @@ export default function PrintDocumentPage() {
                 </td>
                 <td className="col-exp">
                   {lots.length === 0 ? "—" : lots.map((l) => (
-                    <div key={l.id}>{fmt(l.fechaVencimiento)}</div>
+                    <div key={l.id}>{formatDateOnly(l.fechaVencimiento)}</div>
                   ))}
                 </td>
                 <td className="col-pal">{palletCount > 0 ? palletCount : "—"}</td>
@@ -355,27 +332,21 @@ export default function PrintDocumentPage() {
         </div>
 
         {/* ── FIRMAS ── */}
-        <div className="signatures">
-          <div className="sig-cell">
-            <div className="sig-header">Autorizado por</div>
-            <div className="sig-line-label">Firma y Aclaración</div>
-            <div className="sig-ruc">RUC / CI: ___________________</div>
-          </div>
-          <div className="sig-cell">
-            <div className="sig-header">Transportado por</div>
-            <div className="sig-line-label">Firma y Aclaración</div>
-            <div className="sig-ruc">RUC / CI: ___________________</div>
-          </div>
-          <div className="sig-cell">
-            <div className="sig-header">Recibido por</div>
-            <div className="sig-line-label">Firma y Aclaración</div>
-            <div className="sig-ruc">RUC / CI: ___________________</div>
-          </div>
+        <div className="signatures" style={{ gridTemplateColumns: `repeat(${presentation.signatures.length}, 1fr)` }}>
+          {presentation.signatures.map((signature) => (
+            <div className="sig-cell" key={signature.label}>
+              <div className="sig-header">{signature.label}</div>
+              <div className="sig-prefill">{signature.prefill || <>&nbsp;</>}</div>
+              <div className="sig-space" />
+              <div className="sig-line-label">Firma y Aclaración</div>
+              <div className="sig-ruc">RUC / CI: ___________________</div>
+            </div>
+          ))}
         </div>
 
         {/* ── PIE ── */}
         <div className="doc-footer">
-          Impreso el {fmt(new Date().toISOString())} · RL Logística WMS · {document.code}
+          Impreso el {formatDateOnly(new Date())} · RL Logística WMS · {document.code}
           {document.status && <> · Estado: {document.status.replace("_", " ")}</>}
         </div>
 

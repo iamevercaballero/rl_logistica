@@ -18,6 +18,7 @@ import {
 } from './dto/adjustment.dto';
 import { MovementsService } from '../movements/movements.service';
 import { CreateMovementDto } from '../movements/dto/create-movement.dto';
+import { endOfBusinessDay, parseBusinessDate } from '../../common/date';
 import { CacheService } from '../cache/cache.service';
 import { EventsGateway } from '../events/events.gateway';
 
@@ -298,8 +299,12 @@ export class AdjustmentsService {
 
     if (query.type) qb.andWhere('r.type = :type', { type: query.type });
     if (query.status) qb.andWhere('r.status = :status', { status: query.status });
-    if (query.from) qb.andWhere('r.createdAt >= :from', { from: new Date(query.from) });
-    if (query.to) qb.andWhere('r.createdAt <= :to', { to: new Date(query.to + 'T23:59:59') });
+    // from/to son días calendario elegidos en el filtro: se anclan a
+    // Asunción, igual que se guardan los timestamps reales (antes `from`
+    // anclaba en UTC y `to` en la zona implícita del proceso — ni siquiera
+    // coincidían entre sí).
+    if (query.from) qb.andWhere('r.createdAt >= :from', { from: parseBusinessDate(query.from) });
+    if (query.to) qb.andWhere('r.createdAt <= :to', { to: endOfBusinessDay(query.to) });
     if (query.search) {
       qb.andWhere(
         '(r.code ILIKE :s OR r.reason ILIKE :s OR r.notes ILIKE :s OR r.adjustmentCategory ILIKE :s)',

@@ -418,7 +418,7 @@ describe('motor de stock — cantidades decimales', () => {
       productId,
       warehouseId: base.warehouse.id,
       locationId: base.location.id,
-      palletItems: [{ lotCode: 'Z011008201', quantity: 5 }],
+      palletItems: [{ lotCode: 'Z011008201', quantity: 5, fechaVencimiento: '2027-01-01' }],
     }, USER_ID);
 
     await entrada(base.product.id);
@@ -457,7 +457,7 @@ describe('motor de stock — colocación en pilas', () => {
   it('un lote apilable hasta 3 arma 2 pilas para 6 pallets', async () => {
     await ds.getRepository(Product).update(base.product.id, { stackable: true, maxStackLevel: 3 });
 
-    const palletItems = Array.from({ length: 6 }, (_, i) => ({ lotCode: `LP-${i}`, quantity: 10 }));
+    const palletItems = Array.from({ length: 6 }, (_, i) => ({ lotCode: `LP-${i}`, quantity: 10, fechaVencimiento: '2027-01-01' }));
     await service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
       palletItems,
@@ -478,7 +478,7 @@ describe('motor de stock — colocación en pilas', () => {
   it('un producto no apilable abre una pila por pallet', async () => {
     await ds.getRepository(Product).update(base.product.id, { stackable: false });
 
-    const palletItems = Array.from({ length: 3 }, (_, i) => ({ lotCode: `LNS-${i}`, quantity: 10 }));
+    const palletItems = Array.from({ length: 3 }, (_, i) => ({ lotCode: `LNS-${i}`, quantity: 10, fechaVencimiento: '2027-01-01' }));
     await service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
       palletItems,
@@ -495,11 +495,11 @@ describe('motor de stock — colocación en pilas', () => {
 
     await service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
-      palletItems: [{ lotCode: 'LC-1', quantity: 10 }],
+      palletItems: [{ lotCode: 'LC-1', quantity: 10, fechaVencimiento: '2027-01-01' }],
     }, USER_ID);
     await service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
-      palletItems: [{ lotCode: 'LC-2', quantity: 10 }],
+      palletItems: [{ lotCode: 'LC-2', quantity: 10, fechaVencimiento: '2027-01-01' }],
     }, USER_ID);
 
     const pallets = await ds.getRepository(Pallet).find({ where: { currentLocationId: base.location.id } });
@@ -519,12 +519,12 @@ describe('motor de stock — colocación en pilas', () => {
 
     await service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: tight.id,
-      palletItems: [{ lotCode: 'LT-1', quantity: 10 }],
+      palletItems: [{ lotCode: 'LT-1', quantity: 10, fechaVencimiento: '2027-01-01' }],
     }, USER_ID);
 
     await expect(service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: tight.id,
-      palletItems: [{ lotCode: 'LT-2', quantity: 10 }],
+      palletItems: [{ lotCode: 'LT-2', quantity: 10, fechaVencimiento: '2027-01-01' }],
     }, USER_ID)).rejects.toThrow(/bases libres/);
 
     // El rechazo no debe dejar stock/pallet a medio escribir.
@@ -542,7 +542,7 @@ describe('motor de stock — colocación en pilas', () => {
 
     await service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: tight.id,
-      palletItems: [{ lotCode: 'LF-1', quantity: 10 }, { lotCode: 'LF-2', quantity: 10 }],
+      palletItems: [{ lotCode: 'LF-1', quantity: 10, fechaVencimiento: '2027-01-01' }, { lotCode: 'LF-2', quantity: 10, fechaVencimiento: '2027-01-01' }],
     }, USER_ID);
 
     const pila = await ds.getRepository(Pila).findOne({ where: { locationId: tight.id } });
@@ -550,7 +550,7 @@ describe('motor de stock — colocación en pilas', () => {
 
     await expect(service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: tight.id,
-      palletItems: [{ lotCode: 'LF-3', quantity: 10 }],
+      palletItems: [{ lotCode: 'LF-3', quantity: 10, fechaVencimiento: '2027-01-01' }],
     }, USER_ID)).rejects.toThrow(/bases libres/);
   });
 
@@ -565,7 +565,7 @@ describe('motor de stock — colocación en pilas', () => {
 
     await service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: tight.id,
-      palletItems: [{ lotCode: 'ML-1', quantity: 10 }, { lotCode: 'ML-2', quantity: 10 }],
+      palletItems: [{ lotCode: 'ML-1', quantity: 10, fechaVencimiento: '2027-01-01' }, { lotCode: 'ML-2', quantity: 10, fechaVencimiento: '2027-01-01' }],
     }, USER_ID);
 
     const pallets = await ds.getRepository(Pallet).find({ where: { currentLocationId: tight.id } });
@@ -574,7 +574,7 @@ describe('motor de stock — colocación en pilas', () => {
 
     await expect(service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: tight.id,
-      palletItems: [{ lotCode: 'ML-3', quantity: 10 }],
+      palletItems: [{ lotCode: 'ML-3', quantity: 10, fechaVencimiento: '2027-01-01' }],
     }, USER_ID)).rejects.toThrow(/bases libres/);
   });
 });
@@ -583,7 +583,7 @@ describe('transferencias — mismas reglas de colocación en todos los módulos'
   async function entryAt(location: Location, lotCode: string) {
     await service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: location.id,
-      palletItems: [{ lotCode, quantity: 10 }],
+      palletItems: [{ lotCode, quantity: 10, fechaVencimiento: '2027-01-01' }],
     }, USER_ID);
     return ds.getRepository(Pallet).findOneOrFail({
       where: { currentLocationId: location.id, code: `${base.product.code}-${lotCode}-P1` },
@@ -701,7 +701,7 @@ describe('corregir movimiento — peso por pallet y sin cambios', () => {
   async function entradaSimple(weightKg?: number) {
     const res = await service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
-      palletItems: [{ lotCode: 'LP-1', quantity: 10, weightKg }],
+      palletItems: [{ lotCode: 'LP-1', quantity: 10, weightKg, fechaVencimiento: '2027-01-01' }],
     }, USER_ID);
     const lot = await lotByCode(base.product.id, 'LP-1');
     const [pallet] = await ds.getRepository(Pallet).find({ where: { lotId: lot!.id } });
@@ -762,7 +762,7 @@ describe('movimientos — encargado desde el JWT', () => {
     service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
       encargadoRecepcionId,
-      palletItems: [{ lotCode: `LE-${Math.random().toString(36).slice(2, 7)}`, quantity: 10 }],
+      palletItems: [{ lotCode: `LE-${Math.random().toString(36).slice(2, 7)}`, quantity: 10, fechaVencimiento: '2027-01-01' }],
     }, USER_ID, role);
 
   it('sin encargado explícito, queda el usuario logueado', async () => {
@@ -804,8 +804,8 @@ describe('motor de stock — ubicación y peso por pallet', () => {
     await service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
       palletItems: [
-        { lotCode: 'LS-1', quantity: 10 },                          // hereda la ubicación de la línea
-        { lotCode: 'LS-2', quantity: 25, locationId: otro.id },     // sector propio
+        { lotCode: 'LS-1', quantity: 10, fechaVencimiento: '2027-01-01' },                          // hereda la ubicación de la línea
+        { lotCode: 'LS-2', quantity: 25, locationId: otro.id, fechaVencimiento: '2027-01-01' },     // sector propio
       ],
     }, USER_ID);
 
@@ -830,8 +830,8 @@ describe('motor de stock — ubicación y peso por pallet', () => {
     await service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
       palletItems: [
-        { lotCode: 'LT-A', quantity: 10 },
-        { lotCode: 'LT-B', quantity: 10, locationId: otro.id },
+        { lotCode: 'LT-A', quantity: 10, fechaVencimiento: '2027-01-01' },
+        { lotCode: 'LT-B', quantity: 10, locationId: otro.id, fechaVencimiento: '2027-01-01' },
       ],
     }, USER_ID);
 
@@ -855,9 +855,9 @@ describe('motor de stock — ubicación y peso por pallet', () => {
     await service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
       palletItems: [
-        { lotCode: 'LW-1', quantity: 10, weightKg: 812.5 },
-        { lotCode: 'LW-2', quantity: 10, weightKg: 934.25 },
-        { lotCode: 'LW-3', quantity: 10 }, // sin peso declarado
+        { lotCode: 'LW-1', quantity: 10, weightKg: 812.5, fechaVencimiento: '2027-01-01' },
+        { lotCode: 'LW-2', quantity: 10, weightKg: 934.25, fechaVencimiento: '2027-01-01' },
+        { lotCode: 'LW-3', quantity: 10, fechaVencimiento: '2027-01-01' }, // sin peso declarado
       ],
     }, USER_ID);
 
@@ -872,8 +872,8 @@ describe('motor de stock — ubicación y peso por pallet', () => {
     await expect(service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
       palletItems: [
-        { lotCode: 'LX-1', quantity: 10 },
-        { lotCode: 'LX-2', quantity: 10, locationId: inexistente },
+        { lotCode: 'LX-1', quantity: 10, fechaVencimiento: '2027-01-01' },
+        { lotCode: 'LX-2', quantity: 10, locationId: inexistente, fechaVencimiento: '2027-01-01' },
       ],
     }, USER_ID)).rejects.toThrow();
 
@@ -889,9 +889,9 @@ describe('motor de stock — liberación de bases', () => {
     await service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
       palletItems: [
-        { lotCode: 'LR-1', quantity: 10 },
-        { lotCode: 'LR-2', quantity: 10 },
-        { lotCode: 'LR-3', quantity: 10 },
+        { lotCode: 'LR-1', quantity: 10, fechaVencimiento: '2027-01-01' },
+        { lotCode: 'LR-2', quantity: 10, fechaVencimiento: '2027-01-01' },
+        { lotCode: 'LR-3', quantity: 10, fechaVencimiento: '2027-01-01' },
       ],
     }, USER_ID);
 
@@ -919,7 +919,7 @@ describe('motor de stock — liberación de bases', () => {
 
     await service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
-      palletItems: [{ lotCode: 'LU-1', quantity: 10 }, { lotCode: 'LU-2', quantity: 10 }],
+      palletItems: [{ lotCode: 'LU-1', quantity: 10, fechaVencimiento: '2027-01-01' }, { lotCode: 'LU-2', quantity: 10, fechaVencimiento: '2027-01-01' }],
     }, USER_ID);
 
     const pallets = await ds.getRepository(Pallet).find({ where: { currentLocationId: base.location.id } });
@@ -951,7 +951,7 @@ describe('motor de stock — liberación de bases', () => {
 
     await service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: tight.id,
-      palletItems: [{ lotCode: 'LV-1', quantity: 10 }],
+      palletItems: [{ lotCode: 'LV-1', quantity: 10, fechaVencimiento: '2027-01-01' }],
     }, USER_ID);
 
     const [pallet] = await ds.getRepository(Pallet).find({ where: { currentLocationId: tight.id } });
@@ -963,7 +963,7 @@ describe('motor de stock — liberación de bases', () => {
     // Con la base liberada, la entrada nueva entra sin error de capacidad.
     await expect(service.create({
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: tight.id,
-      palletItems: [{ lotCode: 'LV-2', quantity: 10 }],
+      palletItems: [{ lotCode: 'LV-2', quantity: 10, fechaVencimiento: '2027-01-01' }],
     }, USER_ID)).resolves.toBeDefined();
   });
 });

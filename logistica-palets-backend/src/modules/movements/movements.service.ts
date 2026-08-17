@@ -19,6 +19,7 @@ import { DocumentSequenceService } from './document-sequence.service';
 import { Product } from '../products/entities/product.entity';
 import { Location } from '../locations/entities/location.entity';
 import { Warehouse } from '../warehouses/entities/warehouse.entity';
+import { User } from '../users/entities/user.entity';
 import { Stock } from '../stocks/entities/stock.entity';
 import { Lot } from '../lots/entities/lot.entity';
 import { normalizeLotCode } from '../lots/lots.service';
@@ -27,7 +28,13 @@ import { DeepPartial } from 'typeorm/common/DeepPartial';
 import { EventsGateway } from '../events/events.gateway';
 import { CacheService } from '../cache/cache.service';
 import { roundQuantity } from '../../common/quantity';
-import { businessToday, parseBusinessDate, toBusinessDateString } from '../../common/date';
+import {
+  businessToday,
+  endOfBusinessDay,
+  formatBusinessDate,
+  parseBusinessDate,
+  parseExcelDateCell,
+} from '../../common/date';
 import { PilasService, PlacementItem } from '../pilas/pilas.service';
 
 @Injectable()
@@ -162,7 +169,7 @@ export class MovementsService {
         type: compensatingType,
         status: 'PENDIENTE_APROBACION',
         reason: 'DIFERENCIA_INVENTARIO',
-        notes: `Anulación automática de ${movement.type} del ${new Date(movement.date).toLocaleDateString('es-PY')}${movement.documentNumber ? ` · MIC/Fac/Rem. ${movement.documentNumber}` : ''}`,
+        notes: `Anulación automática de ${movement.type} del ${formatBusinessDate(movement.date)}${movement.documentNumber ? ` · MIC/Fac/Rem. ${movement.documentNumber}` : ''}`,
         warehouseId: movement.warehouseId ?? null,
         locationId: movement.locationId ?? null,
         originalMovementId: id,
@@ -451,6 +458,7 @@ export class MovementsService {
         driver: dto.driver?.trim() || undefined,
         driverDocument: dto.driverDocument?.trim() || undefined,
         destination: dto.destination?.trim() || undefined,
+        documentoMaterial: dto.type === 'EXIT' ? dto.documentoMaterial?.trim() || undefined : undefined,
         notes: dto.notes?.trim() || undefined,
         palletId: dto.palletId ?? undefined,
         lotId: dto.lotId ?? undefined,
@@ -723,26 +731,131 @@ export class MovementsService {
   }
 
   /**
+   * Resuelve el único depósito operativo del documento antes de emitir su
+   * código. En ENTRADA exige el depósito elegido y valida las ubicaciones por
+   * pallet. En SALIDA bloquea los pallets referenciados y deriva su depósito
+   * físico de origen, rechazando explícitamente cualquier mezcla.
+   */
+  private async resolveDocumentWarehouse(
+    manager: EntityManager,
+    dto: CreateDocumentDto,
+  ): Promise<Warehouse> {
+    const locationIds = new Set<string>();
+    const palletIds = new Set<string>();
+
+    for (const line of dto.lines) {
+      if (line.locationId) locationIds.add(line.locationId);
+      for (const item of line.palletItems ?? []) {
+        if (item.palletId) palletIds.add(item.palletId);
+        else if (item.locationId) locationIds.add(item.locationId);
+      }
+    }
+
+    if (dto.type === 'EXIT' && palletIds.size > 0) {
+      const ids = [...palletIds];
+      const pallets = await manager.getRepository(Pallet)
+        .createQueryBuilder('pallet')
+        .setLock('pessimistic_write')
+        .where('pallet.id IN (:...ids)', { ids })
+        .getMany();
+
+      if (pallets.length !== ids.length) {
+        throw new BadRequestException('La salida referencia uno o más pallets inexistentes');
+      }
+      const unlocated = pallets.find((pallet) => !pallet.currentLocationId);
+      if (unlocated) {
+        throw new BadRequestException(
+          `No se puede determinar el depósito origen del pallet ${unlocated.code}: no tiene ubicación`,
+        );
+      }
+      for (const pallet of pallets) locationIds.add(pallet.currentLocationId!);
+    }
+
+    const locations = locationIds.size
+      ? await manager.getRepository(Location).find({ where: { id: In([...locationIds]) } })
+      : [];
+    if (locations.length !== locationIds.size) {
+      throw new BadRequestException('El documento referencia una ubicación inexistente');
+    }
+
+    const locationWarehouseIds = new Set(locations.map((location) => location.warehouse.id));
+    let warehouseId: string;
+
+    if (dto.type === 'ENTRY') {
+      if (!dto.warehouseId) {
+        throw new BadRequestException('La entrada requiere un depósito');
+      }
+      if ([...locationWarehouseIds].some((id) => id !== dto.warehouseId)) {
+        throw new BadRequestException('Todos los pallets de la entrada deben pertenecer al depósito indicado');
+      }
+      warehouseId = dto.warehouseId;
+    } else {
+      if (locationWarehouseIds.size > 1) {
+        throw new BadRequestException(
+          'No se puede emitir una RLNS con pallets de depósitos distintos. Separá la salida por depósito.',
+        );
+      }
+      const derivedWarehouseId = [...locationWarehouseIds][0];
+      if (dto.warehouseId && derivedWarehouseId && dto.warehouseId !== derivedWarehouseId) {
+        throw new BadRequestException('El depósito indicado no coincide con el origen real de los pallets');
+      }
+      warehouseId = derivedWarehouseId ?? dto.warehouseId ?? '';
+      if (!warehouseId) {
+        throw new BadRequestException('No se pudo determinar el depósito origen de la salida');
+      }
+    }
+
+    const warehouse = await manager.findOne(Warehouse, { where: { id: warehouseId } });
+    if (!warehouse || !warehouse.active) {
+      throw new BadRequestException('El depósito del documento no existe o está inactivo');
+    }
+    if (!warehouse.documentCode || !/^\d{2}$/.test(warehouse.documentCode)) {
+      throw new BadRequestException(
+        `El depósito ${warehouse.name} no tiene configurado un código documental de 2 dígitos`,
+      );
+    }
+    return warehouse;
+  }
+
+  /**
    * Crea un documento logístico (remito) con múltiples líneas (producto+lote+pallets)
    * en UNA sola transacción. Genera el código interno RLNE/RLNS y vincula cada
    * movimiento a la cabecera. Si una línea falla, se revierte TODO el documento.
    */
   async createDocument(dto: CreateDocumentDto, userId: string, requesterRole?: string) {
+    if (dto.type !== 'EXIT' && dto.documentoMaterial?.trim()) {
+      throw new BadRequestException('Documento Material solo corresponde a una Salida');
+    }
     const encargadoId = this.resolveEncargado(dto.encargadoId, userId, requesterRole);
 
     const result = await this.withUniqueRetry(() => this.dataSource.transaction(async (manager) => {
       const docDate = parseBusinessDate(dto.date);
-      const code = await this.sequences.nextCode(manager, dto.type, docDate);
+      const warehouse = await this.resolveDocumentWarehouse(manager, dto);
+      const users = await manager.getRepository(User).find({
+        where: { id: In([...new Set([userId, encargadoId])]) },
+      });
+      const createdBy = users.find((user) => user.id === userId);
+      const encargado = users.find((user) => user.id === encargadoId);
+      if (!createdBy) throw new NotFoundException('Usuario creador inexistente');
+      if (!encargado) throw new NotFoundException('Usuario encargado inexistente');
+
+      const code = await this.sequences.nextCode(manager, dto.type, docDate, {
+        warehouseId: warehouse.id,
+        documentCode: warehouse.documentCode!,
+      });
 
       const document = manager.create(LogisticsDocument, {
         code,
         type: dto.type,
         status: 'APROBADO',
         date: docDate,
-        documentNumber: dto.documentNumber?.trim() || null,
+        documentNumber: dto.type === 'ENTRY' ? dto.documentNumber?.trim() || null : null,
         supplier: dto.supplier?.trim() || null,
         destination: dto.destination?.trim() || null,
-        warehouseId: dto.warehouseId ?? null,
+        documentoMaterial: dto.type === 'EXIT' ? dto.documentoMaterial?.trim() || null : null,
+        warehouseId: warehouse.id,
+        warehouseNameSnapshot: warehouse.name,
+        warehouseDocumentCodeSnapshot: warehouse.documentCode,
         carrier: dto.carrier?.trim() || null,
         driver: dto.driver?.trim() || null,
         driverDocument: dto.driverDocument?.trim() || null,
@@ -750,6 +863,10 @@ export class MovementsService {
         encargadoId,
         notes: dto.notes?.trim() || null,
         createdById: userId,
+        createdByUsernameSnapshot: createdBy.username,
+        createdByFullNameSnapshot: createdBy.fullName?.trim() || null,
+        encargadoUsernameSnapshot: encargado.username,
+        encargadoFullNameSnapshot: encargado.fullName?.trim() || null,
       });
       await manager.save(document);
 
@@ -764,14 +881,15 @@ export class MovementsService {
           productId: line.productId,
           quantity: line.quantity,
           pallets: line.pallets,
-          warehouseId: dto.warehouseId,
+          warehouseId: warehouse.id,
           locationId: line.locationId,
-          documentNumber: dto.documentNumber,
+          documentNumber: dto.type === 'ENTRY' ? dto.documentNumber : undefined,
           supplier: dto.supplier,
           carrier: dto.carrier,
           driver: dto.driver,
           driverDocument: dto.driverDocument,
           destination: dto.destination,
+          documentoMaterial: dto.type === 'EXIT' ? dto.documentoMaterial : undefined,
           notes: dto.notes,
           lotId: line.lotId,
           encargadoRecepcionId: encargadoId,
@@ -794,7 +912,7 @@ export class MovementsService {
         documentId: document.id,
         code: document.code,
         type: dto.type,
-        warehouseId: dto.warehouseId ?? null,
+        warehouseId: warehouse.id,
         movementIds,
       };
     }));
@@ -830,7 +948,7 @@ export class MovementsService {
     if (query.from) qb.andWhere('d.date >= :from', { from: this.toStartDate(query.from) });
     if (query.to) qb.andWhere('d.date <= :to', { to: this.toEndDate(query.to) });
     if (query.search) {
-      qb.andWhere('(d.code ILIKE :s OR d.documentNumber ILIKE :s OR d.supplier ILIKE :s OR d.destination ILIKE :s)', {
+      qb.andWhere('(d.code ILIKE :s OR d.documentNumber ILIKE :s OR d.supplier ILIKE :s OR d.destination ILIKE :s OR d."documentoMaterial" ILIKE :s)', {
         s: `%${query.search}%`,
       });
     }
@@ -875,7 +993,11 @@ export class MovementsService {
     return { document, movements, details };
   }
 
-  /** Documento enriquecido para impresión: incluye nombres de producto, lote, depósito y pallets. */
+  /**
+   * Documento enriquecido para impresión. La cabecera usa snapshots guardados
+   * al emitir; las consultas vivas son únicamente fallback para documentos
+   * históricos anteriores a la migración de snapshots.
+   */
   async findDocumentForPrint(id: string) {
     const { document, movements, details } = await this.findDocument(id);
 
@@ -886,9 +1008,6 @@ export class MovementsService {
     ])] as string[];
     const palletIds = [...new Set(details.map((d) => d.palletId).filter(Boolean))] as string[];
 
-    // Depósito real de una SALIDA: el remito no lo pide (el producto puede salir
-    // de pallets en distintas ubicaciones), así que la nota lo deriva de dónde
-    // salió cada pallet — la ubicación que ya se guarda por línea en el detalle.
     const detailLocationIds = [...new Set(details.map((d) => d.locationId).filter(Boolean))] as string[];
     const locations = detailLocationIds.length
       ? await this.dataSource.getRepository(Location).findByIds(detailLocationIds)
@@ -900,14 +1019,100 @@ export class MovementsService {
       ...locations.map((l) => l.warehouse?.id),
     ].filter((v): v is string => !!v))];
 
-    const [products, lots, warehouses, pallets] = await Promise.all([
+    const userIds = [...new Set([document.createdById, document.encargadoId].filter((value): value is string => !!value))];
+
+    const [products, lots, warehouses, pallets, users] = await Promise.all([
       productIds.length ? this.dataSource.getRepository(Product).findByIds(productIds) : Promise.resolve([] as Product[]),
       lotIds.length ? this.dataSource.getRepository(Lot).findByIds(lotIds) : Promise.resolve([] as Lot[]),
       warehouseIds.length ? this.dataSource.getRepository(Warehouse).findByIds(warehouseIds) : Promise.resolve([] as Warehouse[]),
       palletIds.length ? this.dataSource.getRepository(Pallet).findByIds(palletIds) : Promise.resolve([] as Pallet[]),
+      userIds.length ? this.dataSource.getRepository(User).findByIds(userIds) : Promise.resolve([] as User[]),
     ]);
 
-    return { document, movements, details, products, lots, warehouses, pallets, locations };
+    const warehouseMap = new Map(warehouses.map((warehouse) => [warehouse.id, warehouse]));
+    const userMap = new Map(users.map((user) => [user.id, user]));
+
+    const liveDocumentWarehouse = document.warehouseId
+      ? warehouseMap.get(document.warehouseId)
+      : undefined;
+    const historicalLocationWarehouses = [...new Map(
+      locations
+        .map((location) => location.warehouse)
+        .filter(Boolean)
+        .map((warehouse) => [warehouse.id, warehouse]),
+    ).values()];
+
+    const warehouse = document.warehouseNameSnapshot
+      ? {
+          id: document.warehouseId ?? null,
+          name: document.warehouseNameSnapshot,
+          documentCode: document.warehouseDocumentCodeSnapshot ?? null,
+        }
+      : liveDocumentWarehouse
+        ? {
+            id: liveDocumentWarehouse.id,
+            name: liveDocumentWarehouse.name,
+            documentCode: liveDocumentWarehouse.documentCode ?? null,
+          }
+        : historicalLocationWarehouses.length > 0
+          ? {
+              id: historicalLocationWarehouses.length === 1 ? historicalLocationWarehouses[0].id : null,
+              name: historicalLocationWarehouses.map((item) => item.name).join(', '),
+              documentCode: historicalLocationWarehouses.length === 1
+                ? (historicalLocationWarehouses[0].documentCode ?? null)
+                : null,
+            }
+          : null;
+
+    const liveCreatedBy = userMap.get(document.createdById);
+    const createdBy = document.createdByUsernameSnapshot
+      ? {
+          id: document.createdById,
+          username: document.createdByUsernameSnapshot,
+          fullName: document.createdByFullNameSnapshot ?? null,
+        }
+      : {
+          id: document.createdById,
+          username: liveCreatedBy?.username ?? '—',
+          fullName: liveCreatedBy?.fullName ?? null,
+        };
+
+    const liveEncargado = document.encargadoId ? userMap.get(document.encargadoId) : undefined;
+    const encargado = document.encargadoId
+      ? document.encargadoUsernameSnapshot
+        ? {
+            id: document.encargadoId,
+            username: document.encargadoUsernameSnapshot,
+            fullName: document.encargadoFullNameSnapshot ?? null,
+          }
+        : {
+            id: document.encargadoId,
+            username: liveEncargado?.username ?? '—',
+            fullName: liveEncargado?.fullName ?? null,
+          }
+      : null;
+
+    const logistics = {
+      carrier: document.carrier ?? null,
+      driver: document.driver ?? null,
+      driverDocument: document.driverDocument ?? null,
+      vehiclePlate: document.vehiclePlate ?? null,
+    };
+
+    return {
+      document,
+      warehouse,
+      createdBy,
+      encargado,
+      logistics,
+      movements,
+      details,
+      products,
+      lots,
+      warehouses,
+      pallets,
+      locations,
+    };
   }
 
   /**
@@ -919,20 +1124,59 @@ export class MovementsService {
     const result = await this.dataSource.transaction(async (manager) => {
       const movement = await manager.findOne(Movement, { where: { id } });
       if (!movement) throw new NotFoundException('Movimiento no encontrado');
+      if (movement.type !== 'EXIT' && dto.documentoMaterial !== undefined) {
+        throw new BadRequestException('Documento Material solo corresponde a una Salida');
+      }
 
       const logs: DeepPartial<RegularizationLog>[] = [];
 
       const movementStringFields = [
-        'documentNumber', 'supplier', 'carrier', 'driver', 'destination', 'notes',
+        'documentNumber', 'supplier', 'carrier', 'driver', 'destination', 'documentoMaterial', 'notes',
       ] as const;
 
+      let documentoMaterialChanged = false;
+      let documentoMaterialValue: string | null = movement.documentoMaterial?.trim() || null;
+
       for (const field of movementStringFields) {
-        const newVal = dto[field]?.trim() ?? null;
-        if (newVal === null) continue;
-        const oldVal = (movement[field] as string | undefined) ?? null;
+        if (dto[field] === undefined) continue;
+        const newVal = dto[field]?.trim() || null;
+        const oldRaw = movement[field] as string | null | undefined;
+        const oldVal = oldRaw?.trim() || null;
         if (newVal !== oldVal) {
           logs.push({ movementId: id, field, oldValue: oldVal, newValue: newVal, changedById: userId, reason: dto.reason });
-          (movement as unknown as Record<string, unknown>)[field] = newVal || null;
+          (movement as unknown as Record<string, unknown>)[field] = newVal;
+          if (field === 'documentoMaterial') {
+            documentoMaterialChanged = true;
+            documentoMaterialValue = newVal;
+          }
+        }
+      }
+
+      // Documento Material es de cabecera: mantener iguales todas las líneas
+      // de una RLNS multi-producto y el snapshot de logistics_documents.
+      if (documentoMaterialChanged && movement.documentId) {
+        const siblings = await manager.find(Movement, { where: { documentId: movement.documentId } });
+        for (const sibling of siblings) {
+          if (sibling.id === movement.id) continue;
+          const siblingOld = sibling.documentoMaterial?.trim() || null;
+          if (siblingOld === documentoMaterialValue) continue;
+          sibling.documentoMaterial = documentoMaterialValue;
+          await manager.save(sibling);
+          logs.push({
+            movementId: sibling.id,
+            field: 'documentoMaterial',
+            oldValue: siblingOld,
+            newValue: documentoMaterialValue,
+            changedById: userId,
+            reason: dto.reason,
+          });
+        }
+
+        const document = await manager.findOne(LogisticsDocument, { where: { id: movement.documentId } });
+        if (document) {
+          document.documentoMaterial = documentoMaterialValue;
+          document.updatedAt = new Date();
+          await manager.save(document);
         }
       }
 
@@ -1300,7 +1544,7 @@ export class MovementsService {
           type,
           status: 'PENDIENTE_APROBACION',
           reason: 'DIFERENCIA_INVENTARIO',
-          notes: `Corrección de cantidad de ${isExit ? 'SALIDA' : 'ENTRADA'} del ${new Date(movement.date).toLocaleDateString('es-PY')}` +
+          notes: `Corrección de cantidad de ${isExit ? 'SALIDA' : 'ENTRADA'} del ${formatBusinessDate(movement.date)}` +
             `${movement.documentNumber ? ` · MIC/Fac/Rem. ${movement.documentNumber}` : ''} — ${dto.reason}`,
           warehouseId: movement.warehouseId ?? null,
           locationId: movement.locationId ?? null,
@@ -1494,6 +1738,7 @@ export class MovementsService {
         'movement.carrier AS carrier',
         'movement.driver AS driver',
         'movement.destination AS destination',
+        'movement.documentoMaterial AS "documentoMaterial"',
         'movement.notes AS notes',
         'movement.status AS status',
         'movement."voidStatus" AS "voidStatus"',
@@ -1544,6 +1789,13 @@ export class MovementsService {
     if (query.productId) qb.andWhere('movement."productId" = :productId', { productId: query.productId });
     if (query.type?.length) qb.andWhere('movement.type IN (:...types)', { types: query.type });
     if (query.status) qb.andWhere('movement.status = :status', { status: query.status });
+    if (query.documentoMaterialStatus === 'PENDING') {
+      qb.andWhere('movement.type = :documentoMaterialType', { documentoMaterialType: 'EXIT' });
+      qb.andWhere('NULLIF(TRIM(movement."documentoMaterial"), \'\') IS NULL');
+    } else if (query.documentoMaterialStatus === 'COMPLETED') {
+      qb.andWhere('movement.type = :documentoMaterialType', { documentoMaterialType: 'EXIT' });
+      qb.andWhere('NULLIF(TRIM(movement."documentoMaterial"), \'\') IS NOT NULL');
+    }
     if (query.dateFrom) qb.andWhere('movement.date >= :dateFrom', { dateFrom: this.toStartDate(query.dateFrom) });
     if (query.dateTo) qb.andWhere('movement.date <= :dateTo', { dateTo: this.toEndDate(query.dateTo) });
     if (query.search?.trim()) {
@@ -1553,6 +1805,7 @@ export class MovementsService {
           LOWER(COALESCE(movement."documentNumber", '')) LIKE :search
           OR LOWER(COALESCE(movement.supplier, '')) LIKE :search
           OR LOWER(COALESCE(movement.destination, '')) LIKE :search
+          OR LOWER(COALESCE(movement."documentoMaterial", '')) LIKE :search
           OR LOWER(COALESCE(movement.notes, '')) LIKE :search
           OR LOWER(COALESCE(product.code, '')) LIKE :search
           OR LOWER(COALESCE(product.description, '')) LIKE :search
@@ -1616,6 +1869,7 @@ export class MovementsService {
         'movement.carrier AS carrier',
         'movement.driver AS driver',
         'movement.destination AS destination',
+        'movement.documentoMaterial AS "documentoMaterial"',
         'movement.notes AS notes',
         'movement.status AS status',
         'movement."voidStatus" AS "voidStatus"',
@@ -1669,6 +1923,10 @@ export class MovementsService {
 
     if (dto.type === 'TRANSFER' && dto.fromLocationId === dto.toLocationId) {
       throw new BadRequestException('Origen y destino no pueden ser la misma ubicación');
+    }
+
+    if (dto.type !== 'EXIT' && dto.documentoMaterial?.trim()) {
+      throw new BadRequestException('Documento Material solo corresponde a una Salida');
     }
 
     // Fecha de vencimiento obligatoria en toda entrada — salvo las provisorias
@@ -1830,14 +2088,16 @@ export class MovementsService {
 
   private parseNumber(value: unknown) { return Number(value) || 0; }
 
+  // value es un día calendario elegido por el usuario en un filtro: se ancla
+  // a medianoche en Asunción (no UTC), igual que se guardan los timestamps
+  // reales vía parseBusinessDate — anclar en UTC desalineaba el rango hasta
+  // ~4hs contra los movimientos guardados cerca del cierre del día.
   private toStartDate(value: string) {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return new Date(`${value}T00:00:00.000Z`);
-    return new Date(value);
+    return parseBusinessDate(value);
   }
 
   private toEndDate(value: string) {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return new Date(`${value}T23:59:59.999Z`);
-    return new Date(value);
+    return endOfBusinessDay(value);
   }
 
   private mapMovementRow(row: Record<string, unknown>) {
@@ -1851,7 +2111,8 @@ export class MovementsService {
       quantity: this.parseNumber(row.quantity),
       pallets: row.pallets === null || row.pallets === undefined ? null : this.parseNumber(row.pallets),
       documentNumber: row.documentNumber, supplier: row.supplier, carrier: row.carrier,
-      driver: row.driver, destination: row.destination, notes: row.notes,
+      driver: row.driver, destination: row.destination,
+      documentoMaterial: row.documentoMaterial, notes: row.notes,
       createdById: row.createdById, createdAt: row.createdAt ?? row.date,
       palletId: row.palletId, lotId: row.lotId, lotCode: row.lotCode ?? null, sapLot: row.sapLot ?? null,
       lotCount: this.parseNumber(row.lotCount),
@@ -2022,13 +2283,7 @@ export class MovementsService {
       return Number.isFinite(n) ? roundQuantity(n) : null;
     };
 
-    /** `undefined` = celda vacía (sin vencimiento); `null` = valor presente pero inválido. */
-    const parseDate = (value: unknown): string | null | undefined => {
-      if (value instanceof Date) return toBusinessDateString(value);
-      const str = String(value ?? '').trim();
-      if (!str) return undefined;
-      return toBusinessDateString(str);
-    };
+    const parseDate = parseExcelDateCell;
 
     const rowIssues: StockSnapshotRowIssue[] = [];
     const addIssue = (severity: 'ERROR' | 'WARNING', row: number, reason: string, code?: string) => {

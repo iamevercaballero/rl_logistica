@@ -3,6 +3,7 @@ import {
   PrimaryGeneratedColumn,
   Column,
   OneToMany,
+  Index,
 } from 'typeorm';
 import { Location } from '../../locations/entities/location.entity';
 
@@ -13,6 +14,11 @@ export class Warehouse {
 
   @Column()
   name: string;
+
+  /** Código operativo estable usado en RLNE/RLNS (01, 02, ...). */
+  @Index('idx_warehouse_document_code', { unique: true })
+  @Column({ type: 'varchar', length: 2, nullable: true })
+  documentCode?: string | null;
 
   @Column({ nullable: true })
   address: string;

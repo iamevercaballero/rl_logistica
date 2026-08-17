@@ -7,8 +7,14 @@
  */
 import {
   APP_TIME_ZONE,
+  businessDateTimeParts,
+  businessDaysUntil,
   businessToday,
+  endOfBusinessDay,
+  formatBusinessDate,
   parseBusinessDate,
+  parseExcelDateCell,
+  shiftBusinessDate,
   toBusinessDateString,
 } from '../src/common/date';
 
@@ -96,5 +102,125 @@ describe('fecha/hora — businessToday', () => {
 
   it('tiene formato YYYY-MM-DD', () => {
     expect(businessToday()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+});
+
+describe('fecha/hora — formatBusinessDate (DD/MM/AAAA para notas de auditoría)', () => {
+  it('2027-08-15 (mediodía UTC, sin ambigüedad de zona) se muestra 15/08/2027', () => {
+    expect(formatBusinessDate(new Date('2027-08-15T12:00:00.000Z'))).toBe('15/08/2027');
+  });
+
+  it('2026-08-10 se muestra 10/08/2026', () => {
+    expect(formatBusinessDate(new Date('2026-08-10T12:00:00.000Z'))).toBe('10/08/2026');
+  });
+
+  it('coincide con toBusinessDateString reordenado — misma fuente de verdad', () => {
+    const instante = new Date('2026-08-05T14:30:00.000Z');
+    const [y, m, d] = toBusinessDateString(instante)!.split('-');
+    expect(formatBusinessDate(instante)).toBe(`${d}/${m}/${y}`);
+  });
+});
+
+describe('fecha/hora — shiftBusinessDate', () => {
+  it('suma y resta días de calendario', () => {
+    expect(shiftBusinessDate('2026-08-10', 1)).toBe('2026-08-11');
+    expect(shiftBusinessDate('2026-08-10', -1)).toBe('2026-08-09');
+  });
+
+  it('cruza bordes de mes y de año', () => {
+    expect(shiftBusinessDate('2026-08-31', 1)).toBe('2026-09-01');
+    expect(shiftBusinessDate('2026-12-31', 1)).toBe('2027-01-01');
+  });
+});
+
+describe('fecha/hora — businessDaysUntil (Control Frescura, KPIs, alertas de vencimiento)', () => {
+  it('un lote que vence HOY da 0, no -1 — el bug que tenía reports.service.ts::freshness()', () => {
+    expect(businessDaysUntil('2026-08-10', '2026-08-10')).toBe(0);
+  });
+
+  it('cuenta los días correctamente en ambas direcciones', () => {
+    expect(businessDaysUntil('2026-08-15', '2026-08-10')).toBe(5);
+    expect(businessDaysUntil('2026-08-05', '2026-08-10')).toBe(-5);
+  });
+
+  it('cruza correctamente un borde de año', () => {
+    expect(businessDaysUntil('2027-01-01', '2026-12-31')).toBe(1);
+  });
+
+  it('null/undefined → null, no NaN', () => {
+    expect(businessDaysUntil(null)).toBeNull();
+    expect(businessDaysUntil(undefined)).toBeNull();
+  });
+
+  it('usa hoy-en-Asunción como base por defecto', () => {
+    expect(businessDaysUntil(businessToday())).toBe(0);
+  });
+});
+
+describe('fecha/hora — endOfBusinessDay (rangos de fecha en reportes/movimientos/ajustes)', () => {
+  it('incluye un movimiento cargado a las 23:59 de Asunción dentro del filtro "hasta hoy"', () => {
+    // 23:59 en Asunción cae dentro de [inicio, fin] del mismo día calendario.
+    const offsetMin = (parseBusinessDate('2026-08-10').getTime() - Date.UTC(2026, 7, 10)) / 60_000;
+    const veintitresYCincuentaYNueve = new Date(Date.UTC(2026, 7, 11) - offsetMin * 60_000 - 60_000);
+    const fin = endOfBusinessDay('2026-08-10');
+    expect(veintitresYCincuentaYNueve.getTime()).toBeLessThanOrEqual(fin.getTime());
+    expect(veintitresYCincuentaYNueve.getTime()).toBeGreaterThanOrEqual(parseBusinessDate('2026-08-10').getTime());
+  });
+
+  it('excluye la medianoche del día siguiente', () => {
+    const fin = endOfBusinessDay('2026-08-10');
+    const medianocheSiguiente = parseBusinessDate('2026-08-11');
+    expect(fin.getTime()).toBeLessThan(medianocheSiguiente.getTime());
+  });
+});
+
+describe('fecha/hora — businessDateTimeParts (SIFEN / xml-generator)', () => {
+  it('separa fecha y hora en Asunción para un instante real', () => {
+    const instante = new Date('2026-08-05T14:30:00.000Z');
+    const { date, time } = businessDateTimeParts(instante);
+    expect(date).toBe(toBusinessDateString(instante));
+    expect(time).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+  });
+
+  it('la medianoche se muestra 00:00:00, no 24:00:00 (gotcha de ICU con hour12)', () => {
+    // Medianoche exacta en Asunción del 2026-08-10.
+    const medianoche = parseBusinessDate('2026-08-10');
+    const { date, time } = businessDateTimeParts(medianoche);
+    expect(date).toBe('2026-08-10');
+    expect(time).toBe('00:00:00');
+  });
+});
+
+describe('fecha/hora — parseExcelDateCell (carga inicial de stock desde Excel)', () => {
+  it('"05/08/2026" es 5 de agosto, NO 8 de mayo — el bug crítico confirmado por el audit', () => {
+    // new Date("05/08/2026") lo interpretaría como MM/DD (inglés) = 8 de mayo.
+    expect(parseExcelDateCell('05/08/2026')).toBe('2026-08-05');
+    expect(parseExcelDateCell('05/08/2026')).not.toBe('2026-05-08');
+  });
+
+  it('un día > 12 también se parsea DD/MM (ya funcionaba, pero confirma la convención)', () => {
+    expect(parseExcelDateCell('25/08/2026')).toBe('2026-08-25');
+  });
+
+  it('acepta guión como separador', () => {
+    expect(parseExcelDateCell('05-08-2026')).toBe('2026-08-05');
+  });
+
+  it('acepta un Date real (si SheetJS alguna vez entrega cellDates)', () => {
+    expect(parseExcelDateCell(new Date('2026-08-05T12:00:00.000Z'))).toBe('2026-08-05');
+  });
+
+  it('acepta ya-YYYY-MM-DD sin tocarlo', () => {
+    expect(parseExcelDateCell('2026-08-05')).toBe('2026-08-05');
+  });
+
+  it('celda vacía → undefined (sin vencimiento, no es un error)', () => {
+    expect(parseExcelDateCell('')).toBeUndefined();
+    expect(parseExcelDateCell(null)).toBeUndefined();
+    expect(parseExcelDateCell(undefined)).toBeUndefined();
+  });
+
+  it('mes o día fuera de rango → null (valor inválido, no se adivina)', () => {
+    expect(parseExcelDateCell('32/13/2026')).toBeNull();
   });
 });

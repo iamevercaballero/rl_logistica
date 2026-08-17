@@ -83,6 +83,12 @@ export class CreateDocumentDto {
   @MaxLength(120)
   destination?: string;
 
+  /** Documento de material informado por SAP (solo Salida). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  documentoMaterial?: string;
+
   /** Depósito principal (destino en entrada, origen en salida). */
   @IsOptional()
   @IsUUID()

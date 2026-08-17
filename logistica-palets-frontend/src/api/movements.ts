@@ -46,6 +46,7 @@ export type Movement = {
   carrier?: string | null;
   driver?: string | null;
   destination?: string | null;
+  documentoMaterial?: string | null;
   notes?: string | null;
   lotId?: string | null;
   lotCode?: string | null;     // si lotCount > 1 viene concatenado con ", "
@@ -68,6 +69,7 @@ export async function getMovements(params: {
   page?: number; limit?: number; warehouseId?: string; locationId?: string;
   productId?: string; type?: MovementType | MovementType[]; dateFrom?: string; dateTo?: string;
   search?: string; status?: MovementStatus;
+  documentoMaterialStatus?: "PENDING" | "COMPLETED";
 }): Promise<{ data: Movement[]; meta: MovementsMeta }> {
   const { type, ...rest } = params;
   const { data } = await api.get<{ data: Movement[]; meta: MovementsMeta }>("/movements", {
@@ -91,6 +93,7 @@ export async function createMovement(payload: {
   carrier?: string;
   driver?: string;
   destination?: string;
+  documentoMaterial?: string;
   notes?: string;
   lotId?: string;
   encargadoRecepcionId?: string;
@@ -156,6 +159,7 @@ export type CreateDocumentPayload = {
   documentNumber?: string;
   supplier?: string;
   destination?: string;
+  documentoMaterial?: string;
   warehouseId?: string;
   carrier?: string;
   driver?: string;
@@ -177,6 +181,7 @@ export type LogisticsDocument = {
   documentNumber?: string | null;
   supplier?: string | null;
   destination?: string | null;
+  documentoMaterial?: string | null;
   warehouseId?: string | null;
   carrier?: string | null;
   driver?: string | null;
@@ -216,7 +221,15 @@ export async function getDocument(id: string): Promise<{
 
 export type PrintProduct = { id: string; code: string; description: string; unitOfMeasure?: string | null };
 export type PrintLot = { id: string; lotCode: string; productId: string; fechaVencimiento?: string | null; fechaFabricacion?: string | null; sapLot?: string | null };
-export type PrintWarehouse = { id: string; name: string };
+export type PrintWarehouse = { id: string; name: string; documentCode?: string | null };
+export type PrintDocumentWarehouse = { id: string | null; name: string; documentCode: string | null };
+export type PrintUserSnapshot = { id: string; username: string; fullName: string | null };
+export type PrintLogisticsSnapshot = {
+  carrier: string | null;
+  driver: string | null;
+  driverDocument: string | null;
+  vehiclePlate: string | null;
+};
 export type PrintLocation = { id: string; code: string; warehouse?: { id: string; name: string } | null };
 export type PrintPallet = { id: string; code: string; quantity: number; lotId: string; weightKg?: number | null };
 export type PrintDetail = { id: string; movementId: string; palletId?: string | null; lotId?: string | null; locationId?: string | null; quantity: number };
@@ -234,6 +247,7 @@ export type RawMovement = {
   warehouseId?: string | null;
   supplier?: string | null;
   destination?: string | null;
+  documentoMaterial?: string | null;
   carrier?: string | null;
   driver?: string | null;
   notes?: string | null;
@@ -242,6 +256,11 @@ export type RawMovement = {
 
 export type DocumentPrintData = {
   document: LogisticsDocument;
+  /** Snapshots explícitos: el frontend no reconstruye la cabecera consultando catálogos vivos. */
+  warehouse: PrintDocumentWarehouse | null;
+  createdBy: PrintUserSnapshot;
+  encargado: PrintUserSnapshot | null;
+  logistics: PrintLogisticsSnapshot;
   movements: RawMovement[];
   details: PrintDetail[];
   products: PrintProduct[];
@@ -265,6 +284,7 @@ export async function editMovementMetadata(
     carrier?: string;
     driver?: string;
     destination?: string;
+    documentoMaterial?: string;
     notes?: string;
     sapLot?: string;
     fechaVencimiento?: string;
@@ -376,6 +396,7 @@ export async function regularizeMovement(id: string, payload: {
   carrier?: string;
   driver?: string;
   destination?: string;
+  documentoMaterial?: string;
   notes?: string;
   sapLot?: string;
   fechaVencimiento?: string;

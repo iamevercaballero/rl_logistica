@@ -1,4 +1,5 @@
-import { IsDateString, IsIn, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsOptional, IsString } from 'class-validator';
+import { IsBusinessDateString } from '../../../common/is-business-date-string.validator';
 
 /** Estados que un supervisor puede fijar a mano desde la ficha del lote. */
 export const editableLotStatuses = ['NORMAL', 'BLOQUEADO', 'PENDING_REGULARIZATION'] as const;
@@ -17,11 +18,11 @@ export class UpdateLotDto {
   status?: string;
 
   @IsOptional()
-  @IsDateString()
+  @IsBusinessDateString()
   fechaVencimiento?: string;
 
   @IsOptional()
-  @IsDateString()
+  @IsBusinessDateString()
   fechaFabricacion?: string;
 
   @IsOptional()

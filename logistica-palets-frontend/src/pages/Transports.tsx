@@ -26,16 +26,9 @@ import { canCreate, canDelete } from "../auth/rbac";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { formatParaguayPhone, isValidParaguayPhone } from "../utils/phone";
+import { fmtDate, fmtDateTime } from "../utils/dateFormat";
 
 /* ── Helpers ───────────────────────────────────────────────────────────── */
-function fmtDate(s?: string | null): string {
-  if (!s) return "—";
-  return new Date(s).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" });
-}
-function fmtDateTime(s: string | null | undefined): string {
-  if (!s) return "—";
-  return new Date(s).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
-}
 function formatBytes(b: number): string {
   if (b < 1024) return `${b} B`;
   if (b < 1024 * 1024) return `${(b / 1024).toFixed(0)} KB`;

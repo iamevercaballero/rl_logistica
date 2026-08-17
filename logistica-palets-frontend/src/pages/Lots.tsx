@@ -8,6 +8,7 @@ import { useAuth } from "../auth/AuthContext";
 import { canDelete, canUpdate } from "../auth/rbac";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
+import { daysUntil, fmtDateShort, formatDateOnly } from "../utils/dateFormat";
 
 function ChevronIcon({ open }: { open: boolean }) {
   return (
@@ -40,15 +41,9 @@ function PalletStatusBadge({ status }: { status: string }) {
   return <span className={cls[status] ?? "badge"}>{label[status] ?? status}</span>;
 }
 
-function daysUntilExpiry(fecha: string): number {
-  const now = new Date(); now.setHours(0, 0, 0, 0);
-  const target = new Date(fecha); target.setHours(0, 0, 0, 0);
-  return Math.round((target.getTime() - now.getTime()) / 86_400_000);
-}
-
 function ExpiryBadge({ fecha }: { fecha?: string | null }) {
-  if (!fecha) return null;
-  const d = daysUntilExpiry(fecha);
+  const d = daysUntil(fecha);
+  if (d == null) return null;
 
   let color: string;
   let bg: string;
@@ -90,17 +85,12 @@ function ExpiryBadge({ fecha }: { fecha?: string | null }) {
 }
 
 function expiryRowStyle(fecha?: string | null): React.CSSProperties {
-  if (!fecha) return {};
-  const d = daysUntilExpiry(fecha);
+  const d = daysUntil(fecha);
+  if (d == null) return {};
   if (d < 0) return { background: "rgba(239,68,68,0.05)" };
   if (d <= 15) return { background: "rgba(239,68,68,0.04)" };
   if (d <= 60) return { background: "rgba(245,158,11,0.03)" };
   return {};
-}
-
-function fmtDate(iso?: string | null) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit" });
 }
 
 function ExpandedPalletsRow({ lotId, locationMap, colCount }: { lotId: string; locationMap: Record<string, string>; colCount: number }) {
@@ -150,7 +140,7 @@ function ExpandedPalletsRow({ lotId, locationMap, colCount }: { lotId: string; l
                             ? (locationMap[p.currentLocationId] ?? <span style={{ fontFamily: "monospace", fontSize: 11, color: "var(--muted)" }}>{p.currentLocationId.slice(0, 8)}…</span>)
                             : <span style={{ color: "var(--muted)" }}>—</span>}
                         </td>
-                        <td style={{ color: "var(--muted)", fontVariantNumeric: "tabular-nums" }}>{fmtDate(p.createdAt)}</td>
+                        <td style={{ color: "var(--muted)", fontVariantNumeric: "tabular-nums" }}>{fmtDateShort(p.createdAt)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -181,10 +171,10 @@ function ExpandedPalletsRow({ lotId, locationMap, colCount }: { lotId: string; l
                         <td style={{ fontFamily: "monospace", textDecoration: "line-through", color: "var(--muted)", letterSpacing: 0 }}>{p.code}</td>
                         <td style={{ textAlign: "right", color: "var(--muted)", fontVariantNumeric: "tabular-nums", textDecoration: "line-through" }}>{p.quantity.toLocaleString("es-PY")}</td>
                         <td><span className="badge">Despachado</span></td>
-                        <td style={{ color: "var(--muted)", fontVariantNumeric: "tabular-nums" }}>{fmtDate(p.createdAt)}</td>
+                        <td style={{ color: "var(--muted)", fontVariantNumeric: "tabular-nums" }}>{fmtDateShort(p.createdAt)}</td>
                         <td style={{ fontVariantNumeric: "tabular-nums" }}>
                           {p.exitedAt
-                            ? <span style={{ color: "var(--danger)", fontWeight: 600 }}>{fmtDate(p.exitedAt)}</span>
+                            ? <span style={{ color: "var(--danger)", fontWeight: 600 }}>{fmtDateShort(p.exitedAt)}</span>
                             : <span style={{ color: "var(--muted)" }}>—</span>}
                         </td>
                       </tr>
@@ -484,14 +474,16 @@ export default function LotsPage() {
                           <span style={{ color: "var(--muted)", marginLeft: 6 }}>{item.product?.description ?? ""}</span>
                         </td>
                         <td style={{ fontSize: 12, color: "var(--muted)" }}>
-                          {item.fechaFabricacion || <span style={{ color: "var(--muted)" }}>—</span>}
+                          {item.fechaFabricacion
+                            ? formatDateOnly(item.fechaFabricacion)
+                            : <span style={{ color: "var(--muted)" }}>—</span>}
                         </td>
                         <td style={{ fontSize: 12 }}>
                           {item.fechaVencimiento
                             ? (
                               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                 <span style={{ fontVariantNumeric: "tabular-nums", color: "var(--text-variant)" }}>
-                                  {new Date(item.fechaVencimiento).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "2-digit" })}
+                                  {formatDateOnly(item.fechaVencimiento)}
                                 </span>
                                 <ExpiryBadge fecha={item.fechaVencimiento} />
                               </div>

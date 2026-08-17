@@ -3,11 +3,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import QRCode from "qrcode";
 import { getDocumentForPrint, type PrintProduct, type PrintLot, type PrintPallet, type RawMovement } from "../api/movements";
-
-function fmt(date?: string | null): string {
-  if (!date) return "—";
-  return new Date(date).toLocaleDateString("es-PY", { timeZone: "America/Asuncion", day: "2-digit", month: "2-digit", year: "numeric" });
-}
+import { formatDateOnly } from "../utils/dateFormat";
 
 function fmtDash(date?: string | null): string {
   if (!date) return "—";
@@ -191,7 +187,7 @@ export default function PrintLabelsPage() {
 
         return {
           docCode: data.document.code,
-          docDate: fmt(data.document.date),
+          docDate: formatDateOnly(data.document.date),
           docNumber: data.document.documentNumber ?? null,
           supplier: data.document.supplier ?? null,
           palletCode: pallet.code,

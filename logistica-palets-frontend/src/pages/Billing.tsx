@@ -12,6 +12,7 @@ import {
 } from "../api/billing";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
+import { formatDateOnly } from "../utils/dateFormat";
 
 // ─── Constantes de visualización ─────────────────────────────────────────────
 
@@ -317,7 +318,7 @@ export default function BillingPage() {
                         <div style={{ fontWeight: 500 }}>{f.cliente?.razonSocial}</div>
                         <div style={{ color: "var(--muted)", fontSize: 12 }}>RUC: {f.cliente?.ruc}-{f.cliente?.dv}</div>
                       </td>
-                      <td>{new Date(f.fecha).toLocaleDateString("es-PY")}</td>
+                      <td>{formatDateOnly(f.fecha)}</td>
                       <td style={{ textAlign: "right", fontWeight: 600 }}>
                         {f.moneda} {fmtGs(f.totalGeneral)}
                       </td>
@@ -742,7 +743,7 @@ export default function BillingPage() {
               </div>
               <div>
                 <p className="label">Fecha</p>
-                <p>{new Date(detalle.fecha).toLocaleDateString("es-PY")}</p>
+                <p>{formatDateOnly(detalle.fecha)}</p>
               </div>
               <div>
                 <p className="label">Condición de Pago</p>

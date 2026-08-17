@@ -9,6 +9,7 @@ import {
 } from "../api/movements";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
+import { formatDateTimePY } from "../utils/dateFormat";
 
 interface Props {
   movement: Movement;
@@ -44,6 +45,7 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
   const [carrier, setCarrier] = useState(movement.carrier ?? "");
   const [driver, setDriver] = useState(movement.driver ?? "");
   const [destination, setDestination] = useState(movement.destination ?? "");
+  const [documentoMaterial, setDocumentoMaterial] = useState(movement.documentoMaterial ?? "");
   const [notes, setNotes] = useState(movement.notes ?? "");
   const [sapLot, setSapLot] = useState(movement.sapLot ?? "");
   const [fechaVencimiento, setFechaVencimiento] = useState("");
@@ -145,6 +147,9 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
     if (carrier.trim() !== (movement.carrier ?? "")) metaPayload.carrier = carrier.trim();
     if (driver.trim() !== (movement.driver ?? "")) metaPayload.driver = driver.trim();
     if (destination.trim() !== (movement.destination ?? "")) metaPayload.destination = destination.trim();
+    if (isExit && documentoMaterial.trim() !== (movement.documentoMaterial ?? "").trim()) {
+      metaPayload.documentoMaterial = documentoMaterial.trim();
+    }
     if (notes.trim() !== (movement.notes ?? "")) metaPayload.notes = notes.trim();
     if (sapLot.trim() !== (movement.sapLot ?? "")) metaPayload.sapLot = sapLot.trim();
     // `proveedor` deprecado: no se envía más en payloads nuevos.
@@ -333,11 +338,7 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
               {movement.quantity.toLocaleString("es-PY")} unid.
             </div>
             <div style={{ fontSize: 11, color: "var(--muted)" }}>
-              {new Date(movement.createdAt ?? movement.date).toLocaleString("es-PY", {
-                timeZone: "America/Asuncion",
-                day: "2-digit", month: "2-digit", year: "numeric",
-                hour: "2-digit", minute: "2-digit",
-              })}
+              {formatDateTimePY(movement.createdAt ?? movement.date)}
               {movement.warehouse && ` · ${movement.warehouse.name}`}
               {movement.location && ` / ${movement.location.code}`}
             </div>
@@ -388,14 +389,16 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                 gap: 8,
               }}
             >
-              <div>
-                <label style={labelStyle}>N° MIC/Factura/Remito</label>
-                <input
-                  className="input"
-                  value={documentNumber}
-                  onChange={(e) => setDocumentNumber(e.target.value)}
-                />
-              </div>
+              {isEntry && (
+                <div>
+                  <label style={labelStyle}>N° MIC/Factura/Remito</label>
+                  <input
+                    className="input"
+                    value={documentNumber}
+                    onChange={(e) => setDocumentNumber(e.target.value)}
+                  />
+                </div>
+              )}
               {isEntry && (
                 <div>
                   <label style={labelStyle}>Proveedor</label>
@@ -429,6 +432,18 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                     className="input"
                     value={destination}
                     onChange={(e) => setDestination(e.target.value)}
+                  />
+                </div>
+              )}
+              {isExit && (
+                <div>
+                  <label style={labelStyle}>Documento Material</label>
+                  <input
+                    className="input"
+                    value={documentoMaterial}
+                    onChange={(e) => setDocumentoMaterial(e.target.value)}
+                    placeholder="Pendiente"
+                    maxLength={80}
                   />
                 </div>
               )}

@@ -34,7 +34,7 @@ export class LogisticsDocument {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  /** Código interno único: RLNE-2026-000001 (entrada) / RLNS-2026-000001 (salida) */
+  /** Código interno único: RLNE-01-000001 (entrada) / RLNS-01-000001 (salida). */
   @Index('idx_document_code', { unique: true })
   @Column({ type: 'varchar', length: 24 })
   code: string;
@@ -61,9 +61,20 @@ export class LogisticsDocument {
   @Column({ type: 'varchar', length: 120, nullable: true })
   destination?: string | null;
 
+  /** Número de documento de material de SAP, copiado al emitir una RLNS. */
+  @Column({ type: 'varchar', length: 80, nullable: true })
+  documentoMaterial?: string | null;
+
   /** Depósito principal del documento (origen en salida, destino en entrada). */
   @Column({ type: 'uuid', nullable: true })
   warehouseId?: string | null;
+
+  /** Nombre y código del depósito al emitir: preservan la nota histórica. */
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  warehouseNameSnapshot?: string | null;
+
+  @Column({ type: 'varchar', length: 2, nullable: true })
+  warehouseDocumentCodeSnapshot?: string | null;
 
   /** Transporte / empresa de transporte. */
   @Column({ type: 'varchar', length: 120, nullable: true })
@@ -97,6 +108,20 @@ export class LogisticsDocument {
 
   @Column({ type: 'uuid' })
   createdById: string;
+
+  /** Identidad visible del creador al emitir el documento. */
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  createdByUsernameSnapshot?: string | null;
+
+  @Column({ type: 'varchar', length: 160, nullable: true })
+  createdByFullNameSnapshot?: string | null;
+
+  /** Identidad visible del encargado al emitir, cuando corresponde. */
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  encargadoUsernameSnapshot?: string | null;
+
+  @Column({ type: 'varchar', length: 160, nullable: true })
+  encargadoFullNameSnapshot?: string | null;
 
   /** Quién aprobó/rechazó (Fase 2). */
   @Column({ type: 'uuid', nullable: true })

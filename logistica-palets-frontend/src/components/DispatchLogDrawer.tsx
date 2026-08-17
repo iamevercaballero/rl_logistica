@@ -10,11 +10,12 @@ import AttachmentUploader from "./AttachmentUploader";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { useAuth } from "../auth/AuthContext";
+import { fmtDateTime } from "../utils/dateFormat";
 
 interface Props {
   entityType: AttachmentEntityType;
   entityId: string;
-  title: string;           // Ej: "RLNE-2026-000001 · Entrada"
+  title: string;           // Ej: "RLNE-01-000001 · Entrada"
   onClose: () => void;
 }
 
@@ -112,7 +113,7 @@ export default function DispatchLogDrawer({ entityType, entityId, title, onClose
                           {cat?.label} · {a.originalName} · {formatBytes(a.fileSize)}
                         </div>
                         <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                          {new Date(a.createdAt).toLocaleDateString("es-PY", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                          {fmtDateTime(a.createdAt)}
                         </div>
                       </div>
                       <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
@@ -166,7 +167,7 @@ export default function DispatchLogDrawer({ entityType, entityId, title, onClose
                       <div style={{ flex: 1, paddingTop: 4 }}>
                         <div style={{ fontSize: 13, fontWeight: 600 }}>{ev.description}</div>
                         <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2, display: "flex", gap: 10 }}>
-                          <span>{new Date(ev.createdAt).toLocaleDateString("es-PY", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+                          <span>{fmtDateTime(ev.createdAt)}</span>
                           {ev.username && <span>· {ev.username}</span>}
                         </div>
                       </div>

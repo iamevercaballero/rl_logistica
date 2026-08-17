@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Lot } from "../../api/lots";
 import type { LotPallet } from "../../api/pallets";
+import { formatDateOnly, todayInputValue } from "../../utils/dateFormat";
 
 export type ScopedLot = Lot & { pallets: LotPallet[] };
 
@@ -78,7 +79,7 @@ export default function LotPalletBreakdownTable({
 
       {lots.map((lot) => {
         const stock = lot.stockActual;
-        const isExpired = lot.fechaVencimiento && new Date(lot.fechaVencimiento) < new Date();
+        const isExpired = !!lot.fechaVencimiento && lot.fechaVencimiento.slice(0, 10) < todayInputValue();
         const isSelectedLot = selectedLotId === lot.id;
         const rowClickable = true; // siempre se puede expandir para previsualizar
 
@@ -103,7 +104,7 @@ export default function LotPalletBreakdownTable({
                 {lot.lotCode}
               </span>
               <span style={{ fontSize: 12, color: isExpired ? "var(--danger)" : "var(--muted)" }}>
-                {lot.fechaVencimiento ? new Date(lot.fechaVencimiento).toLocaleDateString("es-PY") : "—"}
+                {formatDateOnly(lot.fechaVencimiento)}
               </span>
               <span style={{ fontSize: 12, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{locationsOf(lot)}</span>
               <span style={{ textAlign: "right", fontSize: 12, color: "var(--muted)" }}>{lot.pallets.length}</span>

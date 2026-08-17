@@ -9,7 +9,13 @@ import { DifferencesSapQueryDto } from './dto/differences-sap-query.dto';
 import { UpsertSapStockDto } from './dto/upsert-sap-stock.dto';
 import { SapStockSnapshot } from './entities/sap-stock.entity';
 import { CacheService } from '../cache/cache.service';
-import { businessToday, parseBusinessDate } from '../../common/date';
+import {
+  businessDaysUntil,
+  businessToday,
+  endOfBusinessDay,
+  parseBusinessDate,
+  shiftBusinessDate,
+} from '../../common/date';
 
 @Injectable()
 export class ReportsService {
@@ -284,50 +290,44 @@ export class ReportsService {
     };
   }
 
+  /**
+   * `value` es un día calendario ("YYYY-MM-DD") elegido por el usuario en un
+   * filtro — se ancla a medianoche **en el depósito** (Asunción), no en UTC.
+   * Anclar en UTC (como antes) desalinea el rango hasta ~4hs contra los
+   * timestamps reales, que se guardan vía `parseBusinessDate` con ese mismo
+   * anclaje: un movimiento de las 22:00 (Asunción) quedaba fuera de un filtro
+   * "hasta hoy".
+   */
   private toStartDate(value: string) {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-      return new Date(`${value}T00:00:00.000Z`);
-    }
-    return new Date(value);
+    return parseBusinessDate(value);
   }
 
   private toEndDate(value: string) {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-      return new Date(`${value}T23:59:59.999Z`);
-    }
-    return new Date(value);
+    return endOfBusinessDay(value);
   }
 
   private getRangeDates(range: 'today' | 'week' | 'month') {
     const now = new Date();
     if (range === 'today') {
-      const start = new Date(now);
-      start.setHours(0, 0, 0, 0);
-      return { start, end: now };
+      return { start: parseBusinessDate(businessToday()), end: now };
     }
 
     const days = range === 'week' ? 7 : 30;
-    const start = new Date(now);
-    start.setDate(start.getDate() - days);
-    return { start, end: now };
+    return { start: new Date(now.getTime() - days * 86_400_000), end: now };
   }
 
   /** Returns the equivalent previous period window (same duration, immediately before current). */
   private getPreviousRangeDates(range: 'today' | 'week' | 'month') {
     const now = new Date();
     if (range === 'today') {
-      // Previous period = yesterday
-      const end = new Date(now);
-      end.setHours(0, 0, 0, 0);
-      const start = new Date(end);
-      start.setDate(start.getDate() - 1);
+      // Previous period = yesterday (día calendario completo en Asunción)
+      const end = parseBusinessDate(businessToday());
+      const start = parseBusinessDate(shiftBusinessDate(businessToday(), -1));
       return { start, end };
     }
     const days = range === 'week' ? 7 : 30;
-    const end = new Date(now);
-    end.setDate(end.getDate() - days);
-    const start = new Date(end);
-    start.setDate(start.getDate() - days);
+    const end = new Date(now.getTime() - days * 86_400_000);
+    const start = new Date(end.getTime() - days * 86_400_000);
     return { start, end };
   }
 
@@ -476,6 +476,7 @@ export class ReportsService {
       .addSelect('m.carrier', 'carrier')
       .addSelect('m.driver', 'driver')
       .addSelect('m.destination', 'destination')
+      .addSelect('m."documentoMaterial"', 'documentoMaterial')
       .addSelect('m.notes', 'notes')
       .addSelect('m.status', 'status')
       .addSelect('m."voidStatus"', 'voidStatus')
@@ -512,6 +513,7 @@ export class ReportsService {
         `(LOWER(COALESCE(m."documentNumber", '')) LIKE :search
           OR LOWER(COALESCE(m.supplier, '')) LIKE :search
           OR LOWER(COALESCE(m.destination, '')) LIKE :search
+          OR LOWER(COALESCE(m."documentoMaterial", '')) LIKE :search
           OR LOWER(COALESCE(m.notes, '')) LIKE :search
           OR LOWER(COALESCE(p.code, '')) LIKE :search
           OR LOWER(COALESCE(p.description, '')) LIKE :search)`,
@@ -542,6 +544,7 @@ export class ReportsService {
         carrier: row.carrier,
         driver: row.driver,
         destination: row.destination,
+        documentoMaterial: row.documentoMaterial,
         notes: row.notes,
         material: {
           id: row.productId,
@@ -605,6 +608,7 @@ export class ReportsService {
       .addSelect('m."documentNumber"', 'documentNumber')
       .addSelect('m.supplier', 'supplier')
       .addSelect('m.destination', 'destination')
+      .addSelect('m."documentoMaterial"', 'documentoMaterial')
       .addSelect('m.notes', 'notes')
       .addSelect('m."voidStatus"', 'voidStatus')
       .addSelect('w.name', 'warehouseName')
@@ -628,6 +632,7 @@ export class ReportsService {
         documentNumber: row.documentNumber,
         supplier: row.supplier,
         destination: row.destination,
+        documentoMaterial: row.documentoMaterial,
         notes: row.notes,
         voidStatus: row.voidStatus ?? 'NONE',
         warehouseName: row.warehouseName,
@@ -769,10 +774,14 @@ export class ReportsService {
     const { start, end } = this.getRangeDates(range);
     const { start: prevStart, end: prevEnd } = this.getPreviousRangeDates(range);
 
-    // Expiry thresholds: lots expiring in ≤60 days
-    const now = new Date();
-    const in15 = new Date(now); in15.setDate(in15.getDate() + 15);
-    const in60 = new Date(now); in60.setDate(in60.getDate() + 60);
+    // Expiry thresholds: lots expiring in ≤60 días. fechaVencimiento es una
+    // fecha calendario (columna 'date'), así que el umbral se calcula y se
+    // compara también como calendario ("YYYY-MM-DD") — nunca como instante:
+    // comparar contra un Date real desalinea el resultado según la zona del
+    // proceso y del servidor de Postgres.
+    const today = businessToday();
+    const in15 = shiftBusinessDate(today, 15);
+    const in60 = shiftBusinessDate(today, 60);
 
     const [
       stockRaw,
@@ -837,7 +846,7 @@ export class ReportsService {
         .addSelect('l."stockActual"', 'stockActual')
         .where('l."fechaVencimiento" IS NOT NULL')
         .andWhere('l."fechaVencimiento" <= :in60', { in60 })
-        .andWhere('l."fechaVencimiento" >= :now', { now })
+        .andWhere('l."fechaVencimiento" >= :today', { today })
         .andWhere('l."stockActual" > 0')
         .orderBy('l."fechaVencimiento"', 'ASC')
         .limit(50)
@@ -856,7 +865,7 @@ export class ReportsService {
     }
 
     const expiringCritical = expiringRaw.filter(
-      (r) => new Date(r.fechaVencimiento) <= in15,
+      (r) => r.fechaVencimiento <= in15,
     ).length;
 
     const kpisResult = {
@@ -907,10 +916,12 @@ export class ReportsService {
 
     const rows = await qb.orderBy('l."fechaVencimiento"', 'ASC').getRawMany();
 
-    const now = new Date();
     return rows.map((r) => {
-      const venc = new Date(r.fechaVencimiento);
-      const diasRestantes = Math.round((venc.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      // fechaVencimiento es fecha calendario: comparar contra un lote que
+      // vence "hoy" debía dar 0, no -1 (ya vencido) — new Date(fechaVencimiento)
+      // se interpreta como medianoche UTC, y comparado contra un instante real
+      // corría el resultado un día. businessDaysUntil compara calendario contra calendario.
+      const diasRestantes = businessDaysUntil(r.fechaVencimiento)!; // fechaVencimiento no es null: la query lo filtra arriba
       return {
         lotId: r.lotId,
         lotCode: r.lotCode,

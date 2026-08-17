@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { create } from 'xmlbuilder2';
 import { Factura, tiposDECode } from './entities/factura.entity';
 import { ItemFactura, afectacionCode } from './entities/item-factura.entity';
+import { businessDateTimeParts, toBusinessDateString } from '../../common/date';
 
 @Injectable()
 export class XmlGeneratorService {
@@ -175,14 +176,21 @@ export class XmlGeneratorService {
     return Number(n).toFixed(2);
   }
 
+  /**
+   * `factura.fecha` es un instante real (emisión) → se convierte a la fecha
+   * calendario en Asunción. `factura.fechaVigenciaTimbrado` es una fecha
+   * calendario pura → no se toca. `toBusinessDateString` ya distingue los
+   * dos casos; usarlo acá evita repetir esa distinción con getters locales
+   * (`getFullYear`/`getMonth`/`getDate`), que leían la zona implícita del
+   * proceso — UTC en producción, ~3-4hs desfasado de la hora legal de
+   * emisión, dato que el CDC y el timbrado del SIFEN validan.
+   */
   private formatFecha(date: Date | string): string {
-    const d = new Date(date);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return toBusinessDateString(date)!;
   }
 
   private formatHora(date: Date | string): string {
-    const d = new Date(date);
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+    return businessDateTimeParts(date instanceof Date ? date : new Date(date)).time;
   }
 
   private modulo11(cadena: string): number {

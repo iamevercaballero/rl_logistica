@@ -37,6 +37,24 @@ function resolve(value: string | Date): { date: Date; timeZone: string } {
   return { date: new Date(value), timeZone: TZ };
 }
 
+/**
+ * API recomendada — el nombre dice qué tipo de valor espera, así el call site
+ * documenta su propia intención en vez de reimplementar la conversión:
+ *  - `formatDateOnly`:   fecha calendario ("2027-08-15") → "15/08/2027", SIN
+ *    tocar zona horaria. También sirve para mostrar solo el día de un
+ *    instante real (ej. columna "Fecha" de una factura): el instante se
+ *    convierte a America/Asuncion primero, y de ahí se toma el día.
+ *  - `formatDateTimePY`: instante real → "15/08/2027 14:30" en America/Asuncion.
+ * Son el mismo cuerpo que `fmtDate`/`fmtDateTime` (abajo): esas quedan por
+ * compatibilidad con el código ya existente, no reimplementar ninguna de las dos.
+ */
+export function formatDateOnly(value: string | Date | null | undefined): string {
+  return fmtDate(value);
+}
+export function formatDateTimePY(value: string | Date | null | undefined): string {
+  return fmtDateTime(value);
+}
+
 /** DD/MM/AAAA */
 export function fmtDate(value: string | Date | null | undefined): string {
   if (!value) return "-";
@@ -49,7 +67,13 @@ export function fmtDate(value: string | Date | null | undefined): string {
   });
 }
 
-/** DD/MM/AAAA HH:MM */
+/**
+ * DD/MM/AAAA HH:MM — `hourCycle: "h23"` fuerza 24hs explícito: sin esto, según
+ * la versión de ICU del entorno (Node del backend, o del navegador del
+ * operador) puede renderizar en 12hs con AM/PM, o la medianoche como "24:00"
+ * en vez de "00:00". El objetivo es que la hora se vea igual sin importar
+ * dónde corra — la misma razón por la que `timeZone` siempre es explícito.
+ */
 export function fmtDateTime(value: string | Date | null | undefined): string {
   if (!value) return "-";
   const { date, timeZone } = resolve(value);
@@ -60,6 +84,7 @@ export function fmtDateTime(value: string | Date | null | undefined): string {
     year:   "numeric",
     hour:   "2-digit",
     minute: "2-digit",
+    hourCycle: "h23",
   });
 }
 
@@ -86,6 +111,7 @@ export function fmtDateTimeLong(value: string | Date | null | undefined): string
     year:   "numeric",
     hour:   "2-digit",
     minute: "2-digit",
+    hourCycle: "h23",
   });
 }
 
@@ -134,6 +160,24 @@ export function shiftInputValue(value: string, days: number): string {
   const [y, m, d] = value.split("-").map(Number);
   const shifted = new Date(Date.UTC(y, m - 1, d + days));
   return shifted.toISOString().slice(0, 10);
+}
+
+/**
+ * Días de calendario entre `from` (por defecto, hoy en Asunción) y `value`
+ * — ambos "YYYY-MM-DD". Ancla los dos lados en UTC antes de restar, igual
+ * que `shiftInputValue`: así "cuántos días faltan" nunca depende de la hora
+ * local ni de a qué hora corre el cálculo. Reemplaza al patrón
+ * `new Date(fecha); x.setHours(0,0,0,0)` que aparecía repetido (y roto) en
+ * varias páginas — mezclar un `Date` anclado en UTC (fecha calendario) con
+ * uno anclado en horario local para "hoy" corre el resultado un día.
+ */
+export function daysUntil(value?: string | null, from: string = todayInputValue()): number | null {
+  if (!value) return null;
+  const [vy, vm, vd] = value.slice(0, 10).split("-").map(Number);
+  const [fy, fm, fd] = from.slice(0, 10).split("-").map(Number);
+  const target = Date.UTC(vy, vm - 1, vd);
+  const base = Date.UTC(fy, fm - 1, fd);
+  return Math.round((target - base) / 86_400_000);
 }
 
 /** Primer día del mes de `value` (por defecto, hoy en Asunción). */

@@ -1,10 +1,11 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createWarehouse,
   deleteWarehouse,
   getWarehouseLayout,
   listWarehouses,
+  updateWarehouse,
   type LayoutLocation,
   type Warehouse,
 } from "../api/warehouses";
@@ -23,6 +24,7 @@ import { useAuth } from "../auth/AuthContext";
 import { canCreate, canDelete } from "../auth/rbac";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
+import { formatDateOnly } from "../utils/dateFormat";
 
 /* ── Colores de celda según ocupación ──────────────────────────────────── */
 function cellStyle(l: LayoutLocation): React.CSSProperties {
@@ -50,12 +52,14 @@ export default function WarehousesPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const nameId = useId();
+  const documentCodeId = useId();
 
   /* ── Depósitos ── */
   const [name, setName] = useState("");
+  const [documentCode, setDocumentCode] = useState("");
   const [address, setAddress] = useState("");
   const [submitted, setSubmitted] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIdChoice, setSelectedId] = useState<string | null>(null);
 
   const nameError = useMemo(() => {
     const value = name.trim();
@@ -63,16 +67,18 @@ export default function WarehousesPage() {
     if (value.length < 2 || value.length > 80) return "El nombre debe tener entre 2 y 80 caracteres.";
     return "";
   }, [name]);
+  const documentCodeError = /^\d{2}$/.test(documentCode.trim())
+    ? ""
+    : "Ingresá un código único de 2 dígitos.";
 
   const { data: items = [], isLoading, isError, refetch } = useQuery({
     queryKey: ["warehouses"],
     queryFn: listWarehouses,
   });
 
-  // Auto-seleccionar el primer depósito
-  useEffect(() => {
-    if (!selectedId && items.length > 0) setSelectedId(items[0].id);
-  }, [items, selectedId]);
+  // La primera opción se deriva durante el render; no hace falta un efecto que
+  // dispare un segundo render solo para autoseleccionarla.
+  const selectedId = selectedIdChoice ?? items[0]?.id ?? null;
 
   /* ── Layout del depósito seleccionado ── */
   const layoutQ = useQuery({
@@ -166,7 +172,7 @@ export default function WarehousesPage() {
     onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: ["warehouses"] });
       toast.success(`Depósito ${created.name} creado`);
-      setName(""); setAddress(""); setSubmitted(false);
+      setName(""); setDocumentCode(""); setAddress(""); setSubmitted(false);
       setSelectedId(created.id);
     },
     onError: (err) => toast.error(getFriendlyApiError(err)),
@@ -178,6 +184,16 @@ export default function WarehousesPage() {
       queryClient.invalidateQueries({ queryKey: ["warehouses"] });
       if (selectedId === id) setSelectedId(null);
       toast.success("Depósito eliminado");
+    },
+    onError: (err) => toast.error(getFriendlyApiError(err)),
+  });
+
+  const updateWarehouseMut = useMutation({
+    mutationFn: ({ id, code }: { id: string; code: string }) => updateWarehouse(id, { documentCode: code }),
+    onSuccess: (updated) => {
+      toast.success(`Código documental ${updated.documentCode} configurado`);
+      void queryClient.invalidateQueries({ queryKey: ["warehouses"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse-layout", updated.id] });
     },
     onError: (err) => toast.error(getFriendlyApiError(err)),
   });
@@ -251,8 +267,8 @@ export default function WarehousesPage() {
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitted(true);
-    if (!allowCreate || nameError) return;
-    createMut.mutate({ name: name.trim(), address: address.trim(), active: true });
+    if (!allowCreate || nameError || documentCodeError) return;
+    createMut.mutate({ name: name.trim(), documentCode: documentCode.trim(), address: address.trim(), active: true });
   }
 
   function handleDelete(item: Warehouse) {
@@ -407,6 +423,18 @@ export default function WarehousesPage() {
                 aria-invalid={submitted && !!nameError}
               />
               <input
+                id={documentCodeId}
+                className="input"
+                disabled={saving}
+                value={documentCode}
+                onChange={(event) => setDocumentCode(event.target.value.replace(/\D/g, "").slice(0, 2))}
+                placeholder="Código documental (ej: 01)"
+                aria-label="Código documental del depósito"
+                inputMode="numeric"
+                maxLength={2}
+                aria-invalid={submitted && !!documentCodeError}
+              />
+              <input
                 className="input"
                 disabled={saving}
                 value={address}
@@ -414,7 +442,9 @@ export default function WarehousesPage() {
                 placeholder="Dirección"
                 aria-label="Dirección"
               />
-              {submitted && nameError ? <p className="form-error" role="alert" style={{ margin: 0 }}>{nameError}</p> : null}
+              {submitted && (nameError || documentCodeError) ? (
+                <p className="form-error" role="alert" style={{ margin: 0 }}>{nameError || documentCodeError}</p>
+              ) : null}
               <button className="btn btn--primary" type="submit" disabled={saving}>
                 {createMut.isPending ? "Guardando..." : "Guardar"}
               </button>
@@ -446,6 +476,9 @@ export default function WarehousesPage() {
             >
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                 <strong style={{ fontSize: 14 }}>{item.name}</strong>
+                <span className="badge" style={{ fontSize: 10 }}>
+                  {item.documentCode ? `DOC ${item.documentCode}` : "SIN CÓDIGO DOC"}
+                </span>
                 <span className={item.active ? "badge badge--entry" : "badge"} style={{ fontSize: 10 }}>
                   {item.active ? "Activo" : "Inactivo"}
                 </span>
@@ -484,7 +517,27 @@ export default function WarehousesPage() {
             <>
               {/* KPIs */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
-                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>{layout.warehouse.name}</h3>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>{layout.warehouse.name}</h3>
+                  {layout.warehouse.documentCode ? (
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>Código documental estable: {layout.warehouse.documentCode}</span>
+                  ) : allowCreate ? (
+                    <form
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        const input = new FormData(event.currentTarget).get("documentCode");
+                        const code = String(input ?? "").trim();
+                        if (/^\d{2}$/.test(code)) updateWarehouseMut.mutate({ id: layout.warehouse.id, code });
+                      }}
+                      style={{ display: "flex", gap: 6, marginTop: 5 }}
+                    >
+                      <input className="input" name="documentCode" inputMode="numeric" maxLength={2} pattern="[0-9]{2}" required placeholder="Código 01" style={{ width: 100, fontSize: 12 }} />
+                      <button className="btn" type="submit" disabled={updateWarehouseMut.isPending} style={{ fontSize: 12 }}>Configurar código</button>
+                    </form>
+                  ) : (
+                    <span style={{ fontSize: 12, color: "var(--danger)" }}>Sin código documental</span>
+                  )}
+                </div>
                 {allowStructure && (
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <button type="button" className="btn" style={{ fontSize: 13 }} onClick={openNewLocation}>
@@ -729,7 +782,7 @@ export default function WarehousesPage() {
                           <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
                             {p.productCode} · {p.productDescription}
                             {p.lotCode && <> · Lote {p.lotCode}</>}
-                            {p.fechaVencimiento && <> · Vence {new Date(p.fechaVencimiento).toLocaleDateString("es-PY", { timeZone: "America/Asuncion" })}</>}
+                            {p.fechaVencimiento && <> · Vence {formatDateOnly(p.fechaVencimiento)}</>}
                           </div>
                         </div>
                       ))}

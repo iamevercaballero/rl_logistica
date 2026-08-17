@@ -1,4 +1,5 @@
-import { IsDateString, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsBusinessDateString } from '../../../common/is-business-date-string.validator';
 
 export class RegularizeMovementDto {
   /** Motivo de la regularización — obligatorio para auditoría */
@@ -12,11 +13,12 @@ export class RegularizeMovementDto {
   @IsOptional() @IsString() carrier?: string;
   @IsOptional() @IsString() driver?: string;
   @IsOptional() @IsString() destination?: string;
+  @IsOptional() @IsString() @MaxLength(80) documentoMaterial?: string;
   @IsOptional() @IsString() notes?: string;
 
   // Campos de lote — se aplican a todos los lotes asociados al movimiento
   @IsOptional() @IsString() sapLot?: string;
-  @IsOptional() @IsDateString() fechaVencimiento?: string;
-  @IsOptional() @IsDateString() fechaFabricacion?: string;
+  @IsOptional() @IsBusinessDateString() fechaVencimiento?: string;
+  @IsOptional() @IsBusinessDateString() fechaFabricacion?: string;
   @IsOptional() @IsString() proveedor?: string;
 }

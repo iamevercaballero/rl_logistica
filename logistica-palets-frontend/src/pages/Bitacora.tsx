@@ -12,16 +12,9 @@ import AttachmentUploader from "../components/AttachmentUploader";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { useAuth } from "../auth/AuthContext";
+import { fmtDateTime } from "../utils/dateFormat";
 
 // ── Helpers de formato ───────────────────────────────────────────────────────
-
-function fmtDateTime(s: string): string {
-  return new Date(s).toLocaleDateString("es-PY", {
-    timeZone: "America/Asuncion",
-    day: "2-digit", month: "2-digit", year: "numeric",
-    hour: "2-digit", minute: "2-digit",
-  });
-}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

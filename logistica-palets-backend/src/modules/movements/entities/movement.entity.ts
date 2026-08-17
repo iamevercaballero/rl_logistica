@@ -92,6 +92,10 @@ export class Movement {
   @Column({ type: 'varchar', nullable: true })
   destination?: string;
 
+  /** Número de documento de material proveniente de SAP (solo Salida). */
+  @Column({ type: 'varchar', length: 80, nullable: true })
+  documentoMaterial?: string | null;
+
   @Column({ type: 'text', nullable: true })
   notes?: string;
 

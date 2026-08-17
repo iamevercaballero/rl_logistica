@@ -46,8 +46,9 @@ export class Factura {
   @Column({ length: 20 })
   timbrado: string;
 
+  /** Fecha calendario ("YYYY-MM-DD"), no instante — igual que Lot.fechaVencimiento. */
   @Column({ type: 'date' })
-  fechaVigenciaTimbrado: Date;
+  fechaVigenciaTimbrado: string;
 
   @Column({ length: 44, nullable: true })
   @Index({ unique: true, where: 'cdc IS NOT NULL' })

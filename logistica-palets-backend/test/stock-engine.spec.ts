@@ -29,7 +29,8 @@ import { SapStockSnapshot } from '../src/modules/reports/entities/sap-stock.enti
 import type { EventsGateway } from '../src/modules/events/events.gateway';
 import type { CacheService } from '../src/modules/cache/cache.service';
 import type { UploadsService } from '../src/modules/uploads/uploads.service';
-import { createTestDataSource, resetDb, seedBasics, type Basics } from './test-datasource';
+import { createAccessService, createTestDataSource, resetDb, seedBasics, type Basics } from './test-datasource';
+import type { WarehouseAccessService } from '../src/modules/warehouses/warehouse-access.service';
 
 const USER_ID = '00000000-0000-0000-0000-0000000000aa';
 
@@ -43,6 +44,7 @@ let service: MovementsService;
 let palletsService: PalletsService;
 let reports: ReportsService;
 let base: Basics;
+let access: WarehouseAccessService;
 
 const stockOf = (productId: string) =>
   ds.getRepository(Stock).findOne({ where: { productId } });
@@ -59,13 +61,15 @@ beforeAll(async () => {
     `CREATE UNIQUE INDEX IF NOT EXISTS "uq_stock_cell" ON stocks ` +
     `("productId", COALESCE("warehouseId", ${NIL}), COALESCE("locationId", ${NIL}))`,
   );
-  service = new MovementsService(ds, noopEvents, noopCache, new DocumentSequenceService(), noopUploads, new PilasService());
+  access = createAccessService(ds);
+  service = new MovementsService(ds, noopEvents, noopCache, new DocumentSequenceService(), noopUploads, new PilasService(), access);
   palletsService = new PalletsService(
     ds,
     ds.getRepository(Pallet),
     ds.getRepository(Lot),
     ds.getRepository(Location),
     new PilasService(),
+    access,
   );
   reports = new ReportsService(ds, ds.getRepository(SapStockSnapshot), noopCache);
 }, 60_000);
@@ -121,7 +125,7 @@ describe('motor de stock — flujo básico', () => {
       palletItems: [{ lotCode: 'L-LATE', quantity: 50, fechaVencimiento: '2026-12-01' }],
     }, USER_ID);
 
-    await service.create({ type: 'EXIT', productId: base.product.id, quantity: 30 }, USER_ID);
+    await service.create({ type: 'EXIT', productId: base.product.id, warehouseId: base.warehouse.id, quantity: 30 }, USER_ID);
 
     const early = await lotByCode(base.product.id, 'L-EARLY');
     const late = await lotByCode(base.product.id, 'L-LATE');
@@ -169,7 +173,7 @@ describe('motor de stock — flujo básico', () => {
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
       palletItems: [{ lotCode: 'L-INV', quantity: 100, fechaVencimiento: '2026-06-01' }],
     }, USER_ID);
-    await service.create({ type: 'EXIT', productId: base.product.id, quantity: 30 }, USER_ID);
+    await service.create({ type: 'EXIT', productId: base.product.id, warehouseId: base.warehouse.id, quantity: 30 }, USER_ID);
 
     const health = await reports.inventoryHealth();
     expect(health.ok).toBe(true);
@@ -190,8 +194,8 @@ describe('motor de stock — concurrencia', () => {
     // cumplir 60 con los 40 restantes y se RECHAZA entera (rollback). Nunca se
     // sobre-vende: total despachado = 60, quedan 40.
     const results = await Promise.allSettled([
-      service.create({ type: 'EXIT', productId: base.product.id, quantity: 60 }, USER_ID),
-      service.create({ type: 'EXIT', productId: base.product.id, quantity: 60 }, USER_ID),
+      service.create({ type: 'EXIT', productId: base.product.id, warehouseId: base.warehouse.id, quantity: 60 }, USER_ID),
+      service.create({ type: 'EXIT', productId: base.product.id, warehouseId: base.warehouse.id, quantity: 60 }, USER_ID),
     ]);
 
     const fulfilled = results.filter((r) => r.status === 'fulfilled').length;
@@ -218,9 +222,9 @@ describe('motor de stock — concurrencia', () => {
       palletItems: [{ lotCode: 'L-PART', quantity: 100, fechaVencimiento: '2026-06-01' }],
     }, USER_ID);
 
-    await service.create({ type: 'EXIT', productId: base.product.id, quantity: 30 }, USER_ID); // pallet → PARTIAL 70
+    await service.create({ type: 'EXIT', productId: base.product.id, warehouseId: base.warehouse.id, quantity: 30 }, USER_ID); // pallet → PARTIAL 70
     // La 2ª salida auto-FEFO debe consumir del pallet ya abierto (no fallar).
-    await service.create({ type: 'EXIT', productId: base.product.id, quantity: 50 }, USER_ID); // PARTIAL 70 → 20
+    await service.create({ type: 'EXIT', productId: base.product.id, warehouseId: base.warehouse.id, quantity: 50 }, USER_ID); // PARTIAL 70 → 20
 
     const stock = await stockOf(base.product.id);
     expect(stock!.currentQuantity).toBe(20);

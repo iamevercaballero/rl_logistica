@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { daysUntil, fmtDateMonthShort, fmtDateShort, fmtDateLong } from "../utils/dateFormat";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -11,7 +11,7 @@ import {
   YAxis,
   Legend,
 } from "recharts";
-import { listWarehouses } from "../api/warehouses";
+import { warehouseLabel } from "../api/warehouses";
 import { fefoLots } from "../api/lots";
 import {
   getKpis,
@@ -20,7 +20,8 @@ import {
   type ReportRange,
 } from "../api/reports";
 import { getActiveAlerts, type ActiveAlert } from "../api/alerts";
-import { useSocket, type StockUpdatedPayload } from "../contexts/SocketContext";
+import { useSocket, useWarehouseEvent, type StockUpdatedPayload } from "../contexts/SocketContext";
+import { useActiveWarehouseId, useWarehouse } from "../contexts/WarehouseContext";
 
 /* ── Constants ────────────────────────────────────────────────────────────── */
 const MOVE_LABEL: Record<string, string> = {
@@ -348,26 +349,36 @@ function LiveDot({ connected }: { connected: boolean }) {
 /* ── Main page ────────────────────────────────────────────────────────────── */
 export default function DashboardPage() {
   const [range, setRange] = useState<ReportRange>("today");
-  const [warehouseId, setWarehouseId] = useState("");
   const qc = useQueryClient();
-  const { connected, on, off } = useSocket();
+  const { connected } = useSocket();
+  // El Dashboard no tiene selector propio: trabaja siempre contra el depósito
+  // activo de la sesión (el del header). Así lo que se ve acá es exactamente lo
+  // mismo que se ve en Stock, Movimientos y Reportes.
+  const { activeWarehouse } = useWarehouse();
+  // `undefined` mientras no está resuelto: sirve para desactivar las queries.
+  const activeWarehouseId = useActiveWarehouseId();
+  const scoped = !!activeWarehouseId;
 
-  const [warehousesQ, kpisQ, movementsQ, stockQ] = useQueries({
+  const [kpisQ, movementsQ, stockQ] = useQueries({
     queries: [
-      { queryKey: ["warehouses"], queryFn: listWarehouses, staleTime: 5 * 60_000 },
       {
-        queryKey: ["kpis", range],
-        queryFn: () => getKpis(range),
+        // El depósito va en la key: al cambiarlo, TanStack no puede servir los
+        // datos del anterior.
+        queryKey: ["kpis", activeWarehouseId, range],
+        queryFn: () => getKpis(range, activeWarehouseId),
+        enabled: scoped,
         refetchInterval: 60_000,
       },
       {
-        queryKey: ["movements", "report", { limit: 50 }],
-        queryFn: () => getMovementsReport({ limit: 50 }),
+        queryKey: ["movements", "report", activeWarehouseId, { limit: 50 }],
+        queryFn: () => getMovementsReport({ limit: 50, warehouseId: activeWarehouseId }),
+        enabled: scoped,
         refetchInterval: 60_000,
       },
       {
-        queryKey: ["stock", "report", warehouseId || "all"],
-        queryFn: () => getStockReport(warehouseId || undefined),
+        queryKey: ["stock", "report", activeWarehouseId],
+        queryFn: () => getStockReport(activeWarehouseId),
+        enabled: scoped,
         refetchInterval: 60_000,
       },
     ],
@@ -375,21 +386,21 @@ export default function DashboardPage() {
 
   // Expiring lots (FEFO, no productId filter = all)
   const expiringQ = useQuery({
-    queryKey: ["lots", "fefo", "expiring"],
-    queryFn: () => fefoLots(),
+    queryKey: ["lots", "fefo", "expiring", activeWarehouseId],
+    queryFn: () => fefoLots(undefined, undefined, undefined, activeWarehouseId),
+    enabled: scoped,
     staleTime: 5 * 60_000,
     refetchInterval: 5 * 60_000,
   });
 
   // Active alerts — refetch every 5 min (cron runs every 10 min server-side)
   const alertsQ = useQuery({
-    queryKey: ["alerts", "active"],
-    queryFn: getActiveAlerts,
+    queryKey: ["alerts", "active", activeWarehouseId],
+    queryFn: () => getActiveAlerts(activeWarehouseId),
+    enabled: scoped,
     staleTime: 5 * 60_000,
     refetchInterval: 5 * 60_000,
   });
-
-  const warehouses = warehousesQ.data ?? [];
   const kpis = kpisQ.data ?? null;
   const allMoves = movementsQ.data?.data ?? [];
   const recentMoves = allMoves.slice(0, 8);
@@ -416,19 +427,14 @@ export default function DashboardPage() {
     month: "últimos 30 días",
   };
 
-  // ── WebSocket: invalidate queries when the backend pushes a stock update ──
-  useEffect(() => {
-    const handler = (_payload: StockUpdatedPayload) => {
-      // Invalidate all KPI and stock queries so the next render shows fresh data.
-      // TanStack Query will re-fetch in the background (no loading flash).
-      void qc.invalidateQueries({ queryKey: ["kpis"] });
-      void qc.invalidateQueries({ queryKey: ["stock"] });
-      void qc.invalidateQueries({ queryKey: ["movements", "report"] });
-    };
-
-    on("stock:updated", handler);
-    return () => off("stock:updated", handler);
-  }, [on, off, qc]);
+  // ── WebSocket ────────────────────────────────────────────────────────────
+  // `useWarehouseEvent` descarta los eventos de otros depósitos: un movimiento
+  // en el 02 no puede provocar un refetch del dashboard del 01.
+  useWarehouseEvent<StockUpdatedPayload>("stock:updated", useCallback(() => {
+    void qc.invalidateQueries({ queryKey: ["kpis", activeWarehouseId] });
+    void qc.invalidateQueries({ queryKey: ["stock", "report", activeWarehouseId] });
+    void qc.invalidateQueries({ queryKey: ["movements", "report", activeWarehouseId] });
+  }, [qc, activeWarehouseId]));
 
   function refetchAll() {
     void kpisQ.refetch();
@@ -459,7 +465,10 @@ export default function DashboardPage() {
             <LiveDot connected={connected} />
           </div>
           <p style={{ color: "var(--muted)", marginBottom: 0, fontSize: 14 }}>
-            Resumen operativo · {rangeLabel[range]}
+            {/* El depósito se rotula acá para que nadie lea los números creyendo
+                que son de otro depósito. */}
+            <strong style={{ color: "var(--text)" }}>{warehouseLabel(activeWarehouse)}</strong>
+            {" · "}Resumen operativo · {rangeLabel[range]}
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -472,17 +481,6 @@ export default function DashboardPage() {
             <option value="today">Hoy</option>
             <option value="week">Esta semana</option>
             <option value="month">Este mes</option>
-          </select>
-          <select
-            className="input"
-            value={warehouseId}
-            onChange={(e) => setWarehouseId(e.target.value)}
-            aria-label="Depósito"
-          >
-            <option value="">Todos los depósitos</option>
-            {warehouses.map((w) => (
-              <option key={w.id} value={w.id}>{w.name}</option>
-            ))}
           </select>
           <button
             className="btn"

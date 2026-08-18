@@ -9,7 +9,7 @@ import {
   ISSUE_META,
   type LocationIssue,
 } from "../api/locations";
-import { listWarehouses } from "../api/warehouses";
+import { useActiveWarehouseId } from "../contexts/WarehouseContext";
 import { getPalletHistory, quickTransferPallet } from "../api/pallets";
 import LocationPicker from "../components/LocationPicker";
 import WarehouseMap, { MapLegend } from "../components/WarehouseMap";
@@ -89,7 +89,7 @@ function LocationDrawer({
   const [destination, setDestination] = useState("");
 
   const contentQ = useQuery({
-    queryKey: ["location-content", locationId],
+    queryKey: ["locations", "content", locationId],
     queryFn: () => getLocationContent(locationId),
     staleTime: 10_000,
   });
@@ -113,9 +113,9 @@ function LocationDrawer({
       void queryClient.invalidateQueries({ queryKey: ["pallets"] });
       void queryClient.invalidateQueries({ queryKey: ["stock"] });
       void queryClient.invalidateQueries({ queryKey: ["movements"] });
-      void queryClient.invalidateQueries({ queryKey: ["location-availability"] });
-      void queryClient.invalidateQueries({ queryKey: ["location-recommendations"] });
-      void queryClient.invalidateQueries({ queryKey: ["location-map"] });
+      void queryClient.invalidateQueries({ queryKey: ["locations", "availability"] });
+      void queryClient.invalidateQueries({ queryKey: ["locations", "recommendations"] });
+      void queryClient.invalidateQueries({ queryKey: ["locations", "map"] });
     },
     onError: (err) => toast.error(getFriendlyApiError(err)),
   });
@@ -344,36 +344,33 @@ export default function LocationsPage() {
   const queryClient = useQueryClient();
 
   const [view, setView] = useState<ViewKey>("search");
-  const [pickedWarehouseId, setPickedWarehouseId] = useState("");
   const [term, setTerm] = useState("");
   const [submittedTerm, setSubmittedTerm] = useState("");
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [zoneFilter, setZoneFilter] = useState("ALL");
   const [drawerId, setDrawerId] = useState<string | null>(null);
 
-  const warehousesQ = useQuery({ queryKey: ["warehouses"], queryFn: listWarehouses });
-  const warehouses = useMemo(() => warehousesQ.data ?? [], [warehousesQ.data]);
-
-  // El depósito activo se deriva: mientras el usuario no elija uno, se trabaja
-  // sobre el primero. Evita el parpadeo de un efecto que sincroniza estado.
-  const warehouseId = pickedWarehouseId || warehouses[0]?.id || "";
+  // El mapa, la ocupación y las incidencias son SIEMPRE del depósito activo:
+  // no hay selector local. Cambiar de depósito reemplaza el mapa completo.
+  const activeWarehouseId = useActiveWarehouseId();
+  const warehouseId = activeWarehouseId ?? "";
 
   const mapQ = useQuery({
-    queryKey: ["location-map", warehouseId],
+    queryKey: ["locations", "map", warehouseId],
     queryFn: () => getLocationMap(warehouseId),
     enabled: !!warehouseId,
     staleTime: 15_000,
   });
 
   const searchQ = useQuery({
-    queryKey: ["stock-search", submittedTerm, warehouseId],
+    queryKey: ["locations", "stock-search", warehouseId, submittedTerm],
     queryFn: () => searchStock(submittedTerm, warehouseId),
     enabled: submittedTerm.trim().length >= 2 && !!warehouseId,
     staleTime: 10_000,
   });
 
   const incidentsQ = useQuery({
-    queryKey: ["location-incidents", warehouseId],
+    queryKey: ["locations", "incidents", warehouseId],
     queryFn: () => getLocationIncidents(warehouseId),
     enabled: view === "incidents" && !!warehouseId,
     staleTime: 15_000,
@@ -429,11 +426,11 @@ export default function LocationsPage() {
   const incidentCells = incidentsQ.data?.locations ?? [];
 
   function refreshAfterMutation() {
-    void queryClient.invalidateQueries({ queryKey: ["location-map"] });
-    void queryClient.invalidateQueries({ queryKey: ["stock-search"] });
-    void queryClient.invalidateQueries({ queryKey: ["location-incidents"] });
+    void queryClient.invalidateQueries({ queryKey: ["locations", "map"] });
+    void queryClient.invalidateQueries({ queryKey: ["locations", "stock-search"] });
+    void queryClient.invalidateQueries({ queryKey: ["locations", "incidents"] });
     void queryClient.invalidateQueries({ queryKey: ["warehouse-layout"] });
-    void queryClient.invalidateQueries({ queryKey: ["location-availability"] });
+    void queryClient.invalidateQueries({ queryKey: ["locations", "availability"] });
   }
 
   function handleSearch(e: React.FormEvent) {
@@ -465,17 +462,7 @@ export default function LocationsPage() {
           placeholder="Material, descripción, lote interno, lote proveedor, pallet o ubicación"
           aria-label="Buscar material, lote, pallet o ubicación"
         />
-        <select
-          className="input"
-          style={{ maxWidth: 240 }}
-          value={warehouseId}
-          onChange={(e) => setPickedWarehouseId(e.target.value)}
-          aria-label="Depósito"
-        >
-          {warehouses.map((w) => (
-            <option key={w.id} value={w.id}>{w.name}</option>
-          ))}
-        </select>
+        
         <button className="btn btn--primary" type="submit" disabled={term.trim().length < 2}>Buscar</button>
         {submittedTerm && (
           <button
@@ -513,9 +500,8 @@ export default function LocationsPage() {
         ))}
       </div>
 
-      {warehousesQ.isLoading && <p style={{ color: "var(--muted)" }} aria-busy="true">Cargando depósitos…</p>}
-      {!warehousesQ.isLoading && warehouses.length === 0 && (
-        <p style={{ color: "var(--muted)" }}>No hay depósitos cargados. Creá uno desde Depósitos.</p>
+      {!warehouseId && (
+        <p style={{ color: "var(--muted)" }} aria-busy="true">Resolviendo depósito activo…</p>
       )}
 
       {mapQ.isError && (

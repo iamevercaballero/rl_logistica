@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DataSource, EntityManager, In, IsNull } from 'typeorm';
 import * as XLSX from 'xlsx';
 import { CreateMovementDto } from './dto/create-movement.dto';
@@ -19,6 +19,11 @@ import { DocumentSequenceService } from './document-sequence.service';
 import { Product } from '../products/entities/product.entity';
 import { Location } from '../locations/entities/location.entity';
 import { Warehouse } from '../warehouses/entities/warehouse.entity';
+import {
+  WarehouseAccessService,
+  type AccessUser,
+  type WarehouseScope,
+} from '../warehouses/warehouse-access.service';
 import { User } from '../users/entities/user.entity';
 import { Stock } from '../stocks/entities/stock.entity';
 import { Lot } from '../lots/entities/lot.entity';
@@ -36,9 +41,13 @@ import {
   parseExcelDateCell,
 } from '../../common/date';
 import { PilasService, PlacementItem } from '../pilas/pilas.service';
+import { dropSapLotIfUnused, productUsesSapLot } from '../products/uses-sap-lot';
+import { buildReceptionChecklist, type ReceptionChecklist } from './reception-checklist';
 
 @Injectable()
 export class MovementsService {
+  private readonly logger = new Logger(MovementsService.name);
+
   constructor(
     private readonly dataSource: DataSource,
     private readonly events: EventsGateway,
@@ -46,7 +55,32 @@ export class MovementsService {
     private readonly sequences: DocumentSequenceService,
     private readonly uploads: UploadsService,
     private readonly pilas: PilasService,
+    private readonly access: WarehouseAccessService,
   ) {}
+
+  /**
+   * Invalida la caché del depósito afectado (no la de todos).
+   *
+   * Las claves de stock/KPIs llevan el alcance completo, así que una entrada en
+   * el depósito 02 solo borra las entradas de caché que incluyen al 02 — el
+   * dashboard del 01 no se recalcula al pedo. Las claves de alcance global
+   * (`all`) sí se borran siempre: contienen a todos los depósitos.
+   */
+  private invalidateWarehouseCaches(warehouseId: string | null | undefined): void {
+    const patterns = [
+      'kpis:warehouse:all:*',
+      'stock:warehouse:all:*',
+      'dashboard:warehouse:all:*',
+    ];
+    if (warehouseId) {
+      patterns.push(
+        `kpis:warehouse:*${warehouseId}*`,
+        `stock:warehouse:*${warehouseId}*`,
+        `dashboard:warehouse:*${warehouseId}*`,
+      );
+    }
+    void Promise.all(patterns.map((pattern) => this.cache.delPattern(pattern)));
+  }
 
   /**
    * Solicita la anulación de un movimiento ENTRY, EXIT, ADJUSTMENT_IN o ADJUSTMENT_OUT.
@@ -55,7 +89,8 @@ export class MovementsService {
    *
    * Al aprobar: stock se corrige y el movimiento original queda VOIDED.
    */
-  async requestVoid(id: string, userId: string) {
+  async requestVoid(id: string, userId: string, requesterRole?: string) {
+    await this.assertMovementAccess({ userId, role: requesterRole ?? '' }, id);
     // ── 1. Cargar movimiento y sus detalles ──────────────────
     const movement = await this.dataSource.getRepository(Movement).findOne({ where: { id } });
     if (!movement) throw new NotFoundException('Movimiento no encontrado.');
@@ -227,17 +262,18 @@ export class MovementsService {
       encargadoRecepcionId: this.resolveEncargado(dto.encargadoRecepcionId, userId, requesterRole),
     };
 
+    // El depósito real es el de la ubicación cuando la hay: nunca se confía en
+    // el `warehouseId` del cliente si el dato se puede derivar de la ubicación.
+    const user: AccessUser = { userId, role: requesterRole ?? '' };
+    await this.assertMovementWarehouseAccess(user, effectiveDto);
+
     const result = await this.withUniqueRetry(() =>
       this.dataSource.transaction((manager) =>
         this.createInTransaction(manager, effectiveDto, userId),
       ),
     );
 
-    // Post-transaction: invalidate cache + broadcast (fire-and-forget, non-blocking)
-    void Promise.all([
-      this.cache.delPattern('kpis:*'),
-      this.cache.delPattern('stock:*'),
-    ]);
+    this.invalidateWarehouseCaches(result.warehouseId);
     this.events.emitMovementCreated({
       movementId: result.movementId,
       type: result.type,
@@ -246,6 +282,55 @@ export class MovementsService {
     this.events.emitStockUpdated({ warehouseId: result.warehouseId });
 
     return { movementId: result.movementId, stockImpact: result.stockImpact };
+  }
+
+  /**
+   * Valida el acceso a **todos** los depósitos que toca un movimiento suelto,
+   * resolviéndolos de la base y no del payload.
+   *
+   * Una transferencia toca dos ubicaciones: se exige acceso a ambas y, además,
+   * que sean del mismo depósito — el flujo actual es interno al depósito
+   * activo. Mover entre depósitos necesita un flujo propio (con documento y
+   * doble impacto de stock) que todavía no existe.
+   */
+  /**
+   * Acceso al depósito de un movimiento existente. Un movimiento viejo puede
+   * no tener depósito (datos previos al multi-depósito): en ese caso solo lo
+   * pueden tocar los roles de alcance global, para no bloquear la corrección
+   * de historia ni exponerla a quien tiene alcance acotado.
+   */
+  private async assertMovementAccess(user: AccessUser, movementId: string): Promise<void> {
+    const warehouseId = await this.access.resolveEntityWarehouseId('movement', movementId);
+    if (!warehouseId) {
+      if (this.access.hasGlobalScope(user.role)) return;
+      throw new ForbiddenException('El movimiento no tiene depósito asignado: no podés operarlo.');
+    }
+    await this.access.assertWarehouseAccess(user, warehouseId);
+  }
+
+  private async assertMovementWarehouseAccess(user: AccessUser, dto: CreateMovementDto): Promise<void> {
+    const involved = new Set<string>();
+
+    for (const locationId of [dto.locationId, dto.fromLocationId, dto.toLocationId]) {
+      if (!locationId) continue;
+      const warehouseId = await this.access.resolveEntityWarehouseId('location', locationId);
+      if (!warehouseId) throw new BadRequestException(`Ubicación inexistente: ${locationId}`);
+      involved.add(warehouseId);
+    }
+
+    if (dto.type === 'TRANSFER' && involved.size > 1) {
+      throw new BadRequestException(
+        'Origen y destino pertenecen a depósitos distintos. La transferencia entre depósitos todavía no está habilitada.',
+      );
+    }
+
+    // Sin ubicación (ej. salida FEFO por depósito) el único dato es el del
+    // payload; se valida igual antes de tocar stock.
+    if (involved.size === 0 && dto.warehouseId) involved.add(dto.warehouseId);
+
+    for (const warehouseId of involved) {
+      await this.access.assertWritableWarehouse(user, warehouseId);
+    }
   }
 
   /**
@@ -268,7 +353,11 @@ export class MovementsService {
    * confirma nada — la colocación real se decide de nuevo (y ahí sí se
    * confirma) cuando se envía la entrada.
    */
-  async previewPlacement(dto: PreviewPlacementDto) {
+  async previewPlacement(dto: PreviewPlacementDto, user?: AccessUser) {
+    // La vista previa revela la ocupación de la ubicación: se pide el mismo
+    // acceso que para operar en ella.
+    if (user) await this.access.assertEntityAccess(user, 'location', dto.locationId);
+
     const items: PlacementItem[] = Array.from({ length: dto.palletCount }, (_, i) => ({
       key: String(i),
       productId: dto.productId,
@@ -283,10 +372,23 @@ export class MovementsService {
    * El stock se descuenta desde la ubicación real de cada pallet (robusto ante
    * pallets que ya no estén físicamente en el origen indicado).
    */
-  async createTransferBatch(dto: TransferBatchDto, userId: string) {
+  async createTransferBatch(dto: TransferBatchDto, userId: string, requesterRole?: string) {
     if (dto.fromLocationId === dto.toLocationId) {
       throw new BadRequestException('Origen y destino no pueden ser la misma ubicación');
     }
+
+    // Transferencia interna: ambas ubicaciones tienen que ser del mismo
+    // depósito y el usuario tiene que poder operar en él.
+    const user: AccessUser = { userId, role: requesterRole ?? '' };
+    const fromWarehouseId = await this.access.assertEntityAccess(user, 'location', dto.fromLocationId);
+    const toWarehouseId = await this.access.resolveEntityWarehouseId('location', dto.toLocationId);
+    if (!toWarehouseId) throw new BadRequestException('Ubicación destino inexistente');
+    if (fromWarehouseId !== toWarehouseId) {
+      throw new BadRequestException(
+        'Origen y destino pertenecen a depósitos distintos. La transferencia entre depósitos todavía no está habilitada.',
+      );
+    }
+    await this.access.assertWritableWarehouse(user, toWarehouseId);
 
     const result = await this.dataSource.transaction(async (manager) => {
       const movementIds: string[] = [];
@@ -311,11 +413,8 @@ export class MovementsService {
       return { movementIds, totalQty, totalPallets };
     });
 
-    void Promise.all([
-      this.cache.delPattern('kpis:*'),
-      this.cache.delPattern('stock:*'),
-    ]);
-    this.events.emitStockUpdated({ warehouseId: null });
+    this.invalidateWarehouseCaches(fromWarehouseId);
+    this.events.emitStockUpdated({ warehouseId: fromWarehouseId });
 
     return result;
   }
@@ -399,6 +498,24 @@ export class MovementsService {
         if (palletLoc) return palletLoc;
         return resolved.locationId ?? null;
       };
+
+      // El movimiento debe quedar atribuido a un depósito aunque no traiga
+      // ubicación propia (una salida por pallets no la pide): se deriva de dónde
+      // están esos pallets. Sin esto el movimiento queda sin depósito y después
+      // no se puede ni filtrar por depósito ni validar quién puede corregirlo.
+      if (!resolved.warehouseId) {
+        const itemLocationIds = [...new Set(
+          (dto.palletItems ?? []).map(itemLocationId).filter((v): v is string => !!v),
+        )];
+        if (itemLocationIds.length) {
+          const itemLocations = await manager.getRepository(Location).find({ where: { id: In(itemLocationIds) } });
+          const warehouseIds = [...new Set(itemLocations.map((l) => l.warehouse.id))];
+          if (warehouseIds.length > 1) {
+            throw new BadRequestException('Un movimiento no puede mezclar pallets de depósitos distintos');
+          }
+          resolved.warehouseId = warehouseIds[0] ?? null;
+        }
+      }
 
       if (dto.palletItems?.length) {
         // ENTRY/ADJUSTMENT_IN: aumentar stock ahora, **por ubicación**.
@@ -703,6 +820,10 @@ export class MovementsService {
               quantity: item.quantity,
               locationId: detailLocationId ?? undefined,  // ← FIX 1: guardar ubicación física
               pilaId: resolvedPilaId ?? undefined,
+              // Paletas físicas resultantes: solo tiene sentido al despachar, y
+              // es informativo — no interviene en el descuento de stock ni de
+              // palets, que ya se resolvió arriba con la lógica de siempre.
+              dispatchedPallets: dto.type === 'EXIT' ? item.dispatchedPallets ?? null : null,
             });
             await manager.save(detail);
             // TRANSFER only moves pallets between locations; lot.stockActual must NOT change
@@ -830,7 +951,15 @@ export class MovementsService {
 
     const result = await this.withUniqueRetry(() => this.dataSource.transaction(async (manager) => {
       const docDate = parseBusinessDate(dto.date);
+      // El depósito se deriva de las ubicaciones/pallets reales (ver
+      // resolveDocumentWarehouse) y recién ahí se valida el acceso: manipular
+      // `warehouseId` en el request no puede llevar la operación a otro depósito.
       const warehouse = await this.resolveDocumentWarehouse(manager, dto);
+      await this.access.assertWritableWarehouse(
+        { userId, role: requesterRole ?? '' },
+        warehouse.id,
+      );
+
       const users = await manager.getRepository(User).find({
         where: { id: In([...new Set([userId, encargadoId])]) },
       });
@@ -918,10 +1047,7 @@ export class MovementsService {
     }));
 
     // Post-transaction: invalidar cache + broadcast (una sola vez por documento)
-    void Promise.all([
-      this.cache.delPattern('kpis:*'),
-      this.cache.delPattern('stock:*'),
-    ]);
+    this.invalidateWarehouseCaches(result.warehouseId);
     this.events.emitStockUpdated({ warehouseId: result.warehouseId });
 
     void this.uploads.log('DOCUMENT', result.documentId, 'CREADO',
@@ -936,14 +1062,18 @@ export class MovementsService {
     };
   }
 
-  /** Lista documentos logísticos (remitos) con filtros básicos. */
-  async findDocuments(query: { type?: string; from?: string; to?: string; search?: string }) {
+  /** Lista documentos logísticos (remitos) con filtros básicos, acotada al alcance. */
+  async findDocuments(
+    query: { type?: string; from?: string; to?: string; search?: string },
+    scope: WarehouseScope = null,
+  ) {
     const qb = this.dataSource
       .getRepository(LogisticsDocument)
       .createQueryBuilder('d')
       .orderBy('d.createdAt', 'DESC')
       .take(200);
 
+    if (scope) qb.andWhere('d.warehouseId IN (:...scopeIds)', { scopeIds: scope });
     if (query.type) qb.andWhere('d.type = :type', { type: query.type });
     if (query.from) qb.andWhere('d.date >= :from', { from: this.toStartDate(query.from) });
     if (query.to) qb.andWhere('d.date <= :to', { to: this.toEndDate(query.to) });
@@ -973,9 +1103,12 @@ export class MovementsService {
   }
 
   /** Detalle de un documento: cabecera + sus movimientos (líneas) + detalles por palet. */
-  async findDocument(id: string) {
+  async findDocument(id: string, user?: AccessUser) {
     const document = await this.dataSource.getRepository(LogisticsDocument).findOne({ where: { id } });
     if (!document) throw new NotFoundException('Documento no encontrado');
+    if (user && document.warehouseId) {
+      await this.access.assertWarehouseAccess(user, document.warehouseId);
+    }
 
     const movements = await this.dataSource
       .getRepository(Movement)
@@ -998,7 +1131,38 @@ export class MovementsService {
    * al emitir; las consultas vivas son únicamente fallback para documentos
    * históricos anteriores a la migración de snapshots.
    */
-  async findDocumentForPrint(id: string) {
+  async findDocumentForPrint(id: string, user?: AccessUser) {
+    if (user) await this.access.assertEntityAccess(user, 'document', id);
+    return this.buildDocumentForPrint(id);
+  }
+
+  /**
+   * CHECKLIST DE RECEPCIÓN DE INSUMOS de una Entrada: el mismo documento
+   * impreso que usa el depósito, ya resuelto para imprimir (materiales, lotes,
+   * paletas y cabecera). Solo aplica a RLNE — una Salida no tiene recepción que
+   * controlar. Los permisos son los mismos que para leer el remito.
+   */
+  async findDocumentChecklist(id: string, user?: AccessUser): Promise<ReceptionChecklist> {
+    if (user) await this.access.assertEntityAccess(user, 'document', id);
+    const data = await this.buildDocumentForPrint(id);
+    if (data.document.type !== 'ENTRY') {
+      throw new BadRequestException(
+        `El checklist de recepción solo aplica a documentos de Entrada (${data.document.code} es una Salida).`,
+      );
+    }
+
+    const checklist = buildReceptionChecklist(data);
+    if (!checklist.consistency.ok) {
+      // No se corrige nada ni se toca stock: la hoja se imprime marcada para
+      // que nadie la firme como si los totales estuvieran conciliados.
+      this.logger.warn(
+        `Checklist ${checklist.document.code} con inconsistencias: ${checklist.consistency.warnings.join(' | ')}`,
+      );
+    }
+    return checklist;
+  }
+
+  private async buildDocumentForPrint(id: string) {
     const { document, movements, details } = await this.findDocument(id);
 
     const productIds = [...new Set(movements.map((m) => m.productId).filter(Boolean))] as string[];
@@ -1120,7 +1284,8 @@ export class MovementsService {
    * Propaga cambios de lote (fechas, SAP, proveedor) a los lotes vinculados.
    * Cada campo modificado queda registrado en regularization_logs con el motivo.
    */
-  async editMetadata(id: string, dto: RegularizeMovementDto, userId: string) {
+  async editMetadata(id: string, dto: RegularizeMovementDto, userId: string, requesterRole?: string) {
+    await this.assertMovementAccess({ userId, role: requesterRole ?? '' }, id);
     const result = await this.dataSource.transaction(async (manager) => {
       const movement = await manager.findOne(Movement, { where: { id } });
       if (!movement) throw new NotFoundException('Movimiento no encontrado');
@@ -1197,6 +1362,9 @@ export class MovementsService {
           for (const field of lotStringFields) {
             const newVal = dto[field]?.trim() ?? null;
             if (newVal === null) continue;
+            // No se le asigna un lote SAP nuevo a un material que no los usa.
+            // El valor histórico del lote, si lo tiene, queda como está.
+            if (field === 'sapLot' && !(await productUsesSapLot(manager, lot.productId))) continue;
             const oldVal = lot[field] ?? null;
             if (newVal !== oldVal) {
               logs.push({ movementId: id, field: `lot.${lot.lotCode}.${field}`, oldValue: oldVal, newValue: newVal, changedById: userId, reason: dto.reason });
@@ -1225,19 +1393,17 @@ export class MovementsService {
         await manager.save(manager.create(RegularizationLog, log));
       }
 
-      return { edited: true, changes: logs.length };
+      return { edited: true, changes: logs.length, warehouseId: movement.warehouseId ?? null };
     });
 
-    void Promise.all([
-      this.cache.delPattern('kpis:*'),
-      this.cache.delPattern('stock:*'),
-    ]);
+    this.invalidateWarehouseCaches(result.warehouseId);
 
     return result;
   }
 
   /** Desglose por lote de un movimiento: cantidades y estado actual de sus pallets (para edición). */
-  async getLotsBreakdown(id: string) {
+  async getLotsBreakdown(id: string, user?: AccessUser) {
+    if (user) await this.assertMovementAccess(user, id);
     const movement = await this.dataSource.getRepository(Movement).findOne({ where: { id } });
     if (!movement) throw new NotFoundException('Movimiento no encontrado');
 
@@ -1270,6 +1436,7 @@ export class MovementsService {
             quantityInMovement: d.quantity,
             currentQuantity: p.quantity,
             weightKg: p.weightKg ?? null,
+            dispatchedPallets: d.dispatchedPallets ?? null,
             locationId: p.currentLocationId ?? null,
           };
         });
@@ -1307,7 +1474,8 @@ export class MovementsService {
    *   Reducir lo que salió devuelve stock al pallet (ADJUSTMENT_IN); aumentar saca más
    *   (ADJUSTMENT_OUT). No existe "agregar pallets nuevos" para salidas.
    */
-  async requestQuantityEdit(id: string, dto: RequestQuantityEditDto, userId: string) {
+  async requestQuantityEdit(id: string, dto: RequestQuantityEditDto, userId: string, requesterRole?: string) {
+    await this.assertMovementAccess({ userId, role: requesterRole ?? '' }, id);
     const movement = await this.dataSource.getRepository(Movement).findOne({ where: { id } });
     if (!movement) throw new NotFoundException('Movimiento no encontrado');
     if (!['ENTRY', 'EXIT'].includes(movement.type)) {
@@ -1342,6 +1510,15 @@ export class MovementsService {
     const fieldUpdates: Array<{ lot: Lot; field: LotField; oldValue: string | null; newValue: string }> = [];
     /** Cambios de peso por pallet — dato descriptivo, se aplica directo y auditado. */
     const weightUpdates: Array<{ pallet: Pallet; oldValue: number | null; newValue: number }> = [];
+    /**
+     * Paletas físicas despachadas por palet — mismo criterio que el peso, pero
+     * el dato vive en el detalle del movimiento, no en el palet: el mismo palet
+     * puede haber salido en otra salida con otra preparación.
+     */
+    const dispatchedUpdates: Array<{
+      detail: MovementDetail; palletCode: string;
+      oldValue: number | null; newValue: number | null;
+    }> = [];
     const increaseItems: IncreaseItem[] = [];
     const decreaseItems: Array<{ palletId: string; quantity: number }> = [];
     // Solo EXIT: devolver stock a un pallet ya existente (posiblemente EXITED) — ver
@@ -1378,6 +1555,13 @@ export class MovementsService {
       for (const [field, raw] of lotFieldEdits) {
         const newVal = raw?.trim();
         if (!newVal) continue;
+        // Material sin Lote SAP: se avisa y se ignora ese campo en vez de
+        // cortar la corrección entera, que puede traer cantidades y renombres
+        // legítimos. El sapLot histórico del lote no se toca.
+        if (field === 'sapLot' && !(await productUsesSapLot(this.dataSource.manager, lot.productId))) {
+          warnings.push(`El material del lote ${lot.lotCode} no utiliza Lote SAP: ese dato no se modificó.`);
+          continue;
+        }
         const oldVal = lot[field] ?? null;
         if (newVal !== oldVal) {
           fieldUpdates.push({ lot, field, oldValue: oldVal, newValue: newVal });
@@ -1438,6 +1622,22 @@ export class MovementsService {
             weightUpdates.push({ pallet, oldValue: oldWeight, newValue: pe.weightKg });
           }
         }
+
+        // Paletas físicas despachadas: informativo, no mueve stock. Solo tiene
+        // sentido en una salida — en una entrada se avisa y se ignora, en vez de
+        // cortar una corrección que puede traer cantidades legítimas.
+        if (pe.dispatchedPallets !== undefined) {
+          const detail = lotDetails.find((d) => d.palletId === pe.palletId);
+          if (!isExit) {
+            warnings.push(`El palet ${pallet.code} no es de una salida: las paletas físicas despachadas no se modificaron.`);
+          } else if (detail) {
+            const oldValue = detail.dispatchedPallets ?? null;
+            const newValue = pe.dispatchedPallets ?? null;
+            if (oldValue !== newValue) {
+              dispatchedUpdates.push({ detail, palletCode: pallet.code, oldValue, newValue });
+            }
+          }
+        }
       }
 
       // ── Agregado de unidades → pallets nuevos al aprobar (solo ENTRY) ──
@@ -1466,6 +1666,7 @@ export class MovementsService {
 
     if (
       renames.length === 0 && fieldUpdates.length === 0 && weightUpdates.length === 0 &&
+      dispatchedUpdates.length === 0 &&
       increaseItems.length === 0 && decreaseItems.length === 0 && restoreItems.length === 0
     ) {
       throw new BadRequestException('No hay cambios para aplicar.');
@@ -1531,6 +1732,21 @@ export class MovementsService {
         }));
       }
 
+      // 2c. Paletas físicas despachadas: descriptivo, directo y auditado. Se
+      // guarda en el detalle del movimiento; el stock y el palet no se tocan.
+      for (const du of dispatchedUpdates) {
+        du.detail.dispatchedPallets = du.newValue;
+        await manager.save(MovementDetail, du.detail);
+        await manager.save(manager.create(RegularizationLog, {
+          movementId: id,
+          field: `pallet.${du.palletCode}.dispatchedPallets`,
+          oldValue: du.oldValue != null ? String(du.oldValue) : null,
+          newValue: du.newValue != null ? String(du.newValue) : null,
+          changedById: userId,
+          reason: dto.reason,
+        }));
+      }
+
       // 3. Solicitudes de ajuste por los deltas — pendientes de aprobación
       const requests: Array<{ requestId: string; code: string; type: string; totalQuantity: number }> = [];
       const createRequest = async (
@@ -1572,6 +1788,7 @@ export class MovementsService {
         renamed: renames.length,
         lotFieldChanges: fieldUpdates.length,
         weightChanges: weightUpdates.length,
+        dispatchedChanges: dispatchedUpdates.length,
         requests,
       };
     });
@@ -1581,6 +1798,7 @@ export class MovementsService {
     if (result.renamed > 0) parts.push(`${result.renamed} lote(s) renombrado(s)`);
     if (result.lotFieldChanges > 0) parts.push(`${result.lotFieldChanges} dato(s) de lote actualizado(s)`);
     if (result.weightChanges > 0) parts.push(`${result.weightChanges} peso(s) de pallet actualizado(s)`);
+    if (result.dispatchedChanges > 0) parts.push(`${result.dispatchedChanges} palet(s) con paletas físicas actualizadas`);
     for (const r of result.requests) {
       parts.push(`${r.code} (${r.type === 'ADJUSTMENT_IN' ? '+' : '−'}${r.totalQuantity} unid.) pendiente de aprobación`);
     }
@@ -1592,16 +1810,16 @@ export class MovementsService {
     );
 
     if (result.renamed > 0 || result.lotFieldChanges > 0) {
-      void Promise.all([
-        this.cache.delPattern('kpis:*'),
-        this.cache.delPattern('stock:*'),
-      ]);
+      this.invalidateWarehouseCaches(
+        await this.access.resolveEntityWarehouseId('movement', id),
+      );
     }
 
     return { ...result, warnings };
   }
 
-  async regularize(id: string, dto: RegularizeMovementDto, userId: string) {
+  async regularize(id: string, dto: RegularizeMovementDto, userId: string, requesterRole?: string) {
+    await this.assertMovementAccess({ userId, role: requesterRole ?? '' }, id);
     const result = await this.dataSource.transaction(async (manager) => {
       const movement = await manager.findOne(Movement, { where: { id } });
       if (!movement) throw new NotFoundException('Movimiento no encontrado');
@@ -1642,6 +1860,9 @@ export class MovementsService {
           for (const field of lotStringFields) {
             const newVal = dto[field]?.trim() ?? null;
             if (newVal === null) continue;
+            // No se le asigna un lote SAP nuevo a un material que no los usa.
+            // El valor histórico del lote, si lo tiene, queda como está.
+            if (field === 'sapLot' && !(await productUsesSapLot(manager, lot.productId))) continue;
             const oldVal = lot[field] ?? null;
             if (newVal !== oldVal) {
               logs.push({ movementId: id, field: `lot.${lot.lotCode}.${field}`, oldValue: oldVal, newValue: newVal, changedById: userId, reason: dto.reason });
@@ -1687,16 +1908,17 @@ export class MovementsService {
         await manager.save(manager.create(RegularizationLog, log));
       }
 
-      return { regularized: true, changes: logs.length };
+      return { regularized: true, changes: logs.length, warehouseId: movement.warehouseId ?? null };
     });
 
-    // Regularization changes pending count → invalidate kpis cache
-    void this.cache.delPattern('kpis:*');
+    // Regularizar cambia el contador de pendientes → se invalidan los KPIs del
+    // depósito afectado (no los de todos).
+    this.invalidateWarehouseCaches(result.warehouseId);
 
     return result;
   }
 
-  async findAll(query: MovementsQueryDto) {
+  async findAll(query: MovementsQueryDto, scope: WarehouseScope = null) {
     const page = query.page ?? 1;
     const limit = Math.min(query.limit ?? 20, 100);
 
@@ -1755,6 +1977,7 @@ export class MovementsService {
         'product.code AS "productCode"',
         'product.description AS "productDescription"',
         'product."unitOfMeasure" AS "unitOfMeasure"',
+        'product."usesSapLot" AS "usesSapLot"',
         'warehouse.id AS "warehouseId"',
         'warehouse.name AS "warehouseName"',
         'location.id AS "locationId"',
@@ -1774,10 +1997,10 @@ export class MovementsService {
       .orderBy('movement.date', 'DESC')
       .addOrderBy('movement.createdAt', 'DESC');
 
-    if (query.warehouseId) {
+    if (scope) {
       qb.andWhere(
-        '(movement."warehouseId" = :warehouseId OR movement."fromWarehouseId" = :warehouseId OR movement."toWarehouseId" = :warehouseId)',
-        { warehouseId: query.warehouseId },
+        '(movement."warehouseId" IN (:...scopeIds) OR movement."fromWarehouseId" IN (:...scopeIds) OR movement."toWarehouseId" IN (:...scopeIds))',
+        { scopeIds: scope },
       );
     }
     if (query.locationId) {
@@ -1832,7 +2055,9 @@ export class MovementsService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user?: AccessUser) {
+    if (user) await this.assertMovementAccess(user, id);
+
     const qb = this.dataSource
       .getRepository(Movement)
       .createQueryBuilder('movement')
@@ -1887,6 +2112,7 @@ export class MovementsService {
         'product.code AS "productCode"',
         'product.description AS "productDescription"',
         'product."unitOfMeasure" AS "unitOfMeasure"',
+        'product."usesSapLot" AS "usesSapLot"',
         'warehouse.id AS "warehouseId"',
         'warehouse.name AS "warehouseName"',
         'location.id AS "locationId"',
@@ -2040,6 +2266,10 @@ export class MovementsService {
   ): Promise<Lot> {
     const repo = manager.getRepository(Lot);
     lotCode = normalizeLotCode(lotCode);
+    // Material configurado como "no utiliza Lote SAP": el sistema no le escribe
+    // uno, venga de donde venga. Es el único punto por el que pasan la entrada,
+    // el aumento de una corrección y el import de carga inicial.
+    sapLot = await dropSapLotIfUnused(manager, productId, sapLot);
     // El formulario de Entrada no tiene un campo propio para "lote proveedor" —
     // por defecto es el mismo código de lote que se cargó. `supplierLot` sigue
     // existiendo aparte por si algún día se necesita distinguirlo (el caller que
@@ -2120,6 +2350,9 @@ export class MovementsService {
       material: {
         id: row.productId, code: row.productCode,
         description: row.productDescription, unitOfMeasure: row.unitOfMeasure,
+        // Lo consume Corregir movimiento para no ofrecer un Lote SAP que
+        // el material no usa. Materiales viejos sin el dato: se asume que sí.
+        usesSapLot: row.usesSapLot ?? true,
       },
       warehouse: row.warehouseId ? { id: row.warehouseId, name: row.warehouseName } : null,
       location: row.locationId ? { id: row.locationId, code: row.locationCode } : null,
@@ -2132,6 +2365,15 @@ export class MovementsService {
     };
   }
 
+  /**
+   * Asignación FEFO automática para una salida sin detalle de pallets.
+   *
+   * **El alcance es siempre un depósito.** Sin `warehouseId` la selección
+   * barría los pallets de todos los depósitos, así que una salida desde el
+   * depósito 01 podía consumir mercadería del 02 y descuadrar los dos. El
+   * depósito no es opcional: si no se puede determinar, la salida se rechaza
+   * en vez de resolverse contra el stock global.
+   */
   private async autoFefoExit(
     manager: EntityManager,
     productId: string,
@@ -2140,11 +2382,20 @@ export class MovementsService {
     quantity: number,
     movementId: string,
   ): Promise<void> {
+    if (!warehouseId && !locationId) {
+      throw new BadRequestException(
+        'La salida requiere un depósito: FEFO no puede resolverse contra el stock de todos los depósitos.',
+      );
+    }
+
     const palletRepo = manager.getRepository(Pallet);
 
     const qb = palletRepo
       .createQueryBuilder('pallet')
       .innerJoin('lots', 'lot', 'lot.id = pallet."lotId"')
+      // El join a locations es incondicional: un pallet sin ubicación no
+      // pertenece a ningún depósito y no puede entrar en una salida acotada.
+      .innerJoin('locations', 'loc', 'loc.id = pallet."currentLocationId"')
       // AVAILABLE y PARTIAL: el auto-FEFO también consume de pallets ya abiertos
       // (los más viejos), no solo de los intactos. Excluye BLOCKED/DAMAGED/EXITED/EMPTY.
       .where('pallet.status IN (:...statuses)', { statuses: ['AVAILABLE', 'PARTIAL'] })
@@ -2156,9 +2407,9 @@ export class MovementsService {
 
     if (locationId) {
       qb.andWhere('pallet."currentLocationId" = :locationId', { locationId });
-    } else if (warehouseId) {
-      qb.innerJoin('locations', 'loc', 'loc.id = pallet."currentLocationId"')
-        .andWhere('loc."warehouseId" = :warehouseId', { warehouseId });
+    }
+    if (warehouseId) {
+      qb.andWhere('loc."warehouseId" = :warehouseId', { warehouseId });
     }
 
     // Selección FEFO sin lock (solo para ordenar candidatos). El lock se toma
@@ -2682,6 +2933,8 @@ export class MovementsService {
     }
 
     if (commit) {
+      // Revertir la carga inicial toca todos los depósitos a la vez: acá la
+      // invalidación global sí es la correcta, no un descuido de alcance.
       void Promise.all([this.cache.delPattern('kpis:*'), this.cache.delPattern('stock:*')]);
       this.events.emitStockUpdated({ warehouseId: null });
     }

@@ -1,8 +1,13 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
 import { Pallet } from './entities/pallet.entity';
 import { CreatePalletDto } from './dto/create-pallet.dto';
+import {
+  WarehouseAccessService,
+  type AccessUser,
+  type WarehouseScope,
+} from '../warehouses/warehouse-access.service';
 import { UpdatePalletDto } from './dto/update-pallet.dto';
 import { Lot } from '../lots/entities/lot.entity';
 import { Location } from '../locations/entities/location.entity';
@@ -26,6 +31,16 @@ export interface EnrichedPallet {
   productId: string;
   productCode: string;
   productDescription: string;
+  /** Configuración de Lote SAP del material — la consume el ajuste de inventario. */
+  usesSapLot: boolean;
+  /**
+   * Reglas de apilamiento del material. Se informan acá porque el detalle del
+   * palet las muestra: sin ellas la pantalla caía siempre en el default
+   * optimista (apilable, recibe peso, sin límite de niveles).
+   */
+  stackable: boolean;
+  maxStackLevel: number | null;
+  canReceiveWeightOnTop: boolean;
   locationCode: string | null;
   warehouseId: string | null;
   warehouseName: string | null;
@@ -39,9 +54,28 @@ export class PalletsService {
     @InjectRepository(Lot) private readonly lotRepo: Repository<Lot>,
     @InjectRepository(Location) private readonly locationRepo: Repository<Location>,
     private readonly pilas: PilasService,
+    private readonly access: WarehouseAccessService,
   ) {}
 
-  async create(dto: CreatePalletDto) {
+  /**
+   * Acceso al depósito donde está el pallet **ahora**. Un pallet sin ubicación
+   * (despachado o pendiente de ubicar) no pertenece a ningún depósito: solo lo
+   * ven los roles de alcance global.
+   */
+  private async assertPalletAccess(user: AccessUser, palletId: string): Promise<string | null> {
+    const warehouseId = await this.access.resolveEntityWarehouseId('pallet', palletId);
+    if (!warehouseId) {
+      if (this.access.hasGlobalScope(user.role)) return null;
+      throw new ForbiddenException('El pallet no está en ningún depósito al que tengas acceso.');
+    }
+    await this.access.assertWarehouseAccess(user, warehouseId);
+    return warehouseId;
+  }
+
+  async create(dto: CreatePalletDto, user?: AccessUser) {
+    if (user && dto.currentLocationId) {
+      await this.access.assertEntityAccess(user, 'location', dto.currentLocationId);
+    }
     const exists = await this.palletRepo.findOne({ where: { code: dto.code } });
     if (exists) throw new BadRequestException('Ya existe un pallet con ese código');
 
@@ -70,7 +104,7 @@ export class PalletsService {
     productId?: string;
     locationId?: string;
     search?: string;
-  } = {}): Promise<EnrichedPallet[]> {
+  } = {}, scope: WarehouseScope = null): Promise<EnrichedPallet[]> {
     const { lotId, status, productId, locationId, search } = filters;
 
     // Construir el WHERE dinámicamente: solo se agregan condiciones de los
@@ -102,6 +136,13 @@ export class PalletsService {
         `(p.code ILIKE $${i} OR pr.code ILIKE $${i} OR pr.description ILIKE $${i} OR l."lotCode" ILIKE $${i})`,
       );
     }
+    // Un pallet pertenece al depósito donde está **hoy**: los despachados y los
+    // que no tienen ubicación quedan fuera del alcance operativo (su historia
+    // se consulta desde el movimiento/documento, que sí guarda su depósito).
+    if (scope) {
+      params.push(scope);
+      conditions.push(`loc."warehouseId" = ANY($${params.length}::uuid[])`);
+    }
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
@@ -121,6 +162,10 @@ export class PalletsService {
         l."productId",
         pr.code              AS "productCode",
         pr.description       AS "productDescription",
+        pr."usesSapLot"      AS "usesSapLot",
+        pr.stackable         AS stackable,
+        pr."maxStackLevel"   AS "maxStackLevel",
+        pr."canReceiveWeightOnTop" AS "canReceiveWeightOnTop",
         loc.code             AS "locationCode",
         w.id                 AS "warehouseId",
         w.name               AS "warehouseName"
@@ -136,13 +181,23 @@ export class PalletsService {
     );
   }
 
-  async kpis() {
+  async kpis(scope: WarehouseScope = null) {
+    const scopeJoin = scope
+      ? `JOIN locations loc ON loc.id = p."currentLocationId" AND loc."warehouseId" = ANY($1::uuid[])`
+      : '';
+    const params = scope ? [scope] : [];
+
     const rows = await this.dataSource.query<{ status: string; cnt: string }[]>(
-      `SELECT status, COUNT(*)::int AS cnt FROM pallets GROUP BY status`,
+      `SELECT p.status, COUNT(*)::int AS cnt FROM pallets p ${scopeJoin} GROUP BY p.status`,
+      params,
     );
-    const [noLoc] = await this.dataSource.query<{ cnt: string }[]>(
-      `SELECT COUNT(*)::int AS cnt FROM pallets WHERE "currentLocationId" IS NULL AND status <> 'EXITED'`,
-    );
+    // "Sin ubicación" no se puede atribuir a ningún depósito: dentro de un
+    // alcance acotado el contador es 0 en vez de mostrar los de todos.
+    const [noLoc] = scope
+      ? [{ cnt: '0' }]
+      : await this.dataSource.query<{ cnt: string }[]>(
+          `SELECT COUNT(*)::int AS cnt FROM pallets WHERE "currentLocationId" IS NULL AND status <> 'EXITED'`,
+        );
     const by: Record<string, number> = {};
     let total = 0;
     for (const r of rows) {
@@ -207,13 +262,15 @@ export class PalletsService {
     });
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user?: AccessUser) {
+    if (user) await this.assertPalletAccess(user, id);
     const pallet = await this.palletRepo.findOne({ where: { id } });
     if (!pallet) throw new NotFoundException('Pallet no encontrado');
     return pallet;
   }
 
-  async update(id: string, dto: UpdatePalletDto) {
+  async update(id: string, dto: UpdatePalletDto, user?: AccessUser) {
+    if (user) await this.assertPalletAccess(user, id);
     const pallet = await this.findOne(id);
 
     if (dto.currentLocationId) {
@@ -237,7 +294,21 @@ export class PalletsService {
     return saved;
   }
 
-  async quickTransfer(palletId: string, toLocationId: string, userId: string) {
+  async quickTransfer(palletId: string, toLocationId: string, userId: string, requesterRole?: string) {
+    // El depósito se lee de la ubicación **actual** del pallet: si otro
+    // usuario lo movió mientras este formulario estaba abierto, se valida
+    // contra dónde está ahora, no contra lo que creía el cliente.
+    const user: AccessUser = { userId, role: requesterRole ?? '' };
+    const fromWarehouseId = await this.assertPalletAccess(user, palletId);
+    const toWarehouseId = await this.access.resolveEntityWarehouseId('location', toLocationId);
+    if (!toWarehouseId) throw new NotFoundException('Ubicación destino no encontrada');
+    if (fromWarehouseId !== toWarehouseId) {
+      throw new BadRequestException(
+        'Origen y destino pertenecen a depósitos distintos. La transferencia entre depósitos todavía no está habilitada.',
+      );
+    }
+    await this.access.assertWritableWarehouse(user, toWarehouseId);
+
     await this.dataSource.transaction(async (em) => {
       // Mismo lock que el motor de Movimientos: dos transferencias simultáneas
       // del mismo pallet no pueden validar ambas contra una ubicación obsoleta.
@@ -371,7 +442,8 @@ export class PalletsService {
     return { deleted: true };
   }
 
-  async history(id: string) {
+  async history(id: string, user?: AccessUser) {
+    if (user) await this.assertPalletAccess(user, id);
     const pallet = await this.findOne(id);
 
     const detailEvents = await this.dataSource.query(

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { DocumentPrintData } from "../api/movements";
-import { buildPrintPresentation, PRINT_PLATE_LABEL } from "./printDocumentModel";
+import type { DocumentPrintData, PrintDetail } from "../api/movements";
+import { buildPrintPresentation, dispatchedPalletsOf, PRINT_PLATE_LABEL } from "./printDocumentModel";
 
 function fixture(type: "ENTRY" | "EXIT"): DocumentPrintData {
   return {
@@ -59,5 +59,40 @@ describe("modelo de impresión documental", () => {
       { label: "TRANSPORTADO POR", prefill: "TRANSPORTADORA EXACTA S.A." },
       { label: "RECIBIDO POR", prefill: "" },
     ]);
+  });
+});
+
+function detail(dispatchedPallets?: number | null): PrintDetail {
+  return {
+    id: `d-${Math.random()}`,
+    movementId: "m-1",
+    palletId: `p-${Math.random()}`,
+    quantity: 100,
+    ...(dispatchedPallets === undefined ? {} : { dispatchedPallets }),
+  };
+}
+
+describe("paletas físicas despachadas en la nota de salida", () => {
+  it("sin informar nada, la nota no muestra el dato", () => {
+    expect(dispatchedPalletsOf([detail(), detail()])).toEqual({ informed: false, total: 0 });
+    // Salidas históricas: el backend manda null explícito.
+    expect(dispatchedPalletsOf([detail(null), detail(null)])).toEqual({ informed: false, total: 0 });
+  });
+
+  it("una línea sin palets tampoco informa nada", () => {
+    expect(dispatchedPalletsOf([])).toEqual({ informed: false, total: 0 });
+  });
+
+  it("suma las paletas físicas informadas por palet", () => {
+    expect(dispatchedPalletsOf([detail(2), detail(3)])).toEqual({ informed: true, total: 5 });
+  });
+
+  it("el palet sin el dato cuenta como una paleta", () => {
+    // Se informó en uno solo: el otro salió como vino, una paleta.
+    expect(dispatchedPalletsOf([detail(3), detail(), detail(null)])).toEqual({ informed: true, total: 5 });
+  });
+
+  it("un palet consolidado en otro suma cero, no una", () => {
+    expect(dispatchedPalletsOf([detail(1), detail(0)])).toEqual({ informed: true, total: 1 });
   });
 });

@@ -150,8 +150,8 @@ export async function getMovementsReport(params?: {
   return data;
 }
 
-export async function getTraceReport(materialId: string) {
-  const { data } = await api.get<TraceReportResponse>("/reports/trace", { params: { materialId } });
+export async function getTraceReport(materialId: string, warehouseId?: string) {
+  const { data } = await api.get<TraceReportResponse>("/reports/trace", { params: { materialId, warehouseId } });
   return data;
 }
 
@@ -170,8 +170,8 @@ export async function upsertSapStock(payload: { date: string; productId: string;
   return data;
 }
 
-export async function getKpis(range: ReportRange = "today") {
-  const { data } = await api.get<KpisResponse>("/reports/kpis", { params: { range } });
+export async function getKpis(range: ReportRange = "today", warehouseId?: string) {
+  const { data } = await api.get<KpisResponse>("/reports/kpis", { params: { range, warehouseId } });
   return data;
 }
 
@@ -192,8 +192,8 @@ export type FreshnessRow = {
   };
 };
 
-export async function getFreshnessReport(productId?: string) {
-  const { data } = await api.get<FreshnessRow[]>("/reports/freshness", { params: { productId } });
+export async function getFreshnessReport(productId?: string, warehouseId?: string) {
+  const { data } = await api.get<FreshnessRow[]>("/reports/freshness", { params: { productId, warehouseId } });
   return data;
 }
 
@@ -235,8 +235,8 @@ export type InventoryHealth = {
   divergentCells: InventoryHealthCell[];
 };
 
-export async function getInventoryHealth(): Promise<InventoryHealth> {
-  const { data } = await api.get<InventoryHealth>("/reports/inventory-health");
+export async function getInventoryHealth(warehouseId?: string): Promise<InventoryHealth> {
+  const { data } = await api.get<InventoryHealth>("/reports/inventory-health", { params: { warehouseId } });
   return data;
 }
 
@@ -266,8 +266,8 @@ export type OccupancyReport = {
   };
 };
 
-export async function getOccupancy(): Promise<OccupancyReport> {
-  const { data } = await api.get<OccupancyReport>("/reports/occupancy");
+export async function getOccupancy(warehouseId?: string): Promise<OccupancyReport> {
+  const { data } = await api.get<OccupancyReport>("/reports/occupancy", { params: { warehouseId } });
   return data;
 }
 
@@ -289,7 +289,7 @@ export type RotationReport = {
   totals: { products: number; exitUnits: number; currentStock: number };
 };
 
-export async function getRotation(params: { from?: string; to?: string } = {}): Promise<RotationReport> {
+export async function getRotation(params: { from?: string; to?: string; warehouseId?: string } = {}): Promise<RotationReport> {
   const { data } = await api.get<RotationReport>("/reports/rotation", { params });
   return data;
 }
@@ -317,7 +317,7 @@ export type DwellTimeReport = {
   oldest: DwellPallet[];
 };
 
-export async function getDwellTime(): Promise<DwellTimeReport> {
-  const { data } = await api.get<DwellTimeReport>("/reports/dwell-time");
+export async function getDwellTime(warehouseId?: string): Promise<DwellTimeReport> {
+  const { data } = await api.get<DwellTimeReport>("/reports/dwell-time", { params: { warehouseId } });
   return data;
 }

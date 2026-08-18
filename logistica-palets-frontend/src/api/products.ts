@@ -7,6 +7,11 @@ export type Product = {
   unitOfMeasure?: string;
   active: boolean;
   stockMinimo?: number | null;
+  /**
+   * El material se maneja con Lote SAP ("Lote Ypané"). En `false` la Entrada
+   * no manda `sapLot` y el backend tampoco lo escribe. Default `true`.
+   */
+  usesSapLot: boolean;
   stackable: boolean;
   maxStackLevel?: number | null;
   canReceiveWeightOnTop: boolean;
@@ -52,6 +57,7 @@ export async function createProduct(payload: {
   unitOfMeasure?: string;
   active?: boolean;
   stockMinimo?: number;
+  usesSapLot?: boolean;
   stackable?: boolean;
   maxStackLevel?: number | null;
   canReceiveWeightOnTop?: boolean;
@@ -67,6 +73,7 @@ export async function updateProduct(id: string, payload: Partial<{
   unitOfMeasure: string;
   active: boolean;
   stockMinimo: number | null;
+  usesSapLot: boolean;
   stackable: boolean;
   maxStackLevel: number | null;
   canReceiveWeightOnTop: boolean;

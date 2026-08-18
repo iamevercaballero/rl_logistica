@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Not, Repository } from 'typeorm';
+import type { WarehouseScope } from '../warehouses/warehouse-access.service';
 import { Location } from './entities/location.entity';
 import { Warehouse } from '../warehouses/entities/warehouse.entity';
 import { Pallet } from '../pallets/entities/pallet.entity';
@@ -342,8 +343,11 @@ export class LocationsService {
    * capacidad y un estado: BLOCKED (inactiva), FULL (sin bases libres),
    * PARTIAL (con lugar pero con alguna base ocupada), FREE.
    */
-  async availability() {
-    const locations = await this.locationRepo.find({ relations: ['warehouse'] });
+  async availability(scope: WarehouseScope = null) {
+    const locations = await this.locationRepo.find({
+      relations: ['warehouse'],
+      where: scope ? { warehouse: { id: In(scope) } } : {},
+    });
 
     // Bases (pilas) por Sector-Subsector. Las EMPTY ya liberaron su base.
     const counts = await this.pilaRepo
@@ -392,11 +396,16 @@ export class LocationsService {
    * motor de colocación al confirmar una entrada; acá es solo una sugerencia
    * ligera (no reserva nada, no toma locks).
    */
-  async recommend(productId: string, quantity = 1) {
+  async recommend(productId: string, quantity = 1, scope: WarehouseScope = null) {
     const product = await this.productRepo.findOne({ where: { id: productId } });
     if (!product) throw new NotFoundException('Producto no encontrado');
 
-    const locations = await this.locationRepo.find({ relations: ['warehouse'] });
+    // Solo se recomiendan sectores del alcance: sugerir una ubicacion de otro
+    // deposito llevaria la entrada fuera del deposito activo.
+    const locations = await this.locationRepo.find({
+      relations: ['warehouse'],
+      where: scope ? { warehouse: { id: In(scope) } } : {},
+    });
 
     // Bases (pilas) ocupadas por Sector-Subsector. Las EMPTY ya liberaron su base.
     const baseCounts = await this.pilaRepo

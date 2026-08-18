@@ -37,8 +37,8 @@ export type Location = {
   active?: boolean;
 };
 
-export async function listLocations() {
-  const { data } = await api.get<Location[]>("/locations");
+export async function listLocations(warehouseId?: string) {
+  const { data } = await api.get<Location[]>("/locations", { params: { warehouseId } });
   return data;
 }
 
@@ -61,8 +61,8 @@ export type LocationAvailability = {
 };
 
 /** Disponibilidad por ubicación (ocupación vs capacidad) para el selector guiado. */
-export async function getLocationAvailability() {
-  const { data } = await api.get<LocationAvailability[]>("/locations/availability");
+export async function getLocationAvailability(warehouseId?: string) {
+  const { data } = await api.get<LocationAvailability[]>("/locations/availability", { params: { warehouseId } });
   return data;
 }
 
@@ -96,9 +96,9 @@ export type SlottingResult = {
 };
 
 /** Pide al backend las ubicaciones recomendadas para guardar un pallet del producto. */
-export async function getLocationRecommendations(productId: string, quantity = 1) {
+export async function getLocationRecommendations(productId: string, quantity = 1, warehouseId?: string) {
   const { data } = await api.get<SlottingResult>("/locations/recommendations", {
-    params: { productId, quantity },
+    params: { productId, quantity, warehouseId },
   });
   return data;
 }

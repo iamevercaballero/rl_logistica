@@ -28,6 +28,14 @@ export class CreateProductDto {
   @Min(0)
   stockMinimo?: number;
 
+  /**
+   * El material se maneja con Lote SAP. Sin especificar, queda en `true`
+   * (comportamiento actual): el campo es opt-out explícito, no opt-in.
+   */
+  @IsOptional()
+  @IsBoolean()
+  usesSapLot?: boolean;
+
   @IsOptional()
   @IsBoolean()
   stackable?: boolean;

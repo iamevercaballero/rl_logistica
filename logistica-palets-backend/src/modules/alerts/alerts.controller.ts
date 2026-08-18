@@ -6,25 +6,36 @@ import {
   Param,
   Patch,
   Post,
+  Query,
+  Req,
   UseGuards,
   ParseUUIDPipe,
 } from '@nestjs/common';
+import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles/roles.guard';
 import { Roles } from '../auth/roles/roles.decorator';
 import { AlertsService } from './alerts.service';
 import { CreateAlertRuleDto } from './dto/create-alert-rule.dto';
+import { WarehouseAccessService, type AccessUser } from '../warehouses/warehouse-access.service';
+
+type AuthedRequest = Request & { user: AccessUser };
+const OptionalUuid = new ParseUUIDPipe({ optional: true });
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('alerts')
 export class AlertsController {
-  constructor(private readonly svc: AlertsService) {}
+  constructor(
+    private readonly svc: AlertsService,
+    private readonly access: WarehouseAccessService,
+  ) {}
 
-  /** Current active alerts (evaluated on demand). */
+  /** Current active alerts (evaluated on demand), acotadas al depósito activo. */
   @Get('active')
   @Roles('ADMIN', 'MANAGER', 'AUDITOR', 'OPERATOR')
-  getActive() {
-    return this.svc.getActiveAlerts();
+  async getActive(@Req() req: AuthedRequest, @Query('warehouseId', OptionalUuid) warehouseId?: string) {
+    const { warehouseIds } = await this.access.resolveQueryScope(req.user, warehouseId);
+    return this.svc.getActiveAlerts(warehouseIds);
   }
 
   /** List all configured alert rules. */

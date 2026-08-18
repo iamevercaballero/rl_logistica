@@ -1,4 +1,4 @@
-import type { DocumentPrintData, PrintUserSnapshot } from "../api/movements";
+import type { DocumentPrintData, PrintDetail, PrintUserSnapshot } from "../api/movements";
 
 export const PRINT_PLATE_LABEL = "CHAPA";
 
@@ -34,5 +34,25 @@ export function buildPrintPresentation(data: DocumentPrintData): {
           { label: "TRANSPORTADO POR", prefill: carrier },
           { label: "RECIBIDO POR", prefill: "" },
         ],
+  };
+}
+
+/**
+ * SALIDA — paletas físicas con las que se despachó una línea.
+ *
+ * `dispatchedPallets` se informa por palet de origen y es opcional: describe
+ * cómo quedó armada la carga, sin tocar el descuento de stock ni de palets. Un
+ * palet sin el dato cuenta como una paleta, que es lo que pasa si nadie tocó
+ * nada.
+ *
+ * `informed` es `false` cuando ningún palet de la línea trae el dato: ahí la
+ * nota no muestra nada extra y sale exactamente igual que siempre.
+ */
+export function dispatchedPalletsOf(details: PrintDetail[]): { informed: boolean; total: number } {
+  const informed = details.some((detail) => detail.dispatchedPallets != null);
+  if (!informed) return { informed: false, total: 0 };
+  return {
+    informed: true,
+    total: details.reduce((sum, detail) => sum + (detail.dispatchedPallets ?? 1), 0),
   };
 }

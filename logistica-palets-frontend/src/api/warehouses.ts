@@ -13,6 +13,24 @@ export async function listWarehouses() {
   return data;
 }
 
+/**
+ * Depósitos que el usuario autenticado puede seleccionar.
+ *
+ * Es la única fuente del selector global: el alcance lo decide el backend a
+ * partir del rol y de `user_warehouses`, nunca el cliente. Un `localStorage`
+ * manipulado no puede agregar un depósito que no esté en esta lista.
+ */
+export async function listAllowedWarehouses() {
+  const { data } = await api.get<Warehouse[]>("/warehouses/allowed");
+  return data;
+}
+
+/** "01 · RL LOGÍSTICA" — etiqueta estándar del depósito en toda la UI. */
+export function warehouseLabel(warehouse: Pick<Warehouse, "name" | "documentCode"> | null | undefined): string {
+  if (!warehouse) return "—";
+  return warehouse.documentCode ? `${warehouse.documentCode} · ${warehouse.name}` : warehouse.name;
+}
+
 /** Ubicación con estructura y ocupación, tal como la devuelve GET /warehouses/:id/layout */
 export type LayoutLocation = {
   id: string;

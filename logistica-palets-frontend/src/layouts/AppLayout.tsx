@@ -1,6 +1,7 @@
 import React from "react";
 import { Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { canRead } from "../auth/rbac";
+import WarehouseSelector from "../components/WarehouseSelector";
 import { useAuth } from "../auth/AuthContext";
 import { ThemeToggleButton } from "../design-system/theme";
 import {
@@ -308,6 +309,7 @@ export default function AppLayout() {
             RL Logística — WMS Enterprise
           </div>
           <div className="topbar-right">
+            <WarehouseSelector />
             <CommandPaletteTrigger onClick={cmdPalette.open} />
             <span className={ROLE_BADGE[user.role] ?? "badge"}>{user.role}</span>
             <span className="badge">{user.username}</span>

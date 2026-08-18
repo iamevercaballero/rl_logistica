@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useActiveWarehouseId } from "../contexts/WarehouseContext";
 import {
   getLocationAvailability,
   getLocationMap,
@@ -78,17 +79,24 @@ export default function LocationPicker({
   const [zone, setZone] = useState("");
   const [sector, setSector] = useState("");
 
+  // El depósito del picker es el que le pasa el formulario (la entrada trabaja
+  // en el depósito activo); si no viene, se cae al activo de la sesión. En
+  // ningún caso se ofrecen ubicaciones de otro depósito.
+  const activeWarehouseId = useActiveWarehouseId();
+  const scopeWarehouseId = warehouseId || activeWarehouseId;
+
   const { data: all = [], isLoading } = useQuery({
-    queryKey: ["location-availability"],
-    queryFn: getLocationAvailability,
+    queryKey: ["locations", "availability", scopeWarehouseId],
+    queryFn: () => getLocationAvailability(scopeWarehouseId),
+    enabled: !!scopeWarehouseId,
     staleTime: 30_000,
   });
 
   // Slotting: sectores recomendados para el producto (si se pasó productId).
   const { data: slotting } = useQuery({
-    queryKey: ["location-recommendations", productId, warehouseId],
-    queryFn: () => getLocationRecommendations(productId!),
-    enabled: !!productId,
+    queryKey: ["locations", "recommendations", productId, scopeWarehouseId],
+    queryFn: () => getLocationRecommendations(productId!, 1, scopeWarehouseId),
+    enabled: !!productId && !!scopeWarehouseId,
     staleTime: 30_000,
   });
 

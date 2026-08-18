@@ -38,6 +38,19 @@ export class PalletQuantityEditDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   weightKg?: number;
+
+  /**
+   * SALIDA: paletas físicas con las que se despachó este palet. Descriptivo,
+   * como el peso — se aplica directo y auditado, sin pasar por aprobación.
+   *
+   * Tres estados distintos, a propósito: ausente = no se toca; un número = ese
+   * valor; `null` = se borra el dato informado.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(999)
+  dispatchedPallets?: number | null;
 }
 
 export class QuantityEditLotDto {

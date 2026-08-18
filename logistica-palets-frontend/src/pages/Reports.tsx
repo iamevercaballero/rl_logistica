@@ -22,7 +22,8 @@ import {
 } from "../api/reports";
 import { getMovements, regularizeMovement } from "../api/movements";
 import { listLots } from "../api/lots";
-import { listWarehouses } from "../api/warehouses";
+import { warehouseLabel } from "../api/warehouses";
+import { useActiveWarehouseId, useWarehouse } from "../contexts/WarehouseContext";
 import { listProducts } from "../api/products";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
@@ -162,9 +163,6 @@ export default function ReportsPage() {
 
   const [activeTab, setActiveTab] = useState<Tab>("stock");
 
-  // Stock tab
-  const [stockWarehouseId, setStockWarehouseId] = useState("");
-
   // Historial tab
   const [filters, setFilters] = useState<MovementFilters>(initialFilters);
   const [appliedFilters, setAppliedFilters] = useState<MovementFilters>(initialFilters);
@@ -217,101 +215,116 @@ export default function ReportsPage() {
 
   // ── Catalog queries ───────────────────────────────────────────────────────
 
-  const [warehousesQ, productsQ] = useQueries({
+  const [productsQ] = useQueries({
     queries: [
-      { queryKey: ["warehouses"], queryFn: listWarehouses, staleTime: 5 * 60_000 },
       { queryKey: ["products"],   queryFn: () => listProducts(),   staleTime: 5 * 60_000 },
     ],
   });
 
+  // Todos los reportes van contra el depósito activo: no hay un selector de
+  // depósito por reporte, el contexto ya lo define el header. El id va también
+  // en la query key para que al cambiar de depósito no se vea nada del anterior.
+  const { activeWarehouse } = useWarehouse();
+  const activeWarehouseId = useActiveWarehouseId();
+  const scoped = !!activeWarehouseId;
+
   // ── Data queries ──────────────────────────────────────────────────────────
 
   const stockQ = useQuery({
-    queryKey: ["stock", "report", stockWarehouseId],
-    queryFn: () => getStockReport(stockWarehouseId || undefined),
+    queryKey: ["stock", "report", activeWarehouseId],
+    queryFn: () => getStockReport(activeWarehouseId),
+    enabled: scoped,
   });
 
   const movementsQ = useQuery({
-    queryKey: ["movements", "report", { page: movPage, limit: movLimit, ...appliedFilters }],
+    queryKey: ["movements", "report", activeWarehouseId, { page: movPage, limit: movLimit, ...appliedFilters }],
     queryFn: () => getMovementsReport({
       page: movPage, limit: movLimit,
-      warehouseId: appliedFilters.warehouseId || undefined,
+      warehouseId: activeWarehouseId,
       productId:   appliedFilters.productId   || undefined,
       type:        appliedFilters.type        || undefined,
       dateFrom:    appliedFilters.dateFrom    || undefined,
       dateTo:      appliedFilters.dateTo      || undefined,
       search:      appliedFilters.search.trim() || undefined,
     }),
+    enabled: scoped,
     placeholderData: (prev) => prev,
   });
 
   const lotsQ = useQuery({
-    queryKey: ["lots", "search", lotApplied],
-    queryFn:  () => listLots(lotApplied?.product || undefined, lotApplied?.sap || undefined),
-    enabled:  lotApplied !== null,
+    queryKey: ["lots", "search", activeWarehouseId, lotApplied],
+    queryFn:  () => listLots(
+      lotApplied?.product || undefined, lotApplied?.sap || undefined, false, activeWarehouseId,
+    ),
+    enabled:  lotApplied !== null && scoped,
   });
 
   const entQ = useQuery({
-    queryKey: ["movements", "entradas", { page: entPage, limit: entLimit, ...entApplied }],
+    queryKey: ["movements", "entradas", activeWarehouseId, { page: entPage, limit: entLimit, ...entApplied }],
     queryFn:  () => getMovements({
       type: "ENTRY", page: entPage, limit: entLimit,
+      warehouseId: activeWarehouseId,
       productId: entApplied.productId || undefined,
       dateFrom:  entApplied.dateFrom  || undefined,
       dateTo:    entApplied.dateTo    || undefined,
     }),
-    enabled:  activeTab === "entradas",
+    enabled:  activeTab === "entradas" && scoped,
     placeholderData: (prev) => prev,
   });
 
   const salQ = useQuery({
-    queryKey: ["movements", "salidas", { page: salPage, limit: salLimit, ...salApplied }],
+    queryKey: ["movements", "salidas", activeWarehouseId, { page: salPage, limit: salLimit, ...salApplied }],
     queryFn:  () => getMovements({
       type: "EXIT", page: salPage, limit: salLimit,
+      warehouseId: activeWarehouseId,
       productId: salApplied.productId || undefined,
       dateFrom:  salApplied.dateFrom  || undefined,
       dateTo:    salApplied.dateTo    || undefined,
       documentoMaterialStatus: salApplied.documentoMaterialStatus || undefined,
     }),
-    enabled:  activeTab === "salidas",
+    enabled:  activeTab === "salidas" && scoped,
     placeholderData: (prev) => prev,
   });
 
   const dailyQ = useQuery({
-    queryKey: ["daily", "stock", dailyDateFrom, dailyDateTo],
-    queryFn:  () => getDailyStockReport({ dateFrom: dailyDateFrom, dateTo: dailyDateTo }),
+    queryKey: ["reports", "daily-stock", activeWarehouseId, dailyDateFrom, dailyDateTo],
+    queryFn:  () => getDailyStockReport({
+      dateFrom: dailyDateFrom, dateTo: dailyDateTo, warehouseId: activeWarehouseId,
+    }),
+    enabled: scoped,
   });
 
   const traceQ = useQuery({
-    queryKey: ["trace", traceApplied],
-    queryFn:  () => getTraceReport(traceApplied),
-    enabled:  !!traceApplied,
+    queryKey: ["reports", "trace", activeWarehouseId, traceApplied],
+    queryFn:  () => getTraceReport(traceApplied, activeWarehouseId),
+    enabled:  !!traceApplied && scoped,
     staleTime: 30_000,
   });
 
   const freshnessQ = useQuery({
-    queryKey: ["freshness", freshnessApplied],
-    queryFn:  () => getFreshnessReport(freshnessApplied),
-    enabled:  activeTab === "frescura",
+    queryKey: ["reports", "freshness", activeWarehouseId, freshnessApplied],
+    queryFn:  () => getFreshnessReport(freshnessApplied, activeWarehouseId),
+    enabled:  activeTab === "frescura" && scoped,
     staleTime: 60_000,
   });
 
   // ── KPIs de almacén (ocupación / rotación / dwell-time) ───────────────────
   const occupancyQ = useQuery({
-    queryKey: ["occupancy"],
-    queryFn:  getOccupancy,
-    enabled:  activeTab === "almacen",
+    queryKey: ["reports", "occupancy", activeWarehouseId],
+    queryFn:  () => getOccupancy(activeWarehouseId),
+    enabled:  activeTab === "almacen" && scoped,
     staleTime: 30_000,
   });
   const rotationQ = useQuery({
-    queryKey: ["rotation"],
-    queryFn:  () => getRotation(),
-    enabled:  activeTab === "almacen",
+    queryKey: ["reports", "rotation", activeWarehouseId],
+    queryFn:  () => getRotation({ warehouseId: activeWarehouseId }),
+    enabled:  activeTab === "almacen" && scoped,
     staleTime: 60_000,
   });
   const dwellQ = useQuery({
-    queryKey: ["dwell-time"],
-    queryFn:  getDwellTime,
-    enabled:  activeTab === "almacen",
+    queryKey: ["reports", "dwell-time", activeWarehouseId],
+    queryFn:  () => getDwellTime(activeWarehouseId),
+    enabled:  activeTab === "almacen" && scoped,
     staleTime: 60_000,
   });
 
@@ -333,7 +346,6 @@ export default function ReportsPage() {
 
   // ── Derived ───────────────────────────────────────────────────────────────
 
-  const warehouses   = warehousesQ.data ?? [];
   const products     = productsQ.data  ?? [];
   const stock        = stockQ.data     ?? null;
   const movements    = movementsQ.data?.data ?? [];
@@ -460,17 +472,12 @@ export default function ReportsPage() {
       {activeTab === "stock" && (
         <section className="card" aria-label="Stock actual por depósito">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
-            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Stock actual por depósito</h3>
+            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Stock actual</h3>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              <select
-                className="input"
-                value={stockWarehouseId}
-                onChange={(e) => setStockWarehouseId(e.target.value)}
-                aria-label="Filtrar por depósito"
-              >
-                <option value="">Todos los depósitos</option>
-                {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-              </select>
+              {/* El depósito no se elige por reporte: lo define el selector global. */}
+              <span className="badge" title="Depósito activo de la sesión">
+                {warehouseLabel(activeWarehouse)}
+              </span>
               {stock && (
                 <>
                   <button
@@ -529,11 +536,10 @@ export default function ReportsPage() {
         <section className="card">
           <h3 style={{ marginTop: 0, fontSize: 15, fontWeight: 800, marginBottom: 16 }}>Historial de movimientos</h3>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
-            <select className="input" value={filters.warehouseId} aria-label="Depósito"
-              onChange={(e) => setFilters((p) => ({ ...p, warehouseId: e.target.value }))}>
-              <option value="">Todos los depósitos</option>
-              {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-            </select>
+            {/* El depósito no se elige por reporte: lo define el selector global. */}
+            <span className="badge" title="Depósito activo de la sesión">
+              {warehouseLabel(activeWarehouse)}
+            </span>
             <select className="input" value={filters.productId} aria-label="Material"
               onChange={(e) => setFilters((p) => ({ ...p, productId: e.target.value }))}>
               <option value="">Todos los materiales</option>

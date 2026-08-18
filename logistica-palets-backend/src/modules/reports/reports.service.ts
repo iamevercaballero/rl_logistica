@@ -9,6 +9,7 @@ import { DifferencesSapQueryDto } from './dto/differences-sap-query.dto';
 import { UpsertSapStockDto } from './dto/upsert-sap-stock.dto';
 import { SapStockSnapshot } from './entities/sap-stock.entity';
 import { CacheService } from '../cache/cache.service';
+import type { WarehouseScope } from '../warehouses/warehouse-access.service';
 import {
   businessDaysUntil,
   businessToday,
@@ -16,6 +17,34 @@ import {
   parseBusinessDate,
   shiftBusinessDate,
 } from '../../common/date';
+
+/** Forma del reporte de stock — explicita para que el tipo no se pierda al cachear. */
+export type StockReport = {
+  totalMaterials: number;
+  stockRows: number;
+  totalQuantity: number;
+  byWarehouse: { warehouseId: string | null; warehouseName: string | null; quantity: number }[];
+  byMaterial: {
+    productId: string; code: string; description: string;
+    unitOfMeasure: string | null; quantity: number;
+  }[];
+  items: unknown[];
+};
+
+/** Forma de los KPIs — idem: el tipo tiene que sobrevivir al ida y vuelta por cache. */
+export type KpisReport = {
+  range: string;
+  totalMaterials: number;
+  totalQuantity: number;
+  movementsCount: number;
+  movementsInRange: number;
+  movementsPrev: number;
+  movementsDelta: number | null;
+  pendingRegularizations: number;
+  expiringLots: number;
+  expiringCritical: number;
+  stockByWarehouse: { warehouseId: string | null; warehouseName: string | null; quantity: number }[];
+};
 
 @Injectable()
 export class ReportsService {
@@ -31,12 +60,49 @@ export class ReportsService {
   }
 
   /**
+   * Fragmento estable del alcance para las claves de caché.
+   *
+   * El alcance (`WarehouseScope`) lo resuelve siempre `WarehouseAccessService`
+   * en el controller; acá solo se aplica. Así ningún reporte decide por su
+   * cuenta qué depósitos puede ver, y una respuesta cacheada para un depósito
+   * nunca se puede servir a otro.
+   */
+  private scopeKey(scope: WarehouseScope): string {
+    return scope ? [...scope].sort().join('_') : 'all';
+  }
+
+  /**
    * Salud del inventario: verifica el invariante de la triple contabilidad
    *   Σ Pallet.quantity (no despachados)  ==  Σ Lot.stockActual  ==  Σ Stock.currentQuantity
    * por producto. Devuelve sólo los productos que divergen, con sus deltas.
    * Pensado para un endpoint de salud y para un job de alerta periódica.
    */
-  async inventoryHealth() {
+  /**
+   * Salud del inventario. El invariante Stock = Lotes = Pallets se verifica
+   * **por depósito** cuando hay alcance: con multi-depósito, un producto puede
+   * cerrar globalmente y estar descuadrado dentro de un depósito concreto.
+   *
+   * `lots.stockActual` es un total global por lote y no se puede repartir por
+   * depósito sin ambigüedad, así que dentro de un alcance acotado el contraste
+   * se hace Stock vs Pallets (las dos magnitudes que sí son por ubicación).
+   */
+  async inventoryHealth(scope: WarehouseScope = null) {
+    const scoped = !!scope;
+    const params: unknown[] = scoped ? [scope] : [];
+    const stockFilter = scoped ? `WHERE "warehouseId" = ANY($1::uuid[])` : '';
+    const palletFilter = scoped
+      ? `JOIN locations ploc ON ploc.id = pa."currentLocationId" AND ploc."warehouseId" = ANY($1::uuid[])`
+      : '';
+    // Sin alcance se compara además contra lots.stockActual (comportamiento
+    // histórico global); con alcance ese término se neutraliza para no marcar
+    // como divergencia lo que simplemente vive en otro depósito.
+    const lotTotalExpr = scoped ? `COALESCE(p.total, 0)` : `COALESCE(l.total, 0)`;
+    const lotJoin = scoped
+      ? ''
+      : `LEFT JOIN (
+        SELECT "productId", SUM("stockActual") AS total FROM lots GROUP BY "productId"
+      ) l ON l."productId" = pr.id`;
+
     const rows = await this.dataSource.query<Array<{
       productId: string; productCode: string; productDescription: string;
       stockSum: number; lotSum: number; palletSum: number;
@@ -46,26 +112,25 @@ export class ReportsService {
         pr.code                       AS "productCode",
         pr.description                AS "productDescription",
         COALESCE(s.total, 0)::float8  AS "stockSum",
-        COALESCE(l.total, 0)::float8  AS "lotSum",
+        ${lotTotalExpr}::float8       AS "lotSum",
         COALESCE(p.total, 0)::float8  AS "palletSum"
       FROM products pr
       LEFT JOIN (
-        SELECT "productId", SUM("currentQuantity") AS total FROM stocks GROUP BY "productId"
+        SELECT "productId", SUM("currentQuantity") AS total FROM stocks ${stockFilter} GROUP BY "productId"
       ) s ON s."productId" = pr.id
-      LEFT JOIN (
-        SELECT "productId", SUM("stockActual") AS total FROM lots GROUP BY "productId"
-      ) l ON l."productId" = pr.id
+      ${lotJoin}
       LEFT JOIN (
         SELECT lot."productId", SUM(pa.quantity) AS total
         FROM pallets pa
         JOIN lots lot ON lot.id = pa."lotId"
+        ${palletFilter}
         WHERE pa.status <> 'EXITED'
         GROUP BY lot."productId"
       ) p ON p."productId" = pr.id
-      WHERE COALESCE(s.total, 0) <> COALESCE(l.total, 0)
-         OR COALESCE(l.total, 0) <> COALESCE(p.total, 0)
+      WHERE COALESCE(s.total, 0) <> ${lotTotalExpr}
+         OR ${lotTotalExpr} <> COALESCE(p.total, 0)
       ORDER BY pr.code
-    `);
+    `, params);
 
     const divergent = rows.map((r) => ({
       ...r,
@@ -101,8 +166,9 @@ export class ReportsService {
       ) pa ON pa."productId" = s."productId"
           AND pa."locationId" IS NOT DISTINCT FROM s."locationId"
       WHERE s."currentQuantity" <> COALESCE(pa.total, 0)
+        ${scoped ? `AND s."warehouseId" = ANY($1::uuid[])` : ''}
       ORDER BY pr.code, loc.code
-    `);
+    `, params);
 
     const divergentCells = cells.map((c) => ({
       ...c,
@@ -124,7 +190,7 @@ export class ReportsService {
    * Ocupación del/los depósito(s): ubicaciones ocupadas vs totales y, si las
    * ubicaciones tienen capacidad definida, pallets almacenados vs capacidad.
    */
-  async occupancy() {
+  async occupancy(scope: WarehouseScope = null) {
     const rows = await this.dataSource.query<Array<{
       warehouseId: string; warehouseName: string;
       totalLocations: number; capacityPallets: number;
@@ -153,9 +219,9 @@ export class ReportsService {
         WHERE p.status NOT IN ('EXITED', 'EMPTY')
         GROUP BY l."warehouseId"
       ) pal ON pal."warehouseId" = w.id
-      WHERE w.active
+      WHERE w.active ${scope ? `AND w.id = ANY($1::uuid[])` : ''}
       ORDER BY w.name
-    `);
+    `, scope ? [scope] : []);
 
     const warehouses = rows.map((r) => ({
       ...r,
@@ -188,9 +254,11 @@ export class ReportsService {
    * actual. turnover = exitUnits / stockActual (veces que rotó respecto a lo que
    * tiene hoy). Marca dead stock (con existencia y cero salidas). Default: 30 días.
    */
-  async rotation(from?: string, to?: string) {
+  async rotation(from?: string, to?: string, scope: WarehouseScope = null) {
     const end = to ? this.toEndDate(to) : new Date();
     const start = from ? this.toStartDate(from) : new Date(Date.now() - 30 * 86_400_000);
+    const scopeFilter = scope ? `AND "warehouseId" = ANY($3::uuid[])` : '';
+    const stockScopeFilter = scope ? `WHERE "warehouseId" = ANY($3::uuid[])` : '';
 
     const rows = await this.dataSource.query<Array<{
       productId: string; productCode: string; productDescription: string;
@@ -206,14 +274,14 @@ export class ReportsService {
       LEFT JOIN (
         SELECT "productId", SUM(quantity) AS units
         FROM movements
-        WHERE type = 'EXIT' AND date BETWEEN $1 AND $2 AND "voidStatus" <> 'VOIDED'
+        WHERE type = 'EXIT' AND date BETWEEN $1 AND $2 AND "voidStatus" <> 'VOIDED' ${scopeFilter}
         GROUP BY "productId"
       ) ex ON ex."productId" = pr.id
       LEFT JOIN (
-        SELECT "productId", SUM("currentQuantity") AS stock FROM stocks GROUP BY "productId"
+        SELECT "productId", SUM("currentQuantity") AS stock FROM stocks ${stockScopeFilter} GROUP BY "productId"
       ) st ON st."productId" = pr.id
       WHERE pr.active AND (COALESCE(ex.units, 0) > 0 OR COALESCE(st.stock, 0) > 0)
-    `, [start, end]);
+    `, scope ? [start, end, scope] : [start, end]);
 
     const products = rows.map((r) => ({
       ...r,
@@ -239,7 +307,7 @@ export class ReportsService {
    * Métrica base de facturación de almacenaje (pallet-días acumulados) y de
    * detección de mercadería estancada. Buckets 0-7 / 8-30 / 31-90 / 90+ días.
    */
-  async dwellTime() {
+  async dwellTime(scope: WarehouseScope = null) {
     const rows = await this.dataSource.query<Array<{
       id: string; code: string; quantity: number; createdAt: string; ageDays: string;
       productCode: string; productDescription: string;
@@ -259,8 +327,9 @@ export class ReportsService {
       LEFT JOIN locations  loc ON loc.id = p."currentLocationId"
       LEFT JOIN warehouses w   ON w.id   = loc."warehouseId"
       WHERE p.status NOT IN ('EXITED', 'EMPTY')
+        ${scope ? `AND loc."warehouseId" = ANY($1::uuid[])` : ''}
       ORDER BY p."createdAt" ASC
-    `);
+    `, scope ? [scope] : []);
 
     const pallets = rows.map((r) => ({
       id: r.id, code: r.code, quantity: r.quantity, createdAt: r.createdAt,
@@ -331,10 +400,11 @@ export class ReportsService {
     return { start, end };
   }
 
-  async stock(query: StockQueryDto) {
-    // Cache key includes filters so each warehouse/location combo is cached separately
-    const cacheKey = `stock:${query.warehouseId ?? 'all'}:${query.locationId ?? 'all'}`;
-    const cached = await this.cache.get(cacheKey);
+  async stock(query: StockQueryDto, scope: WarehouseScope = null) {
+    // La clave lleva el alcance completo: una respuesta calculada para un
+    // depósito nunca puede servirse a otro (ni a un usuario con otro alcance).
+    const cacheKey = `stock:warehouse:${this.scopeKey(scope)}:${query.locationId ?? 'all'}`;
+    const cached = await this.cache.get<StockReport>(cacheKey);
     if (cached) return cached;
 
     const qb = this.dataSource
@@ -355,7 +425,7 @@ export class ReportsService {
       .addSelect('l.id', 'locationId')
       .addSelect('l.code', 'locationCode');
 
-    if (query.warehouseId) qb.andWhere('s."warehouseId" = :warehouseId', { warehouseId: query.warehouseId });
+    if (scope) qb.andWhere('s."warehouseId" IN (:...scopeIds)', { scopeIds: scope });
     if (query.locationId) qb.andWhere('s."locationId" = :locationId', { locationId: query.locationId });
 
     const [items, totalsRaw, byWarehouse, byMaterial] = await Promise.all([
@@ -387,7 +457,7 @@ export class ReportsService {
         .getRawMany(),
     ]);
 
-    const stockResult = {
+    const stockResult: StockReport = {
       totalMaterials: this.parseNumber(totalsRaw?.materials),
       stockRows: this.parseNumber(totalsRaw?.stockRows),
       totalQuantity: this.parseNumber(totalsRaw?.totalQuantity),
@@ -423,7 +493,17 @@ export class ReportsService {
     return stockResult;
   }
 
-  async movements(query: ReportsMovementsQueryDto) {
+  /** Depósitos del alcance, para rotularlos en encabezados de reportes/exportaciones. */
+  async scopeLabel(scope: WarehouseScope): Promise<string | null> {
+    if (!scope || scope.length === 0) return null;
+    const rows = await this.dataSource.query<Array<{ documentCode: string | null; name: string }>>(
+      `SELECT "documentCode", name FROM warehouses WHERE id = ANY($1::uuid[]) ORDER BY "documentCode" NULLS LAST, name`,
+      [scope],
+    );
+    return rows.map((r) => (r.documentCode ? `${r.documentCode} · ${r.name}` : r.name)).join(' / ') || null;
+  }
+
+  async movements(query: ReportsMovementsQueryDto, scope: WarehouseScope = null) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
 
@@ -497,8 +577,14 @@ export class ReportsService {
       .addSelect('COALESCE(lot."sapLot", dl_agg."sapLots")', 'sapLot')
       .addSelect('COALESCE(dl_agg."lotCount", CASE WHEN lot.id IS NOT NULL THEN 1 ELSE 0 END)', 'lotCount');
 
-    if (query.warehouseId) {
-      qb.andWhere('(m."warehouseId" = :warehouseId OR m."fromWarehouseId" = :warehouseId OR m."toWarehouseId" = :warehouseId)', { warehouseId: query.warehouseId });
+    if (scope) {
+      // Un movimiento pertenece al alcance si cualquiera de sus tres depósitos
+      // (propio, origen o destino) está permitido: así una transferencia se ve
+      // desde ambas puntas sin filtrar de más.
+      qb.andWhere(
+        '(m."warehouseId" IN (:...scopeIds) OR m."fromWarehouseId" IN (:...scopeIds) OR m."toWarehouseId" IN (:...scopeIds))',
+        { scopeIds: scope },
+      );
     }
     if (query.locationId) {
       qb.andWhere('(m."locationId" = :locationId OR m."fromLocationId" = :locationId OR m."toLocationId" = :locationId)', { locationId: query.locationId });
@@ -575,7 +661,7 @@ export class ReportsService {
     };
   }
 
-  async trace(materialId: string) {
+  async trace(materialId: string, scope: WarehouseScope = null) {
     const material = await this.dataSource
       .createQueryBuilder()
       .from('products', 'p')
@@ -589,7 +675,7 @@ export class ReportsService {
       throw new NotFoundException('Material no encontrado');
     }
 
-    const history = await this.dataSource
+    const historyQb = this.dataSource
       .createQueryBuilder()
       .from('movements', 'm')
       .leftJoin('warehouses', 'w', 'w.id = m."warehouseId"')
@@ -619,8 +705,16 @@ export class ReportsService {
       .addSelect('tl.code', 'toLocationCode')
       .where('m."productId" = :materialId', { materialId })
       .orderBy('m.date', 'ASC')
-      .addOrderBy('m."createdAt"', 'ASC')
-      .getRawMany();
+      .addOrderBy('m."createdAt"', 'ASC');
+
+    if (scope) {
+      historyQb.andWhere(
+        '(m."warehouseId" IN (:...scopeIds) OR m."fromWarehouseId" IN (:...scopeIds) OR m."toWarehouseId" IN (:...scopeIds))',
+        { scopeIds: scope },
+      );
+    }
+
+    const history = await historyQb.getRawMany();
 
     return {
       material,
@@ -645,7 +739,7 @@ export class ReportsService {
     };
   }
 
-  async dailyStock(query: DailyStockQueryDto) {
+  async dailyStock(query: DailyStockQueryDto, scope: WarehouseScope = null) {
     const today = businessToday();
     const from = (query.dateFrom ?? query.date ?? today).slice(0, 10);
     const to   = (query.dateTo   ?? query.date ?? today).slice(0, 10);
@@ -655,8 +749,8 @@ export class ReportsService {
     const dayStart = parseBusinessDate(from).toISOString();
     const dayEnd   = new Date(parseBusinessDate(to).getTime() + 86_400_000 - 1).toISOString();
 
-    const movementFilter = this.buildMovementScopeFilter(query, 2);
-    const sapFilter = this.buildSapScopeFilter(query, 1);
+    const movementFilter = this.buildMovementScopeFilter(query, 2, scope);
+    const sapFilter = this.buildSapScopeFilter(query, 1, scope);
 
     const rows = await this.dataSource.query(
       `
@@ -752,23 +846,23 @@ export class ReportsService {
     return this.sapStockRepo.save(snapshot);
   }
 
-  async differencesSap(query: DifferencesSapQueryDto) {
+  async differencesSap(query: DifferencesSapQueryDto, scope: WarehouseScope = null) {
     const daily = await this.dailyStock({
       date: query.date,
       productId: query.productId,
-      warehouseId: query.warehouseId,
       locationId: query.locationId,
-    });
+    }, scope);
 
     return daily.filter((row: { stockSAP: number; diferencia: number }) => row.stockSAP !== 0 || row.diferencia !== 0);
   }
 
-  async kpis(query: KpisQueryDto) {
+  async kpis(query: KpisQueryDto, scope: WarehouseScope = null) {
     const range = query.range ?? 'today';
 
-    // Cache key per range — invalidated on any movement create/regularize
-    const cacheKey = `kpis:${range}`;
-    const cached = await this.cache.get(cacheKey);
+    // La clave incluye el alcance: los KPIs del depósito 01 no pueden servirse
+    // como si fueran los del 02 (ni los de un usuario con otro alcance).
+    const cacheKey = `kpis:warehouse:${this.scopeKey(scope)}:${range}`;
+    const cached = await this.cache.get<KpisReport>(cacheKey);
     if (cached) return cached;
 
     const { start, end } = this.getRangeDates(range);
@@ -783,6 +877,12 @@ export class ReportsService {
     const in15 = shiftBusinessDate(today, 15);
     const in60 = shiftBusinessDate(today, 60);
 
+    /** Aplica el alcance a un builder sobre `stocks`/`movements` con alias dado. */
+    const scoped = <T extends { andWhere: (w: string, p?: object) => T }>(
+      qb: T,
+      expression: string,
+    ): T => (scope ? qb.andWhere(expression, { scopeIds: scope }) : qb);
+
     const [
       stockRaw,
       movementsRaw,
@@ -792,65 +892,84 @@ export class ReportsService {
       expiringRaw,
     ] = await Promise.all([
       // Current stock totals
-      this.dataSource
-        .createQueryBuilder()
-        .from('stocks', 's')
-        .select('COUNT(DISTINCT s."productId")', 'materials')
-        .addSelect('COALESCE(SUM(s."currentQuantity"), 0)', 'totalQuantity')
-        .getRawOne(),
+      scoped(
+        this.dataSource
+          .createQueryBuilder()
+          .from('stocks', 's')
+          .select('COUNT(DISTINCT s."productId")', 'materials')
+          .addSelect('COALESCE(SUM(s."currentQuantity"), 0)', 'totalQuantity'),
+        's."warehouseId" IN (:...scopeIds)',
+      ).getRawOne(),
 
       // Movements in current period
-      this.dataSource
-        .createQueryBuilder()
-        .from('movements', 'm')
-        .select('COUNT(m.id)', 'movementsInRange')
-        .where('m.date >= :start AND m.date <= :end', { start, end })
-        .getRawOne(),
+      scoped(
+        this.dataSource
+          .createQueryBuilder()
+          .from('movements', 'm')
+          .select('COUNT(m.id)', 'movementsInRange')
+          .where('m.date >= :start AND m.date <= :end', { start, end }),
+        '(m."warehouseId" IN (:...scopeIds) OR m."fromWarehouseId" IN (:...scopeIds) OR m."toWarehouseId" IN (:...scopeIds))',
+      ).getRawOne(),
 
       // Movements in previous period (for trend delta)
-      this.dataSource
-        .createQueryBuilder()
-        .from('movements', 'm')
-        .select('COUNT(m.id)', 'prevMovements')
-        .where('m.date >= :prevStart AND m.date < :prevEnd', { prevStart, prevEnd })
-        .getRawOne(),
+      scoped(
+        this.dataSource
+          .createQueryBuilder()
+          .from('movements', 'm')
+          .select('COUNT(m.id)', 'prevMovements')
+          .where('m.date >= :prevStart AND m.date < :prevEnd', { prevStart, prevEnd }),
+        '(m."warehouseId" IN (:...scopeIds) OR m."fromWarehouseId" IN (:...scopeIds) OR m."toWarehouseId" IN (:...scopeIds))',
+      ).getRawOne(),
 
       // Stock by warehouse
-      this.dataSource
-        .createQueryBuilder()
-        .from('stocks', 's')
-        .leftJoin('warehouses', 'w', 'w.id = s."warehouseId"')
-        .select('w.id', 'warehouseId')
-        .addSelect('w.name', 'warehouseName')
-        .addSelect('COALESCE(SUM(s."currentQuantity"), 0)', 'quantity')
-        .groupBy('w.id')
-        .addGroupBy('w.name')
-        .orderBy('w.name', 'ASC')
-        .getRawMany(),
+      scoped(
+        this.dataSource
+          .createQueryBuilder()
+          .from('stocks', 's')
+          .leftJoin('warehouses', 'w', 'w.id = s."warehouseId"')
+          .select('w.id', 'warehouseId')
+          .addSelect('w.name', 'warehouseName')
+          .addSelect('COALESCE(SUM(s."currentQuantity"), 0)', 'quantity')
+          .groupBy('w.id')
+          .addGroupBy('w.name')
+          .orderBy('w.name', 'ASC'),
+        's."warehouseId" IN (:...scopeIds)',
+      ).getRawMany(),
 
       // Pending regularizations count — un movimiento anulado ya no necesita regularizarse.
-      this.dataSource
-        .createQueryBuilder()
-        .from('movements', 'm')
-        .select('COUNT(m.id)', 'pending')
-        .where('m.status = :status', { status: 'PENDING_REGULARIZATION' })
-        .andWhere('m."voidStatus" = :voidStatus', { voidStatus: 'NONE' })
-        .getRawOne(),
+      scoped(
+        this.dataSource
+          .createQueryBuilder()
+          .from('movements', 'm')
+          .select('COUNT(m.id)', 'pending')
+          .where('m.status = :status', { status: 'PENDING_REGULARIZATION' })
+          .andWhere('m."voidStatus" = :voidStatus', { voidStatus: 'NONE' }),
+        '(m."warehouseId" IN (:...scopeIds) OR m."fromWarehouseId" IN (:...scopeIds) OR m."toWarehouseId" IN (:...scopeIds))',
+      ).getRawOne(),
 
-      // Lots expiring within 60 days (with available pallets)
-      this.dataSource
-        .createQueryBuilder()
-        .from('lots', 'l')
-        .select('l.id', 'id')
-        .addSelect('l."fechaVencimiento"', 'fechaVencimiento')
-        .addSelect('l."stockActual"', 'stockActual')
-        .where('l."fechaVencimiento" IS NOT NULL')
-        .andWhere('l."fechaVencimiento" <= :in60', { in60 })
-        .andWhere('l."fechaVencimiento" >= :today', { today })
-        .andWhere('l."stockActual" > 0')
-        .orderBy('l."fechaVencimiento"', 'ASC')
-        .limit(50)
-        .getRawMany(),
+      // Lots expiring within 60 days (with available pallets).
+      // El lote es global por producto: lo que lo ancla a un depósito es dónde
+      // están hoy sus pallets vivos, así que el alcance se aplica por ubicación
+      // actual y el stock informado es el de ESE depósito, no el global.
+      scoped(
+        this.dataSource
+          .createQueryBuilder()
+          .from('lots', 'l')
+          .innerJoin('pallets', 'pa', `pa."lotId" = l.id AND pa.status NOT IN ('EXITED', 'EMPTY')`)
+          .innerJoin('locations', 'ploc', 'ploc.id = pa."currentLocationId"')
+          .select('l.id', 'id')
+          .addSelect('l."fechaVencimiento"', 'fechaVencimiento')
+          .addSelect('SUM(pa.quantity)', 'stockActual')
+          .where('l."fechaVencimiento" IS NOT NULL')
+          .andWhere('l."fechaVencimiento" <= :in60', { in60 })
+          .andWhere('l."fechaVencimiento" >= :today', { today })
+          .groupBy('l.id')
+          .addGroupBy('l."fechaVencimiento"')
+          .having('SUM(pa.quantity) > 0')
+          .orderBy('l."fechaVencimiento"', 'ASC')
+          .limit(50),
+        'ploc."warehouseId" IN (:...scopeIds)',
+      ).getRawMany(),
     ]);
 
     const currentMov = this.parseNumber(movementsRaw?.movementsInRange);
@@ -868,7 +987,7 @@ export class ReportsService {
       (r) => r.fechaVencimiento <= in15,
     ).length;
 
-    const kpisResult = {
+    const kpisResult: KpisReport = {
       range,
       totalMaterials: this.parseNumber(stockRaw?.materials),
       totalQuantity: this.parseNumber(stockRaw?.totalQuantity),
@@ -891,27 +1010,46 @@ export class ReportsService {
     return kpisResult;
   }
 
-  async freshness(productId?: string) {
+  async freshness(productId?: string, scope: WarehouseScope = null) {
+    // Control Frescura es una vista operativa: el stock informado por lote debe
+    // ser el del depósito activo. Un lote solo "existe" en un depósito si tiene
+    // pallets vivos ahí, así que se agrega por pallets y no por `l.stockActual`
+    // (que es el total global del lote en todos los depósitos).
     const qb = this.dataSource
       .createQueryBuilder()
       .from('lots', 'l')
       .innerJoin('products', 'p', 'p.id = l."productId"')
+      .innerJoin('pallets', 'pa', `pa."lotId" = l.id AND pa.status NOT IN ('EXITED', 'EMPTY')`)
+      .innerJoin('locations', 'ploc', 'ploc.id = pa."currentLocationId"')
       .select('l.id', 'lotId')
       .addSelect('l."lotCode"', 'lotCode')
       .addSelect('l."sapLot"', 'sapLot')
       .addSelect('l."fechaVencimiento"', 'fechaVencimiento')
       .addSelect('l."fechaFabricacion"', 'fechaFabricacion')
-      .addSelect('l."stockActual"', 'stockActual')
+      .addSelect('SUM(pa.quantity)', 'stockActual')
       .addSelect('l."proveedor"', 'proveedor')
       .addSelect('p.id', 'productId')
       .addSelect('p.code', 'productCode')
       .addSelect('p.description', 'productDescription')
       .addSelect('p."unitOfMeasure"', 'unitOfMeasure')
       .where('l."fechaVencimiento" IS NOT NULL')
-      .andWhere('l."stockActual" > 0');
+      .groupBy('l.id')
+      .addGroupBy('l."lotCode"')
+      .addGroupBy('l."sapLot"')
+      .addGroupBy('l."fechaVencimiento"')
+      .addGroupBy('l."fechaFabricacion"')
+      .addGroupBy('l."proveedor"')
+      .addGroupBy('p.id')
+      .addGroupBy('p.code')
+      .addGroupBy('p.description')
+      .addGroupBy('p."unitOfMeasure"')
+      .having('SUM(pa.quantity) > 0');
 
     if (productId) {
       qb.andWhere('l."productId" = :productId', { productId });
+    }
+    if (scope) {
+      qb.andWhere('ploc."warehouseId" IN (:...scopeIds)', { scopeIds: scope });
     }
 
     const rows = await qb.orderBy('l."fechaVencimiento"', 'ASC').getRawMany();
@@ -942,19 +1080,21 @@ export class ReportsService {
   }
 
   private buildMovementScopeFilter(
-    query: { productId?: string; warehouseId?: string; locationId?: string },
+    query: { productId?: string; locationId?: string },
     placeholderOffset: number,
+    scope: WarehouseScope = null,
   ) {
-    const params: string[] = [];
+    const params: unknown[] = [];
     const clauses: string[] = [];
 
     if (query.productId) {
       params.push(query.productId);
       clauses.push(`m."productId" = $${placeholderOffset + params.length}`);
     }
-    if (query.warehouseId) {
-      params.push(query.warehouseId);
-      clauses.push(`(m."warehouseId" = $${placeholderOffset + params.length} OR m."fromWarehouseId" = $${placeholderOffset + params.length} OR m."toWarehouseId" = $${placeholderOffset + params.length})`);
+    if (scope) {
+      params.push(scope);
+      const p = `$${placeholderOffset + params.length}::uuid[]`;
+      clauses.push(`(m."warehouseId" = ANY(${p}) OR m."fromWarehouseId" = ANY(${p}) OR m."toWarehouseId" = ANY(${p}))`);
     }
     if (query.locationId) {
       params.push(query.locationId);
@@ -964,17 +1104,21 @@ export class ReportsService {
     return { params, whereSuffix: clauses.length ? ` AND ${clauses.join(' AND ')}` : '' };
   }
 
-  private buildSapScopeFilter(query: { productId?: string; warehouseId?: string; locationId?: string }, placeholderOffset: number) {
-    const params: string[] = [];
+  private buildSapScopeFilter(
+    query: { productId?: string; locationId?: string },
+    placeholderOffset: number,
+    scope: WarehouseScope = null,
+  ) {
+    const params: unknown[] = [];
     const clauses: string[] = [];
 
     if (query.productId) {
       params.push(query.productId);
       clauses.push(`s."productId" = $${placeholderOffset + params.length}`);
     }
-    if (query.warehouseId) {
-      params.push(query.warehouseId);
-      clauses.push(`s."warehouseId" = $${placeholderOffset + params.length}`);
+    if (scope) {
+      params.push(scope);
+      clauses.push(`s."warehouseId" = ANY($${placeholderOffset + params.length}::uuid[])`);
     }
     if (query.locationId) {
       params.push(query.locationId);

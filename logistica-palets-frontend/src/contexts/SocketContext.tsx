@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 /**
  * SocketContext — real-time WebSocket connection via socket.io
  *
@@ -22,6 +23,7 @@ import {
 import { io, type Socket } from "socket.io-client";
 import { useAuth } from "../auth/AuthContext";
 import { getToken } from "../auth/authStorage";
+import { useWarehouse } from "./WarehouseContext";
 
 /* ── Types ────────────────────────────────────────────────────────────────── */
 
@@ -111,6 +113,39 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
 export function useSocket(): SocketContextValue {
   return useContext(SocketContext);
+}
+
+/**
+ * Suscripción a un evento de inventario **filtrada por el depósito activo**.
+ *
+ * El backend emite a todos los clientes conectados, así que un movimiento en el
+ * depósito 02 llega también a quien está trabajando en el 01. Refrescar ahí
+ * sería, en el mejor caso, trabajo al pedo y, en el peor, un parpadeo de datos
+ * que no corresponden al contexto del usuario.
+ *
+ * Un evento sin `warehouseId` (operación global o de origen indeterminado) se
+ * procesa igual: no se puede descartar sin arriesgar mostrar datos viejos.
+ */
+export function useWarehouseEvent<T extends { warehouseId?: string | null }>(
+  event: string,
+  handler: (payload: T) => void,
+): void {
+  const { on, off } = useSocket();
+  const { activeWarehouseId } = useWarehouse();
+
+  // El handler se guarda en un ref para no re-suscribir en cada render.
+  const handlerRef = useRef(handler);
+  useEffect(() => { handlerRef.current = handler; }, [handler]);
+
+  useEffect(() => {
+    const listener = (payload: T) => {
+      const eventWarehouse = payload?.warehouseId ?? null;
+      if (eventWarehouse && activeWarehouseId && eventWarehouse !== activeWarehouseId) return;
+      handlerRef.current(payload);
+    };
+    on(event, listener);
+    return () => off(event, listener);
+  }, [event, on, off, activeWarehouseId]);
 }
 
 /* ── Payload types (match backend EventsGateway) ─────────────────────────── */

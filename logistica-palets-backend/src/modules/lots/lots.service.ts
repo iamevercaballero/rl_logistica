@@ -6,6 +6,8 @@ import { Product } from '../products/entities/product.entity';
 import { Pallet } from '../pallets/entities/pallet.entity';
 import { CreateLotDto } from './dto/create-lot.dto';
 import { UpdateLotDto } from './dto/update-lot.dto';
+import type { WarehouseScope } from '../warehouses/warehouse-access.service';
+import { dropSapLotIfUnused, sapLotNotAllowedMessage } from '../products/uses-sap-lot';
 
 /**
  * Normaliza el código de lote para evitar duplicados por diferencias de
@@ -39,6 +41,12 @@ export class LotsService {
       throw new BadRequestException(`Ya existe el lote "${lotCode}" para este producto`);
     }
 
+    // Alta manual de un lote: el usuario escribió ese lote SAP a propósito, así
+    // que si el material no los usa se le dice, en vez de guardar a medias.
+    if (dto.sapLot?.trim() && !product.usesSapLot) {
+      throw new BadRequestException(sapLotNotAllowedMessage(product.code));
+    }
+
     const lot = this.lotRepo.create({
       lotCode,
       productId: dto.productId,
@@ -53,37 +61,70 @@ export class LotsService {
     return this.lotRepo.save(lot);
   }
 
-  async findAll(productId?: string, sapLot?: string, includePallets = false) {
+  /**
+   * Lotes visibles en el alcance.
+   *
+   * La identidad del lote sigue siendo global (producto + código): lo que se
+   * acota es **dónde está** su mercadería. Dentro de un depósito, un lote solo
+   * aparece si tiene pallets vivos ahí, y `stockActual` se informa como el
+   * stock de ese depósito, no el total del lote en toda la operación.
+   */
+  async findAll(productId?: string, sapLot?: string, includePallets = false, scope: WarehouseScope = null) {
     const qb = this.lotRepo
       .createQueryBuilder('lot')
       .leftJoinAndSelect('lot.product', 'product')
       .orderBy('lot.fechaVencimiento', 'ASC');
     if (productId) qb.andWhere('lot.productId = :productId', { productId });
     if (sapLot) qb.andWhere('lot.sapLot = :sapLot', { sapLot });
+
+    if (scope) {
+      qb.andWhere(
+        `EXISTS (
+          SELECT 1 FROM pallets sp
+          JOIN locations sl ON sl.id = sp."currentLocationId"
+          WHERE sp."lotId" = lot.id
+            AND sp.status NOT IN ('EXITED', 'EMPTY')
+            AND sl."warehouseId" IN (:...scopeIds)
+        )`,
+        { scopeIds: scope },
+      );
+    }
+
     const lots = await qb.getMany();
     if (lots.length === 0) return [];
 
     // Conteos agregados de pallets por lote (siempre incluidos — son baratos)
     const lotIds = lots.map((l) => l.id);
-    const counts = await this.palletRepo
+    const countsQb = this.palletRepo
       .createQueryBuilder('p')
       .select('p."lotId"', 'lotId')
       .addSelect("COUNT(*) FILTER (WHERE p.status = 'AVAILABLE')", 'availableCount')
       .addSelect("COUNT(*) FILTER (WHERE p.status = 'EXITED')", 'exitedCount')
       .addSelect('COUNT(*)', 'totalCount')
+      .addSelect("COALESCE(SUM(p.quantity) FILTER (WHERE p.status NOT IN ('EXITED','EMPTY')), 0)", 'scopedStock')
       .where('p."lotId" IN (:...lotIds)', { lotIds })
-      .groupBy('p."lotId"')
-      .getRawMany();
+      .groupBy('p."lotId"');
+    if (scope) {
+      countsQb
+        .innerJoin('locations', 'ploc', 'ploc.id = p."currentLocationId"')
+        .andWhere('ploc."warehouseId" IN (:...scopeIds)', { scopeIds: scope });
+    }
+    const counts = await countsQb.getRawMany();
 
     const countsByLot = new Map(counts.map((c) => [c.lotId, c]));
 
     let palletsByLot: Map<string, Pallet[]> | null = null;
     if (includePallets) {
-      const pallets = await this.palletRepo
+      const palletsQb = this.palletRepo
         .createQueryBuilder('p')
         .where('p."lotId" IN (:...lotIds)', { lotIds })
-        .orderBy('p.code', 'ASC')
-        .getMany();
+        .orderBy('p.code', 'ASC');
+      if (scope) {
+        palletsQb
+          .innerJoin('locations', 'ploc', 'ploc.id = p."currentLocationId"')
+          .andWhere('ploc."warehouseId" IN (:...scopeIds)', { scopeIds: scope });
+      }
+      const pallets = await palletsQb.getMany();
       palletsByLot = new Map();
       for (const p of pallets) {
         if (!palletsByLot.has(p.lotId)) palletsByLot.set(p.lotId, []);
@@ -95,6 +136,8 @@ export class LotsService {
       const c = countsByLot.get(lot.id);
       return {
         ...lot,
+        // Con alcance acotado el stock mostrado es el del depósito, no el global.
+        stockActual: scope ? Number(c?.scopedStock ?? 0) : lot.stockActual,
         availablePalletsCount: c ? Number(c.availableCount) : 0,
         exitedPalletsCount: c ? Number(c.exitedCount) : 0,
         totalPalletsCount: c ? Number(c.totalCount) : 0,
@@ -103,9 +146,16 @@ export class LotsService {
     });
   }
 
-  /** FEFO con pallets disponibles embebidos por lote.
-   *  locationId: si se especifica, solo incluye pallets de esa ubicación (para transferencias). */
-  async findFefo(productId?: string, sapLot?: string, locationId?: string) {
+  /**
+   * FEFO con pallets disponibles embebidos por lote.
+   * `locationId`: si se especifica, solo incluye pallets de esa ubicación (para transferencias).
+   *
+   * **Acotado al depósito**: es lo que arma la pantalla de Salida, así que solo
+   * puede ofrecer pallets del depósito activo. Si un producto tiene 5.000 en el
+   * 01 y 10.000 en el 02, trabajando en el 01 se ven 5.000 — y una salida de
+   * 7.000 falla por falta de stock aunque globalmente existan 15.000.
+   */
+  async findFefo(productId?: string, sapLot?: string, locationId?: string, scope: WarehouseScope = null) {
     const qb = this.lotRepo
       .createQueryBuilder('lot')
       .leftJoinAndSelect('lot.product', 'product')
@@ -127,6 +177,11 @@ export class LotsService {
     if (locationId) {
       palletsQb.andWhere('p.currentLocationId = :locationId', { locationId });
     }
+    if (scope) {
+      palletsQb
+        .innerJoin('locations', 'ploc', 'ploc.id = p."currentLocationId"')
+        .andWhere('ploc."warehouseId" IN (:...scopeIds)', { scopeIds: scope });
+    }
 
     const pallets = await palletsQb.getMany();
 
@@ -136,9 +191,20 @@ export class LotsService {
       palletsByLot.get(p.lotId)!.push(p);
     }
 
-    // Si se filtra por locationId, excluir lotes sin pallets en esa ubicación
-    const result = lots.map((lot) => ({ ...lot, pallets: palletsByLot.get(lot.id) ?? [] }));
-    return locationId ? result.filter((l) => l.pallets.length > 0) : result;
+    const result = lots.map((lot) => {
+      const lotPallets = palletsByLot.get(lot.id) ?? [];
+      return {
+        ...lot,
+        // Dentro de un depósito, el disponible del lote es el de sus pallets ahí.
+        stockActual: scope
+          ? lotPallets.reduce((sum, pallet) => sum + Number(pallet.quantity), 0)
+          : lot.stockActual,
+        pallets: lotPallets,
+      };
+    });
+
+    // Con ubicación o depósito acotado, un lote sin pallets ahí no se ofrece.
+    return locationId || scope ? result.filter((l) => l.pallets.length > 0) : result;
   }
 
   async findOne(id: string) {
@@ -156,6 +222,8 @@ export class LotsService {
     sapLot?: string,
   ): Promise<Lot> {
     lotCode = normalizeLotCode(lotCode);
+    // Camino automático: al material que no usa Lote SAP no se le escribe uno.
+    sapLot = await dropSapLotIfUnused(this.lotRepo.manager, productId, sapLot);
     let lot = await this.lotRepo.findOne({ where: { productId, lotCode } });
     if (!lot) {
       lot = await this.lotRepo.save(this.lotRepo.create({
@@ -179,6 +247,12 @@ export class LotsService {
 
   async update(id: string, dto: UpdateLotDto) {
     const lot = await this.findOne(id);
+    // Asignar un lote SAP a un material que no los usa se rechaza. Limpiarlo o
+    // dejarlo como está siempre se permite: el histórico es del lote, no del
+    // material, y cambiar la configuración no lo borra.
+    if (dto.sapLot?.trim() && !lot.product.usesSapLot) {
+      throw new BadRequestException(sapLotNotAllowedMessage(lot.product.code));
+    }
     Object.assign(lot, dto);
     if (dto.lotCode !== undefined) {
       const lotCode = normalizeLotCode(dto.lotCode);

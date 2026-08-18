@@ -7,42 +7,69 @@ import {
   Patch,
   Delete,
   Query,
+  Req,
   UseGuards,
   HttpCode,
   ParseUUIDPipe,
 } from '@nestjs/common';
+import { Request } from 'express';
 import { LotsService } from './lots.service';
 import { CreateLotDto } from './dto/create-lot.dto';
 import { UpdateLotDto } from './dto/update-lot.dto';
+import {
+  WarehouseAccessService,
+  type AccessUser,
+  type WarehouseScope,
+} from '../warehouses/warehouse-access.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles/roles.guard';
 import { Roles } from '../auth/roles/roles.decorator';
 
+type AuthedRequest = Request & { user: AccessUser };
+const OptionalUuid = new ParseUUIDPipe({ optional: true });
+
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('lots')
 export class LotsController {
-  constructor(private readonly service: LotsService) {}
+  constructor(
+    private readonly service: LotsService,
+    private readonly access: WarehouseAccessService,
+  ) {}
+
+  private async scopeOf(req: AuthedRequest, warehouseId?: string): Promise<WarehouseScope> {
+    const { warehouseIds } = await this.access.resolveQueryScope(req.user, warehouseId);
+    return warehouseIds;
+  }
 
   @Get()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
-  findAll(
+  async findAll(
+    @Req() req: AuthedRequest,
     @Query('productId') productId?: string,
     @Query('sapLot') sapLot?: string,
     @Query('includePallets') includePallets?: string,
+    @Query('warehouseId', OptionalUuid) warehouseId?: string,
   ) {
-    return this.service.findAll(productId, sapLot, includePallets === 'true');
+    return this.service.findAll(
+      productId,
+      sapLot,
+      includePallets === 'true',
+      await this.scopeOf(req, warehouseId),
+    );
   }
 
   /** FEFO: lotes con stock disponible ordenados por vencimiento próximo.
    *  Filtra por productId, sapLot, o locationId (para selección de pallets en transferencias). */
   @Get('fefo')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
-  fefo(
+  async fefo(
+    @Req() req: AuthedRequest,
     @Query('productId') productId?: string,
     @Query('sapLot') sapLot?: string,
     @Query('locationId') locationId?: string,
+    @Query('warehouseId', OptionalUuid) warehouseId?: string,
   ) {
-    return this.service.findFefo(productId, sapLot, locationId);
+    return this.service.findFefo(productId, sapLot, locationId, await this.scopeOf(req, warehouseId));
   }
 
   @Get(':id')

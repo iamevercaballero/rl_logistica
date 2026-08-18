@@ -16,6 +16,8 @@ export type LotPallet = {
   productId?: string;
   productCode?: string;
   productDescription?: string;
+  /** Configuración del material. Solo viene de GET /pallets. */
+  usesSapLot?: boolean;
   stackable?: boolean;
   maxStackLevel?: number | null;
   canReceiveWeightOnTop?: boolean;
@@ -44,13 +46,15 @@ export async function listPallets(filters?: {
   productId?: string;
   locationId?: string;
   search?: string;
+  warehouseId?: string;
 }): Promise<LotPallet[]> {
   const params: Record<string, string> = {};
-  if (filters?.lotId)      params.lotId      = filters.lotId;
-  if (filters?.status)     params.status     = filters.status;
-  if (filters?.productId)  params.productId  = filters.productId;
-  if (filters?.locationId) params.locationId = filters.locationId;
-  if (filters?.search)     params.search     = filters.search;
+  if (filters?.lotId)       params.lotId       = filters.lotId;
+  if (filters?.status)      params.status      = filters.status;
+  if (filters?.productId)   params.productId   = filters.productId;
+  if (filters?.locationId)  params.locationId  = filters.locationId;
+  if (filters?.search)      params.search      = filters.search;
+  if (filters?.warehouseId) params.warehouseId = filters.warehouseId;
   const { data } = await api.get<LotPallet[]>("/pallets", { params });
   return data;
 }
@@ -65,8 +69,8 @@ export async function getAllPalletsByLot(lotId: string): Promise<LotPallet[]> {
   return data;
 }
 
-export async function getPalletKpis(): Promise<PalletKpis> {
-  const { data } = await api.get<PalletKpis>("/pallets/kpis");
+export async function getPalletKpis(warehouseId?: string): Promise<PalletKpis> {
+  const { data } = await api.get<PalletKpis>("/pallets/kpis", { params: { warehouseId } });
   return data;
 }
 

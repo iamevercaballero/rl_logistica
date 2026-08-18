@@ -43,6 +43,10 @@ export default function MaterialSearchBar({ value, onChange, placeholder = "Busc
             code: p.productCode ?? "",
             description: p.productDescription ?? "",
             active: true,
+            // Configuración real del material — el ajuste de inventario decide con
+            // `usesSapLot` si ofrece el campo Lote SAP. Los `??` cubren respuestas
+            // viejas cacheadas por el service worker, no el caso normal.
+            usesSapLot: p.usesSapLot ?? true,
             stackable: p.stackable ?? true,
             maxStackLevel: p.maxStackLevel ?? null,
             canReceiveWeightOnTop: p.canReceiveWeightOnTop ?? true,

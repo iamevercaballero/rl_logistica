@@ -21,6 +21,20 @@ export class Product {
   @Column({ type: 'int', nullable: true })
   stockMinimo?: number | null;
 
+  /**
+   * El material se maneja con Lote SAP ("Lote Ypané").
+   *
+   * En `true` las entradas siguen autocompletando `Lot.sapLot` como hasta hoy;
+   * en `false` el sistema nunca escribe un lote SAP para este material — ni
+   * automáticamente en la entrada ni al corregir un movimiento.
+   *
+   * Es configuración de operaciones **futuras**: apagarlo no toca los lotes SAP
+   * ya registrados. Y no participa de la identidad del lote — esa sigue siendo
+   * `lotCode`, igual que antes.
+   */
+  @Column({ default: true })
+  usesSapLot: boolean;
+
   @Column({ default: true })
   stackable: boolean;
 

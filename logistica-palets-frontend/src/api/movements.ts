@@ -23,6 +23,11 @@ export type PalletItem = {
   proveedor?: string;
   /** Peso físico de este pallet (kg) — se imprime en su etiqueta. */
   weightKg?: number;
+  /**
+   * SALIDA: en cuántas paletas físicas quedó preparado este palet de origen.
+   * Opcional e informativo — no cambia cuánto se descuenta ni de dónde.
+   */
+  dispatchedPallets?: number;
   /** Sector-Subsector de este pallet. Si se omite, hereda el de la línea. */
   locationId?: string;
 };
@@ -56,7 +61,8 @@ export type Movement = {
   adjustmentReason?: string | null;
   adjustmentCategory?: string | null;
   encargado?: { id: string; username: string; fullName?: string | null } | null;
-  material: { id: string; code: string; description: string; unitOfMeasure?: string | null };
+  /** `usesSapLot`: el material se maneja con Lote SAP. Ausente en respuestas viejas → se asume `true`. */
+  material: { id: string; code: string; description: string; unitOfMeasure?: string | null; usesSapLot?: boolean };
   warehouse?: { id: string; name: string } | null;
   location?: { id: string; code: string } | null;
   from?: { warehouseId?: string | null; warehouseName?: string | null; locationId?: string | null; locationCode?: string | null } | null;
@@ -204,7 +210,7 @@ export async function createDocument(
 }
 
 export async function getDocuments(params: {
-  type?: DocumentType; from?: string; to?: string; search?: string;
+  type?: DocumentType; from?: string; to?: string; search?: string; warehouseId?: string;
 } = {}): Promise<LogisticsDocument[]> {
   const { data } = await api.get<LogisticsDocument[]>("/movements/documents", { params });
   return data;
@@ -232,7 +238,13 @@ export type PrintLogisticsSnapshot = {
 };
 export type PrintLocation = { id: string; code: string; warehouse?: { id: string; name: string } | null };
 export type PrintPallet = { id: string; code: string; quantity: number; lotId: string; weightKg?: number | null };
-export type PrintDetail = { id: string; movementId: string; palletId?: string | null; lotId?: string | null; locationId?: string | null; quantity: number };
+export type PrintDetail = {
+  id: string; movementId: string;
+  palletId?: string | null; lotId?: string | null; locationId?: string | null;
+  quantity: number;
+  /** Paletas físicas resultantes de este palet en una Salida. `null` = no informado. */
+  dispatchedPallets?: number | null;
+};
 
 /** Movimiento tal como lo devuelve la entidad (sin enriquecer). Usado en respuestas de impresión. */
 export type RawMovement = {
@@ -272,6 +284,93 @@ export type DocumentPrintData = {
 
 export async function getDocumentForPrint(id: string): Promise<DocumentPrintData> {
   const { data } = await api.get(`/movements/documents/${id}/print`);
+  return data;
+}
+
+/* ── CHECKLIST DE RECEPCIÓN DE INSUMOS (solo Entradas) ─────────────────────
+   El backend devuelve todo resuelto para imprimir: acá no se rearman
+   relaciones entre movimientos, lotes y pallets. */
+
+/** Valor de cabecera cuando la Página 1 no puede representar varios lotes/productos. */
+export const CHECKLIST_SEE_DETAILS = "VER DETALLES";
+
+/** Fila del punto 22 (LOTES POR PALETAS): un material dentro de un lote. */
+export type ChecklistLotRow = {
+  productId: string;
+  productCode: string;
+  productDescription: string;
+  unitOfMeasure: string | null;
+  lotId: string | null;
+  lotCode: string | null;
+  sapLot: string | null;
+  /** Fechas calendario "YYYY-MM-DD": formatear con `formatDateOnly`, nunca con `new Date`. */
+  fechaFabricacion: string | null;
+  fechaVencimiento: string | null;
+  quantity: number;
+  pallets: number;
+};
+
+/** Fila del punto 20 (Materiales): un material con todos sus lotes agrupados. */
+export type ChecklistMaterialRow = {
+  productId: string;
+  code: string;
+  description: string;
+  unitOfMeasure: string | null;
+  totalQuantity: number;
+  totalPallets: number;
+};
+
+export type ChecklistSummary = {
+  productDisplay: string | null;
+  lotDisplay: string | null;
+  fabricationDisplay: string | null;
+  expirationDisplay: string | null;
+  sapLotDisplay: string | null;
+  totalPallets: number;
+  totalQuantity: number;
+};
+
+export type ChecklistData = {
+  document: {
+    id: string;
+    code: string;
+    type: DocumentType;
+    status: string;
+    /** Instante de la recepción. */
+    date: string;
+    arrivalDate: string;
+    unloadDate: string;
+    warehouse: PrintDocumentWarehouse | null;
+    supplier: string | null;
+    /** Punto 2 del formulario ("N° de Factura") = MIC/Factura/Remito de la Entrada. */
+    documentNumber: string | null;
+    /** Punto 3: siempre vacío, lo completa la operadora sobre la hoja. */
+    micNumber: null;
+    originCountry: string;
+    carrier: string | null;
+    vehiclePlate: string | null;
+    driver: string | null;
+    driverDocument: string | null;
+    notes: string | null;
+  };
+  createdBy: PrintUserSnapshot;
+  encargado: PrintUserSnapshot | null;
+  receptionResponsible: string;
+  summary: ChecklistSummary;
+  materials: ChecklistMaterialRow[];
+  lots: ChecklistLotRow[];
+  consistency: {
+    ok: boolean;
+    documentTotalQuantity: number;
+    computedTotalQuantity: number;
+    documentTotalPallets: number;
+    computedTotalPallets: number;
+    warnings: string[];
+  };
+};
+
+export async function getDocumentChecklist(id: string): Promise<ChecklistData> {
+  const { data } = await api.get(`/movements/documents/${id}/checklist`);
   return data;
 }
 
@@ -329,6 +428,8 @@ export type MovementLotBreakdown = {
     currentQuantity: number;
     /** Peso físico del pallet (kg) — editable en la corrección. */
     weightKg?: number | null;
+    /** SALIDA: paletas físicas con las que se despachó. `null` = no informado. */
+    dispatchedPallets?: number | null;
     locationId?: string | null;
   }[];
 };

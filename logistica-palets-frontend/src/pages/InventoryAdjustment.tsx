@@ -13,6 +13,8 @@ import AdjustmentSummary from "../components/adjustments/AdjustmentSummary";
 import type { Product } from "../api/products";
 import { listWarehouses } from "../api/warehouses";
 import { listLocations } from "../api/locations";
+import { useActiveWarehouseId } from "../contexts/WarehouseContext";
+import { sapLotForProduct } from "./movementFormModel";
 import { generateSapLot, fefoLots } from "../api/lots";
 import type { LotPallet } from "../api/pallets";
 import { formatDateOnly } from "../utils/dateFormat";
@@ -131,7 +133,13 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
   const [filterStatus, setFilterStatus] = useState<string>("");
 
   const warehousesQ = useQuery({ queryKey: ["warehouses"], queryFn: listWarehouses });
-  const locationsQ  = useQuery({ queryKey: ["locations"],  queryFn: listLocations });
+  // Ubicaciones del depósito activo: un ajuste nunca puede apuntar a un sector de otro depósito.
+  const activeWarehouseId = useActiveWarehouseId();
+  const locationsQ  = useQuery({
+    queryKey: ["locations", activeWarehouseId],
+    queryFn: () => listLocations(activeWarehouseId),
+    enabled: !!activeWarehouseId,
+  });
   const listQ = useQuery({
     queryKey: ["adjustments", filterType, filterStatus],
     queryFn: () => getAdjustments({
@@ -371,7 +379,8 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
         }
       }
       const palletItems = validGroups.flatMap((g) => {
-        const base = { lotCode: g.lotCode.trim(), fechaVencimiento: g.fechaVencimiento || undefined, fechaFabricacion: g.fechaFabricacion || undefined, sapLot: entrySapLot.trim() || undefined };
+        // Igual que en la Entrada: al material sin Lote SAP no se le manda uno.
+        const base = { lotCode: g.lotCode.trim(), fechaVencimiento: g.fechaVencimiento || undefined, fechaFabricacion: g.fechaFabricacion || undefined, sapLot: sapLotForProduct(product, entrySapLot) };
         if (g.palletLines.length > 0) return g.palletLines.map((l) => ({ ...base, quantity: Number(l.qty) }));
         return [{ ...base, quantity: Number(g.quantity) }];
       });
@@ -721,7 +730,11 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
                     <>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
                         <div style={{ fontSize: 13, fontWeight: 700 }}>{surplusFormHeading}</div>
-                        <input className="input" value={entrySapLot} onChange={(e) => setEntrySapLot(e.target.value)} placeholder="Lote SAP" style={{ width: 140, fontSize: 12 }} />
+                        {product.usesSapLot === false ? (
+                          <span style={{ fontSize: 12, color: "var(--muted)", fontStyle: "italic" }}>Sin Lote SAP</span>
+                        ) : (
+                          <input className="input" value={entrySapLot} onChange={(e) => setEntrySapLot(e.target.value)} placeholder="Lote SAP" style={{ width: 140, fontSize: 12 }} />
+                        )}
                       </div>
                       {lotGroups.map((group) => (
                         <div key={group.id} style={{ border: "1.5px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>

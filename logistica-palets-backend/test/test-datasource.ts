@@ -21,6 +21,8 @@ import { Pila } from '../src/modules/pilas/entities/pila.entity';
 import { Supplier } from '../src/modules/suppliers/entities/supplier.entity';
 import { Destination } from '../src/modules/destinations/entities/destination.entity';
 import { User } from '../src/modules/users/entities/user.entity';
+import { UserWarehouse } from '../src/modules/warehouses/entities/user-warehouse.entity';
+import { WarehouseAccessService } from '../src/modules/warehouses/warehouse-access.service';
 
 export const TEST_USER_ID = '00000000-0000-0000-0000-0000000000aa';
 
@@ -30,7 +32,7 @@ export const TEST_USER_ID = '00000000-0000-0000-0000-0000000000aa';
  * así que synchronize crea sólo estas tablas y sus FKs (Lot→Product, Location→Warehouse).
  */
 export const TEST_ENTITIES = [
-  Product, Warehouse, Location, Stock, Lot, Pallet, Pila, Supplier, Destination, User,
+  Product, Warehouse, Location, Stock, Lot, Pallet, Pila, Supplier, Destination, User, UserWarehouse,
   Movement, MovementDetail, LogisticsDocument, DocumentSequence, RegularizationLog,
   AdjustmentRequest, AdjustmentRequestLine, Attachment, DocumentEvent, SapStockSnapshot,
 ];
@@ -41,7 +43,7 @@ const TABLES = [
   'logistics_documents', 'regularization_logs',
   'adjustment_request_lines', 'adjustment_requests',
   'attachments', 'document_events', 'document_sequences',
-  'sap_stock_snapshots', 'products', 'locations', 'warehouses', 'suppliers', 'destinations', 'users',
+  'sap_stock_snapshots', 'user_warehouses', 'products', 'locations', 'warehouses', 'suppliers', 'destinations', 'users',
 ];
 
 /**
@@ -89,5 +91,38 @@ export async function seedBasics(ds: DataSource): Promise<Basics> {
     role: 'OPERATOR',
     active: true,
   }));
+  // El usuario de prueba es OPERATOR, así que necesita la asignación explícita
+  // al depósito. Los tests del motor de stock quedan así ejercitando el camino
+  // real de permisos (`user_warehouses`) en vez de saltearlo con un rol global.
+  await ds.getRepository(UserWarehouse).save(
+    ds.getRepository(UserWarehouse).create({ userId: user.id, warehouseId: warehouse.id }),
+  );
   return { product, warehouse, location, user };
+}
+
+/** Asigna un depósito al usuario de prueba (equivale a `user_warehouses`). */
+export async function grantWarehouse(
+  ds: DataSource,
+  warehouseId: string,
+  userId: string = TEST_USER_ID,
+): Promise<void> {
+  await ds.getRepository(UserWarehouse).save(
+    ds.getRepository(UserWarehouse).create({ userId, warehouseId }),
+  );
+}
+
+/**
+ * `WarehouseAccessService` real conectado al DataSource de test.
+ *
+ * Se usa el servicio de verdad (no un doble) para que los tests ejerciten la
+ * misma politica de permisos que produccion: un ADMIN tiene alcance global y no
+ * cambia el comportamiento de los tests del motor de stock, mientras que un
+ * OPERATOR queda acotado a sus asignaciones reales de `user_warehouses`.
+ */
+export function createAccessService(ds: DataSource): WarehouseAccessService {
+  return new WarehouseAccessService(
+    ds.getRepository(Warehouse),
+    ds.getRepository(UserWarehouse),
+    ds,
+  );
 }

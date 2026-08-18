@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
   Min,
   ValidateNested,
@@ -72,6 +73,18 @@ export class PalletItemDto {
   @IsNumber(WEIGHT_OPTIONS)
   @Min(0)
   weightKg?: number;
+
+  /**
+   * SALIDA: en cuántas paletas físicas quedó preparado este palet de origen.
+   * Opcional y meramente informativo — no cambia cuánto se descuenta ni de
+   * dónde. Se admite 0 para el palet cuyo contenido se consolidó en otro.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(999)
+  dispatchedPallets?: number;
 
   /**
    * ENTRADA: Sector-Subsector destino de **este** pallet. Si se omite, hereda

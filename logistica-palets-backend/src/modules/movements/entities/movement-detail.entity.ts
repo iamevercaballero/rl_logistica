@@ -31,4 +31,15 @@ export class MovementDetail {
 
   @Column({ type: 'varchar', nullable: true })
   role?: string | null;
+
+  /**
+   * SALIDA: en cuántas paletas físicas quedó preparado este palet de origen.
+   *
+   * Es un dato **informativo** de cómo salió la carga del depósito: el stock,
+   * los lotes y el palet de origen se descuentan igual que siempre (FEFO /
+   * selección parcial), sin mirar este número. `null` = no se informó, que es
+   * el caso normal y equivale a que el palet salió como una sola paleta.
+   */
+  @Column({ type: 'int', nullable: true })
+  dispatchedPallets?: number | null;
 }

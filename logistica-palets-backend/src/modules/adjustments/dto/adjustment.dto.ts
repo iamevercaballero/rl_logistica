@@ -115,6 +115,11 @@ export class AdjustmentQueryDto {
   @IsIn(adjustmentRequestTypes)
   type?: AdjustmentRequestType;
 
+  /** Depósito activo. Es una preferencia: el backend valida el acceso igual. */
+  @IsOptional()
+  @IsUUID()
+  warehouseId?: string;
+
   @IsOptional()
   @IsString()
   status?: string;

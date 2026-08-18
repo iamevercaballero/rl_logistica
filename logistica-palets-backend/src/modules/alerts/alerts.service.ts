@@ -6,6 +6,7 @@ import { AlertRule } from './entities/alert-rule.entity';
 import { CreateAlertRuleDto } from './dto/create-alert-rule.dto';
 import { EventsGateway } from '../events/events.gateway';
 import { businessDaysUntil, businessToday, shiftBusinessDate } from '../../common/date';
+import type { WarehouseScope } from '../warehouses/warehouse-access.service';
 
 /* ── Active alert types ────────────────────────────────────────────────────── */
 
@@ -71,18 +72,18 @@ export class AlertsService {
 
   /* ── Active alerts (evaluated on-demand) ─────────────────────────────────── */
 
-  async getActiveAlerts(): Promise<ActiveAlert[]> {
+  async getActiveAlerts(scope: WarehouseScope = null): Promise<ActiveAlert[]> {
     const [stockAlerts, expiringAlerts, staleAlerts] = await Promise.all([
-      this.evaluateStockRules(),
-      this.evaluateExpiryAlerts(),
-      this.evaluateStaleRegularizations(),
+      this.evaluateStockRules(scope),
+      this.evaluateExpiryAlerts(scope),
+      this.evaluateStaleRegularizations(scope),
     ]);
     return [...stockAlerts, ...expiringAlerts, ...staleAlerts];
   }
 
   /* ── Private evaluation methods ─────────────────────────────────────────── */
 
-  private async evaluateStockRules(): Promise<ActiveAlert[]> {
+  private async evaluateStockRules(scope: WarehouseScope = null): Promise<ActiveAlert[]> {
     const rules = await this.ruleRepo.find({ where: { enabled: true } });
     if (rules.length === 0) return [];
 
@@ -100,6 +101,11 @@ export class AlertsService {
       if (rule.warehouseId) {
         params.push(rule.warehouseId);
         warehouseFilter = `AND s."warehouseId" = $${params.length}`;
+      }
+      // Una regla global se evalua solo dentro del alcance del usuario.
+      if (scope) {
+        params.push(scope);
+        warehouseFilter += ` AND s."warehouseId" = ANY($${params.length}::uuid[])`;
       }
 
       const rows: Array<{
@@ -146,7 +152,7 @@ export class AlertsService {
     return alerts;
   }
 
-  private async evaluateExpiryAlerts(): Promise<ActiveAlert[]> {
+  private async evaluateExpiryAlerts(scope: WarehouseScope = null): Promise<ActiveAlert[]> {
     // fechaVencimiento es fecha calendario: los umbrales y la comparación se
     // hacen en "YYYY-MM-DD", nunca con un Date real — comparar contra un
     // instante desalinea el resultado según la zona del proceso/servidor.
@@ -163,17 +169,22 @@ export class AlertsService {
     }> = await this.dataSource.query(
       `
       SELECT l.id, l."lotCode", p.code AS "productCode",
-             l."fechaVencimiento", l."stockActual"
+             l."fechaVencimiento",
+             SUM(pa.quantity) AS "stockActual"
       FROM lots l
       JOIN products p ON p.id = l."productId"
+      JOIN pallets pa ON pa."lotId" = l.id AND pa.status NOT IN ('EXITED', 'EMPTY')
+      JOIN locations ploc ON ploc.id = pa."currentLocationId"
       WHERE l."fechaVencimiento" IS NOT NULL
         AND l."fechaVencimiento" <= $1
         AND l."fechaVencimiento" >= $2
-        AND l."stockActual" > 0
+        ${scope ? 'AND ploc."warehouseId" = ANY($3::uuid[])' : ''}
+      GROUP BY l.id, l."lotCode", p.code, l."fechaVencimiento"
+      HAVING SUM(pa.quantity) > 0
       ORDER BY l."fechaVencimiento" ASC
       LIMIT 50
       `,
-      [in60, today],
+      scope ? [in60, today, scope] : [in60, today],
     );
 
     return rows.map((r) => {
@@ -197,7 +208,7 @@ export class AlertsService {
     });
   }
 
-  private async evaluateStaleRegularizations(): Promise<ActiveAlert[]> {
+  private async evaluateStaleRegularizations(scope: WarehouseScope = null): Promise<ActiveAlert[]> {
     // 48hs de margen real transcurrido — resta directa sobre el instante en
     // vez de getHours()/setHours() (que pasan por los campos locales del
     // proceso) para que sea correcto sin depender de razonar sobre DST.
@@ -211,10 +222,11 @@ export class AlertsService {
         WHERE m.status = 'PENDING_REGULARIZATION'
           AND m."voidStatus" = 'NONE'
           AND m.date < $1
+          ${scope ? 'AND m."warehouseId" = ANY($2::uuid[])' : ''}
         ORDER BY m.date ASC
         LIMIT 20
         `,
-        [cutoff],
+        scope ? [cutoff, scope] : [cutoff],
       );
 
     return rows.map((r) => ({

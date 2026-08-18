@@ -4,6 +4,7 @@ import { deleteLot, listLots, updateLot, type Lot } from "../api/lots";
 import { listProducts } from "../api/products";
 import { getAllPalletsByLot, type LotPallet } from "../api/pallets";
 import { listLocations } from "../api/locations";
+import { useActiveWarehouseId } from "../contexts/WarehouseContext";
 import { useAuth } from "../auth/AuthContext";
 import { canDelete, canUpdate } from "../auth/rbac";
 import { useToast } from "../design-system/toast";
@@ -217,11 +218,24 @@ export default function LotsPage() {
   const [editingLot, setEditingLot] = useState<Lot | null>(null);
   const [editForm, setEditForm] = useState<EditForm>({ lotCode: "", sapLot: "", fechaVencimiento: "", fechaFabricacion: "", proveedor: "" });
 
+  // Lotes y ubicaciones son del depósito activo. El catálogo de materiales no:
+  // es maestro y no cambia con el depósito.
+  const activeWarehouseId = useActiveWarehouseId();
+  const scoped = !!activeWarehouseId;
+
   const [lotsQ, productsQ, locationsQ] = useQueries({
     queries: [
-      { queryKey: ["lots"], queryFn: () => listLots() },
+      {
+        queryKey: ["lots", activeWarehouseId],
+        queryFn: () => listLots(undefined, undefined, false, activeWarehouseId),
+        enabled: scoped,
+      },
       { queryKey: ["products"], queryFn: () => listProducts() },
-      { queryKey: ["locations"], queryFn: listLocations },
+      {
+        queryKey: ["locations", activeWarehouseId],
+        queryFn: () => listLocations(activeWarehouseId),
+        enabled: scoped,
+      },
     ],
   });
 
@@ -283,7 +297,8 @@ export default function LotsPage() {
       id: editingLot.id,
       payload: {
         lotCode: editForm.lotCode.trim(),
-        sapLot: editForm.sapLot.trim() || undefined,
+        // Material sin Lote SAP: no se manda el campo (el backend lo rechazaría).
+        sapLot: editingLot.product?.usesSapLot === false ? undefined : editForm.sapLot.trim() || undefined,
         fechaVencimiento: editForm.fechaVencimiento || undefined,
         fechaFabricacion: editForm.fechaFabricacion || undefined,
         proveedor: editForm.proveedor.trim() || undefined,
@@ -341,13 +356,26 @@ export default function LotsPage() {
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>
                   Lote SAP
                 </label>
-                <input
-                  className="input"
-                  value={editForm.sapLot}
-                  onChange={(e) => setEditForm((f) => ({ ...f, sapLot: e.target.value }))}
-                  placeholder="Ej: Z052608201"
-                  style={{ fontFamily: "monospace" }}
-                />
+                {/* Material configurado sin Lote SAP: el backend rechaza asignarle
+                    uno, así que no se ofrece el campo. El valor histórico, si el
+                    lote lo tiene, se sigue mostrando. */}
+                {editingLot.product?.usesSapLot === false ? (
+                  <div
+                    className="input"
+                    style={{ fontFamily: "monospace", color: "var(--muted)", display: "flex", alignItems: "center" }}
+                    title="El material no utiliza Lote SAP."
+                  >
+                    {editingLot.sapLot ?? "—"}
+                  </div>
+                ) : (
+                  <input
+                    className="input"
+                    value={editForm.sapLot}
+                    onChange={(e) => setEditForm((f) => ({ ...f, sapLot: e.target.value }))}
+                    placeholder="Ej: Z052608201"
+                    style={{ fontFamily: "monospace" }}
+                  />
+                )}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div>

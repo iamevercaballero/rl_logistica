@@ -11,6 +11,7 @@ import { queryClient } from "./lib/queryClient";
 import { ThemeProvider } from "./design-system/theme";
 import { ToastProvider } from "./design-system/toast";
 import { SocketProvider } from "./contexts/SocketContext";
+import { WarehouseProvider } from "./contexts/WarehouseContext";
 import AppLayout from "./layouts/AppLayout";
 import DashboardPage from "./pages/Dashboard";
 import LocationsPage from "./pages/Locations";
@@ -28,12 +29,16 @@ import SeedPage from "./pages/Seed";
 import StockSnapshotPage from "./pages/StockSnapshot";
 import PrintDocumentPage from "./pages/PrintDocument";
 import PrintLabelsPage from "./pages/PrintLabels";
+import PrintChecklistPage from "./pages/PrintChecklist";
 import UsersPage from "./pages/Users";
 
 const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
   { path: "/print/document/:id", element: <PrintDocumentPage /> },
   { path: "/print/labels/:documentId", element: <PrintLabelsPage /> },
+  /* Checklist de recepción: solo tiene sentido para RLNE — el backend rechaza
+     una Salida y aplica los mismos permisos que para leer el remito. */
+  { path: "/print/checklist/:documentId", element: <PrintChecklistPage /> },
   {
     path: "/",
     element: <AppLayout />,
@@ -141,9 +146,13 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <QueryClientProvider client={queryClient}>
         <ToastProvider>
           <AuthProvider>
-            <SocketProvider>
-              <RouterProvider router={router} />
-            </SocketProvider>
+            {/* El depósito activo se resuelve despues de autenticar y antes de
+                que los módulos operativos pidan datos. */}
+            <WarehouseProvider>
+              <SocketProvider>
+                <RouterProvider router={router} />
+              </SocketProvider>
+            </WarehouseProvider>
           </AuthProvider>
         </ToastProvider>
         {import.meta.env.DEV && <ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-left" />}

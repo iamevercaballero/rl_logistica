@@ -19,6 +19,11 @@ import {
 import { MovementsService } from '../movements/movements.service';
 import { CreateMovementDto } from '../movements/dto/create-movement.dto';
 import { endOfBusinessDay, parseBusinessDate } from '../../common/date';
+import {
+  WarehouseAccessService,
+  type AccessUser,
+  type WarehouseScope,
+} from '../warehouses/warehouse-access.service';
 import { CacheService } from '../cache/cache.service';
 import { EventsGateway } from '../events/events.gateway';
 
@@ -32,6 +37,7 @@ export class AdjustmentsService {
     private readonly uploads: UploadsService,
     private readonly cache: CacheService,
     private readonly events: EventsGateway,
+    private readonly access: WarehouseAccessService,
   ) {}
 
   // ─────────────────────────────────────────────────────────
@@ -42,7 +48,44 @@ export class AdjustmentsService {
   //  CREAR BORRADOR
   // ─────────────────────────────────────────────────────────
 
-  async createDraft(dto: CreateAdjustmentDto, userId: string) {
+  /**
+   * Acceso al depósito de una solicitud existente. Una solicitud sin depósito
+   * (historia previa al multi-depósito) solo la operan los roles globales.
+   */
+  /**
+   * Invalida solo la caché del depósito afectado. Las claves llevan el alcance
+   * completo, así que un ajuste en el 02 no borra lo cacheado del 01. Las
+   * claves de alcance global (`all`) sí se borran: contienen a todos.
+   */
+  private invalidateWarehouseCaches(warehouseId: string | null): void {
+    const patterns = ['kpis:warehouse:all:*', 'stock:warehouse:all:*'];
+    if (warehouseId) {
+      patterns.push(`kpis:warehouse:*${warehouseId}*`, `stock:warehouse:*${warehouseId}*`);
+    }
+    void Promise.all(patterns.map((pattern) => this.cache.delPattern(pattern)));
+  }
+
+  private async assertRequestAccess(user: AccessUser, requestId: string): Promise<void> {
+    const row = await this.dataSource
+      .getRepository(AdjustmentRequest)
+      .findOne({ where: { id: requestId }, select: { id: true, warehouseId: true } });
+    if (!row) throw new NotFoundException('Solicitud de ajuste no encontrada.');
+    if (!row.warehouseId) {
+      if (this.access.hasGlobalScope(user.role)) return;
+      throw new ForbiddenException('La solicitud no tiene depósito asignado: no podés operarla.');
+    }
+    await this.access.assertWarehouseAccess(user, row.warehouseId);
+  }
+
+  async createDraft(dto: CreateAdjustmentDto, userId: string, requesterRole?: string) {
+    // El deposito del ajuste sale de la ubicacion cuando la hay; el del payload
+    // es solo un fallback. Se valida antes de crear nada.
+    const user: AccessUser = { userId, role: requesterRole ?? '' };
+    const warehouseId = dto.locationId
+      ? await this.access.assertEntityAccess(user, 'location', dto.locationId)
+      : dto.warehouseId ?? null;
+    if (warehouseId) await this.access.assertWritableWarehouse(user, warehouseId);
+
     const result = await this.dataSource.transaction(async (manager) => {
       const code = await this.sequences.nextCode(manager, dto.type);
 
@@ -52,14 +95,14 @@ export class AdjustmentsService {
         status: 'BORRADOR',
         reason: dto.reason.trim(),
         adjustmentCategory: dto.adjustmentCategory?.trim() || null,
-        warehouseId: dto.warehouseId || null,
+        warehouseId: warehouseId || null,
         locationId: dto.locationId || null,
         notes: dto.notes?.trim() || null,
         createdById: userId,
       });
       await manager.save(request);
 
-      const lines = await this.saveLines(manager, request.id, dto.lines, dto.warehouseId, dto.locationId);
+      const lines = await this.saveLines(manager, request.id, dto.lines, warehouseId ?? undefined, dto.locationId);
 
       request.totalLines = lines.length;
       request.totalQuantity = lines.reduce((s, l) => s + l.totalQuantity, 0);
@@ -79,7 +122,8 @@ export class AdjustmentsService {
   //  EDITAR BORRADOR
   // ─────────────────────────────────────────────────────────
 
-  async updateDraft(id: string, dto: UpdateAdjustmentDto, _userId: string) {
+  async updateDraft(id: string, dto: UpdateAdjustmentDto, _userId: string, requesterRole?: string) {
+    await this.assertRequestAccess({ userId: _userId, role: requesterRole ?? '' }, id);
     return this.dataSource.transaction(async (manager) => {
       const req = await this.findOrFail(manager, id);
       if (req.status !== 'BORRADOR') {
@@ -110,7 +154,8 @@ export class AdjustmentsService {
   //  ENVIAR A APROBACIÓN
   // ─────────────────────────────────────────────────────────
 
-  async submitForApproval(id: string, userId: string) {
+  async submitForApproval(id: string, userId: string, requesterRole?: string) {
+    await this.assertRequestAccess({ userId: userId, role: requesterRole ?? '' }, id);
     const result = await this.dataSource.transaction(async (manager) => {
       const req = await this.findOrFail(manager, id);
       if (req.status !== 'BORRADOR') {
@@ -138,7 +183,8 @@ export class AdjustmentsService {
   //  APROBAR → postea stock
   // ─────────────────────────────────────────────────────────
 
-  async approve(id: string, userId: string) {
+  async approve(id: string, userId: string, requesterRole?: string) {
+    await this.assertRequestAccess({ userId: userId, role: requesterRole ?? '' }, id);
     // Obtener request y líneas FUERA de la transacción para leer
     const req = await this.dataSource.getRepository(AdjustmentRequest).findOne({ where: { id } });
     if (!req) throw new NotFoundException('Solicitud de ajuste no encontrada.');
@@ -195,11 +241,9 @@ export class AdjustmentsService {
       return { requestId: id, code: locked.code, movementIds, originalMovementId: locked.originalMovementId ?? null };
     });
 
-    // Invalidar caché y emitir evento
-    void Promise.all([
-      this.cache.delPattern('kpis:*'),
-      this.cache.delPattern('stock:*'),
-    ]);
+    // Invalidar caché del depósito afectado y emitir el evento con su id: un
+    // ajuste en el depósito 02 no debe recalcular ni refrescar el 01.
+    this.invalidateWarehouseCaches(req.warehouseId ?? null);
     this.events.emitStockUpdated({ warehouseId: req.warehouseId ?? null });
 
     void this.uploads.log('ADJUSTMENT', id, 'APROBADO',
@@ -222,7 +266,8 @@ export class AdjustmentsService {
   //  RECHAZAR → vuelve a BORRADOR
   // ─────────────────────────────────────────────────────────
 
-  async reject(id: string, dto: RejectAdjustmentDto, userId: string) {
+  async reject(id: string, dto: RejectAdjustmentDto, userId: string, requesterRole?: string) {
+    await this.assertRequestAccess({ userId: userId, role: requesterRole ?? '' }, id);
     const result = await this.dataSource.transaction(async (manager) => {
       const req = await this.findOrFail(manager, id);
       if (req.status !== 'PENDIENTE_APROBACION') {
@@ -246,7 +291,8 @@ export class AdjustmentsService {
   //  ANULAR
   // ─────────────────────────────────────────────────────────
 
-  async cancel(id: string, userId: string) {
+  async cancel(id: string, userId: string, requesterRole?: string) {
+    await this.assertRequestAccess({ userId: userId, role: requesterRole ?? '' }, id);
     const result = await this.dataSource.transaction(async (manager) => {
       const req = await this.findOrFail(manager, id);
       if (req.status === 'APROBADO') {
@@ -286,7 +332,7 @@ export class AdjustmentsService {
   //  CONSULTAS
   // ─────────────────────────────────────────────────────────
 
-  async findAll(query: AdjustmentQueryDto) {
+  async findAll(query: AdjustmentQueryDto, scope: WarehouseScope = null) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 50;
 
@@ -297,6 +343,7 @@ export class AdjustmentsService {
       .skip((page - 1) * limit)
       .take(limit);
 
+    if (scope) qb.andWhere('r.warehouseId IN (:...scopeIds)', { scopeIds: scope });
     if (query.type) qb.andWhere('r.type = :type', { type: query.type });
     if (query.status) qb.andWhere('r.status = :status', { status: query.status });
     // from/to son días calendario elegidos en el filtro: se anclan a
@@ -316,11 +363,14 @@ export class AdjustmentsService {
     return { data, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user?: AccessUser) {
     const request = await this.dataSource
       .getRepository(AdjustmentRequest)
       .findOne({ where: { id } });
     if (!request) throw new NotFoundException('Solicitud de ajuste no encontrada.');
+    if (user && request.warehouseId) {
+      await this.access.assertWarehouseAccess(user, request.warehouseId);
+    }
 
     const lines = await this.dataSource
       .getRepository(AdjustmentRequestLine)

@@ -53,6 +53,8 @@ export default function ProductsPage() {
   const [code, setCode] = useState("");
   const [description, setDescription] = useState("");
   const [unitOfMeasure, setUnitOfMeasure] = useState("UN");
+  // Default true: hasta hoy todos los materiales autocompletaban lote SAP.
+  const [usesSapLot, setUsesSapLot] = useState(true);
   const [stackable, setStackable] = useState(true);
   const [maxStackLevel, setMaxStackLevel] = useState("");
   const [canReceiveWeightOnTop, setCanReceiveWeightOnTop] = useState(true);
@@ -144,6 +146,7 @@ export default function ProductsPage() {
       description: description.trim(),
       unitOfMeasure: unitOfMeasure,
       active: true,
+      usesSapLot,
       stackable,
       maxStackLevel: maxStackLevel ? Number(maxStackLevel) : undefined,
       canReceiveWeightOnTop,
@@ -268,6 +271,16 @@ export default function ProductsPage() {
       {/* Stacking rules row */}
       {allowCreate && (
         <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}
+            title="El material se maneja con Lote SAP (Lote Ypané). Si se desmarca, las entradas no generan ni guardan lote SAP para este material.">
+            <input
+              type="checkbox"
+              checked={usesSapLot}
+              onChange={(e) => setUsesSapLot(e.target.checked)}
+              disabled={saving}
+            />
+            Utiliza Lote SAP
+          </label>
           <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
             <input
               type="checkbox"
@@ -541,6 +554,7 @@ function EditProductModal({
   const [code, setCode] = useState(product.code);
   const [description, setDescription] = useState(product.description);
   const [unitOfMeasure, setUnitOfMeasure] = useState(product.unitOfMeasure ?? "UN");
+  const [usesSapLot, setUsesSapLot] = useState(product.usesSapLot !== false);
   const [stackable, setStackable] = useState(product.stackable !== false);
   const [maxStackLevel, setMaxStackLevel] = useState(product.maxStackLevel != null ? String(product.maxStackLevel) : "");
   const [canReceiveWeightOnTop, setCanReceiveWeightOnTop] = useState(product.canReceiveWeightOnTop !== false);
@@ -556,6 +570,7 @@ function EditProductModal({
       code: code.trim(),
       description: description.trim(),
       unitOfMeasure,
+      usesSapLot,
       stackable,
       maxStackLevel: stackable && maxStackLevel ? Number(maxStackLevel) : null,
       canReceiveWeightOnTop,
@@ -615,6 +630,11 @@ function EditProductModal({
           </label>
         </div>
 
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}
+          title="El material se maneja con Lote SAP (Lote Ypané). Si se desmarca, las entradas no generan ni guardan lote SAP para este material.">
+          <input type="checkbox" checked={usesSapLot} onChange={(e) => setUsesSapLot(e.target.checked)} />
+          Utiliza Lote SAP
+        </label>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
           <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
           Activo

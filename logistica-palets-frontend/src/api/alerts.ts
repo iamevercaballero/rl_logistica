@@ -36,8 +36,8 @@ export interface CreateAlertRulePayload {
   enabled?: boolean;
 }
 
-export async function getActiveAlerts(): Promise<ActiveAlert[]> {
-  const { data } = await api.get<ActiveAlert[]>("/alerts/active");
+export async function getActiveAlerts(warehouseId?: string): Promise<ActiveAlert[]> {
+  const { data } = await api.get<ActiveAlert[]>("/alerts/active", { params: { warehouseId } });
   return data;
 }
 

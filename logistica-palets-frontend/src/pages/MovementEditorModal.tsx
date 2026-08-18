@@ -26,6 +26,12 @@ type LotEdit = {
   pallets: Record<string, string>;
   /** palletId → nuevo peso en kg. Es descriptivo: no genera solicitud de ajuste. */
   weights: Record<string, string>;
+  /**
+   * SALIDA — palletId → paletas físicas con las que se despachó. Descriptivo
+   * como el peso: se aplica directo, sin pasar por aprobación. Vaciarlo borra
+   * el dato informado.
+   */
+  dispatched: Record<string, string>;
   addQuantity: string;
   addPalletCount: string;
 };
@@ -38,6 +44,9 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
 
   const isEntry = movement.type === "ENTRY";
   const isExit = movement.type === "EXIT";
+  // Material configurado sin Lote SAP: no se ofrece el campo para cargarlo. Un
+  // valor histórico sí se muestra (solo lectura) — apagar el flag no lo borra.
+  const usesSapLot = movement.material.usesSapLot !== false;
 
   const [reason, setReason] = useState("");
   const [documentNumber, setDocumentNumber] = useState(movement.documentNumber ?? "");
@@ -73,6 +82,7 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
     // en ESTE movimiento (quantityInMovement) — son ejes distintos, ver comentario del backend.
     pallets: Object.fromEntries(l.pallets.map((p) => [p.id, String(isExit ? p.quantityInMovement : p.currentQuantity)])),
     weights: Object.fromEntries(l.pallets.map((p) => [p.id, p.weightKg != null ? String(p.weightKg) : ""])),
+    dispatched: Object.fromEntries(l.pallets.map((p) => [p.id, p.dispatchedPallets != null ? String(p.dispatchedPallets) : ""])),
     addQuantity: "",
     addPalletCount: "1",
   });
@@ -90,6 +100,12 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
     setLotEdits((prev) => {
       const cur = prev[l.lotId] ?? defaultEdit(l);
       return { ...prev, [l.lotId]: { ...cur, weights: { ...cur.weights, [palletId]: val } } };
+    });
+  }
+  function updateLotDispatched(l: MovementLotBreakdown, palletId: string, val: string) {
+    setLotEdits((prev) => {
+      const cur = prev[l.lotId] ?? defaultEdit(l);
+      return { ...prev, [l.lotId]: { ...cur, dispatched: { ...cur.dispatched, [palletId]: val } } };
     });
   }
 
@@ -171,7 +187,7 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
       // Corrección por pallet. ENTRY: solo se puede bajar el saldo actual (para sumar
       // está "Agregar unidades"). EXIT: se compara contra lo que salió en ESTE movimiento
       // (quantityInMovement) y se puede subir o bajar — no hay "Agregar unidades".
-      const palletEdits: { palletId: string; newQuantity: number; weightKg?: number }[] = [];
+      const palletEdits: { palletId: string; newQuantity: number; weightKg?: number; dispatchedPallets?: number | null }[] = [];
       for (const p of l.pallets) {
         if (!isExit && p.status === "EXITED") continue;
         const raw = edit.pallets[p.id];
@@ -199,6 +215,26 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
           weightKg = w;
         }
 
+        // Paletas físicas despachadas: descriptivo, solo en salidas. Vaciar el
+        // campo borra el dato; `undefined` es "no lo toqué".
+        let dispatchedPallets: number | null | undefined;
+        if (isExit) {
+          const rawDispatched = (edit.dispatched[p.id] ?? "").trim();
+          const originalDispatched = p.dispatchedPallets != null ? String(p.dispatchedPallets) : "";
+          if (rawDispatched !== originalDispatched) {
+            if (rawDispatched === "") {
+              dispatchedPallets = null;
+            } else {
+              const d = Number(rawDispatched);
+              if (!Number.isInteger(d) || d < 0 || d > 999) {
+                setFormError(`Paletas físicas inválidas en el pallet ${p.code}: usá un número entero de 0 a 999.`);
+                return;
+              }
+              dispatchedPallets = d;
+            }
+          }
+        }
+
         const qtyChanged = isExit ? newQty !== p.quantityInMovement : newQty !== p.currentQuantity;
 
         if (isExit) {
@@ -214,8 +250,8 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
           return;
         }
 
-        if (qtyChanged || weightKg !== undefined) {
-          palletEdits.push({ palletId: p.id, newQuantity: newQty, weightKg });
+        if (qtyChanged || weightKg !== undefined || dispatchedPallets !== undefined) {
+          palletEdits.push({ palletId: p.id, newQuantity: newQty, weightKg, dispatchedPallets });
         }
       }
 
@@ -540,12 +576,19 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                             </div>
                             <div>
                               <label style={tinyLabel}>Lote SAP</label>
-                              <input
-                                className="input"
-                                style={{ fontFamily: "monospace" }}
-                                value={edit.sapLot}
-                                onChange={(e) => updateLotEdit(l, "sapLot", e.target.value)}
-                              />
+                              {usesSapLot ? (
+                                <input
+                                  className="input"
+                                  style={{ fontFamily: "monospace" }}
+                                  value={edit.sapLot}
+                                  onChange={(e) => updateLotEdit(l, "sapLot", e.target.value)}
+                                />
+                              ) : (
+                                <div style={{ fontSize: 12, color: "var(--muted)", fontFamily: "monospace", padding: "7px 0" }}
+                                  title="El material no utiliza Lote SAP.">
+                                  {l.sapLot ?? "—"}
+                                </div>
+                              )}
                             </div>
                             {/* "Proveedor del lote" se quitó: el código de lote
                                 YA es el lote del proveedor. Mantener los dos
@@ -574,15 +617,20 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                           </div>
                         </div>
 
-                        {/* Pallets del lote. El peso es un dato de ENTRADA (se imprime en la
-                            etiqueta al recibir la mercadería) — en una salida el pallet ya
-                            existe con su peso cargado, no hay nada que pesar de nuevo acá. */}
+                        {/* Pallets del lote. La última columna cambia según el tipo: el peso
+                            es un dato de ENTRADA (se imprime en la etiqueta al recibir), y en
+                            una SALIDA ese lugar lo ocupan las paletas físicas despachadas, que
+                            es el dato descriptivo equivalente del despacho. */}
                         <div style={{ padding: "8px 12px" }}>
-                          <div style={{ display: "grid", gridTemplateColumns: isExit ? "1fr 100px 110px" : "1fr 100px 110px 110px", gap: 8, padding: "2px 0 6px", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 100px 110px 110px", gap: 8, padding: "2px 0 6px", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>
                             <span>Pallet</span>
                             <span style={{ textAlign: "right" }}>{isExit ? "Salió" : "Actual"}</span>
                             <span>{isExit ? "Cantidad correcta" : "Nueva cantidad"}</span>
-                            {!isExit && <span>Peso (kg)</span>}
+                            <span title={isExit
+                              ? "Paletas físicas con las que se despachó este palet. Informativo: no cambia el stock. Vacío = no informado."
+                              : "Peso físico del pallet."}>
+                              {isExit ? "Paletas fís." : "Peso (kg)"}
+                            </span>
                           </div>
                           <div style={{ display: "grid", gap: 4 }}>
                             {activePallets.map((p) => {
@@ -593,7 +641,7 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                               const valid = raw.trim() !== "" && Number.isInteger(n) && n >= 0 && n <= max;
                               const reduced = valid && n < base;
                               return (
-                                <div key={p.id} style={{ display: "grid", gridTemplateColumns: isExit ? "1fr 100px 110px" : "1fr 100px 110px 110px", gap: 8, alignItems: "center" }}>
+                                <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1fr 100px 110px 110px", gap: 8, alignItems: "center" }}>
                                   <span style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                     {p.code}
                                     {p.status === "PARTIAL" && <span className="badge badge--estado-pendiente" style={{ fontSize: 9, marginLeft: 6 }}>PARCIAL</span>}
@@ -618,8 +666,21 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                                     }}
                                     aria-label={`${isExit ? "Cantidad correcta" : "Nueva cantidad"} del pallet ${p.code}`}
                                   />
-                                  {/* Peso: dato descriptivo, se aplica directo y queda auditado. Solo entradas. */}
-                                  {!isExit && (
+                                  {/* Dato descriptivo del palet: se aplica directo y queda
+                                      auditado, sin pasar por aprobación. */}
+                                  {isExit ? (
+                                    <input
+                                      className="input"
+                                      type="number"
+                                      min={0}
+                                      max={999}
+                                      placeholder="—"
+                                      value={edit.dispatched[p.id] ?? ""}
+                                      onChange={(e) => updateLotDispatched(l, p.id, e.target.value)}
+                                      style={{ fontSize: 13, padding: "4px 8px", textAlign: "center" }}
+                                      aria-label={`Paletas físicas despachadas del pallet ${p.code}`}
+                                    />
+                                  ) : (
                                     <input
                                       className="input"
                                       type="number"
@@ -636,14 +697,18 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                               );
                             })}
                             {exitedPallets.map((p) => (
-                              <div key={p.id} style={{ display: "grid", gridTemplateColumns: isExit ? "1fr 100px 110px" : "1fr 100px 110px 110px", gap: 8, alignItems: "center", opacity: 0.55 }}>
+                              <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1fr 100px 110px 110px", gap: 8, alignItems: "center", opacity: 0.55 }}>
                                 <span style={{ fontFamily: "monospace", fontSize: 12 }}>
                                   {p.code}
                                   <span className="badge" style={{ fontSize: 9, marginLeft: 6, background: "var(--muted)", color: "#fff" }}>DESPACHADO</span>
                                 </span>
                                 <span style={{ textAlign: "right", fontSize: 12, color: "var(--muted)" }} title={`Ingresó con ${p.quantityInMovement.toLocaleString("es-PY")} unid.`}>—</span>
                                 <span style={{ fontSize: 11, color: "var(--muted)" }}>No editable</span>
-                                {!isExit && <span style={{ fontSize: 11, color: "var(--muted)" }}>{p.weightKg != null ? `${p.weightKg} kg` : "—"}</span>}
+                                <span style={{ fontSize: 11, color: "var(--muted)", textAlign: isExit ? "center" : undefined }}>
+                                  {isExit
+                                    ? (p.dispatchedPallets != null ? String(p.dispatchedPallets) : "—")
+                                    : (p.weightKg != null ? `${p.weightKg} kg` : "—")}
+                                </span>
                               </div>
                             ))}
                             {activePallets.length === 0 && exitedPallets.length === 0 && (
@@ -743,13 +808,20 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div>
                   <label style={labelStyle}>Lote SAP</label>
-                  <input
-                    className="input"
-                    style={{ fontFamily: "monospace" }}
-                    value={sapLot}
-                    onChange={(e) => setSapLot(e.target.value)}
-                    placeholder={movement.sapLot ?? ""}
-                  />
+                  {usesSapLot ? (
+                    <input
+                      className="input"
+                      style={{ fontFamily: "monospace" }}
+                      value={sapLot}
+                      onChange={(e) => setSapLot(e.target.value)}
+                      placeholder={movement.sapLot ?? ""}
+                    />
+                  ) : (
+                    <div style={{ fontSize: 12, color: "var(--muted)", fontFamily: "monospace", padding: "9px 0" }}
+                      title="El material no utiliza Lote SAP.">
+                      {movement.sapLot ?? "—"}
+                    </div>
+                  )}
                 </div>
                 {/* "Proveedor del lote" quitado — ver nota arriba: el código
                     de lote ya identifica al lote del proveedor. */}

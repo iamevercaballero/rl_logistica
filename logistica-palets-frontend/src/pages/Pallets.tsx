@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useActiveWarehouseId } from "../contexts/WarehouseContext";
 import { listLocations } from "../api/locations";
 import {
   getPalletHistory,
@@ -603,11 +604,29 @@ export default function PalletsPage() {
   }, [searchInput]);
 
   // ── Queries ───────────────────────────────────────────────────────────────
+  // Palets, ubicaciones y KPIs son todos del depósito activo: la key lo incluye
+  // para que cambiar de depósito no reuse nada del anterior.
+  const activeWarehouseId = useActiveWarehouseId();
+  const scoped = !!activeWarehouseId;
+
   const [palletsQ, locationsQ, kpisQ] = useQueries({
     queries: [
-      { queryKey: ["pallets"], queryFn: () => listPallets() },
-      { queryKey: ["locations"], queryFn: listLocations },
-      { queryKey: ["pallets", "kpis"], queryFn: getPalletKpis, staleTime: 60_000 },
+      {
+        queryKey: ["pallets", activeWarehouseId],
+        queryFn: () => listPallets({ warehouseId: activeWarehouseId }),
+        enabled: scoped,
+      },
+      {
+        queryKey: ["locations", activeWarehouseId],
+        queryFn: () => listLocations(activeWarehouseId),
+        enabled: scoped,
+      },
+      {
+        queryKey: ["pallets", "kpis", activeWarehouseId],
+        queryFn: () => getPalletKpis(activeWarehouseId),
+        enabled: scoped,
+        staleTime: 60_000,
+      },
     ],
   });
 

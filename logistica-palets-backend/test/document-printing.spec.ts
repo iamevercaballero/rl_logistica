@@ -19,8 +19,7 @@ import {
   resetDb,
   seedBasics,
   TEST_USER_ID,
-  type Basics,
-} from './test-datasource';
+  type Basics, createAccessService, grantWarehouse } from './test-datasource';
 
 const noopEvents = { emitMovementCreated() {}, emitStockUpdated() {} } as unknown as EventsGateway;
 const noopCache = { delPattern: async () => {} } as unknown as CacheService;
@@ -35,7 +34,7 @@ beforeAll(async () => {
   ds = createTestDataSource();
   await ds.initialize();
   sequences = new DocumentSequenceService();
-  service = new MovementsService(ds, noopEvents, noopCache, sequences, noopUploads, new PilasService());
+  service = new MovementsService(ds, noopEvents, noopCache, sequences, noopUploads, new PilasService(), createAccessService(ds));
 }, 60_000);
 
 afterAll(async () => {
@@ -54,6 +53,10 @@ async function secondWarehouse() {
   const location = await ds.getRepository(Location).save(
     ds.getRepository(Location).create({ code: 'B-1', type: 'PISO', warehouse, active: true }),
   );
+  // Estos tests verifican reglas de documento (depósito único, snapshots), no
+  // permisos: el usuario recibe acceso a ambos depósitos para que lo que falle
+  // sea la regla del documento y no el control de acceso.
+  await grantWarehouse(ds, warehouse.id);
   return { warehouse, location };
 }
 

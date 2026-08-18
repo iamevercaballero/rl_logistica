@@ -27,8 +27,9 @@ import { listPallets, type LotPallet } from "../api/pallets";
 import { listTransports, type Transport, type TransportDriver } from "../api/transports";
 import { listSuppliers, createSupplier } from "../api/suppliers";
 import { createDestination, listDestinations } from "../api/destinations";
-import { listWarehouses } from "../api/warehouses";
+import { warehouseLabel } from "../api/warehouses";
 import { listLocations } from "../api/locations";
+import { useActiveWarehouseId, useWarehouse } from "../contexts/WarehouseContext";
 import { listActiveUsers } from "../api/users";
 import type { Product } from "../api/products";
 import { useToast } from "../design-system/toast";
@@ -39,7 +40,7 @@ import { canCreate } from "../auth/rbac";
 import SearchableSelect from "../design-system/SearchableSelect";
 import HybridSearchInput from "../design-system/HybridSearchInput";
 import { formatDateOnly, formatDateTimePY, todayInputValue } from "../utils/dateFormat";
-import { responsibleFieldLabel, showsExternalDocumentNumber } from "./movementFormModel";
+import { responsibleFieldLabel, sapLotForProduct, showsExternalDocumentNumber } from "./movementFormModel";
 
 /**
  * Un pallet físico de la entrada: su cantidad, su peso y su sector destino.
@@ -83,6 +84,12 @@ type FefoRow = {
   selectedIds: Set<string>;
   expanded: boolean;
   exitQtyInput: string;   // EXIT only — cantidad a despachar del lote (auto-selecciona pallets)
+  /**
+   * EXIT only — palletId → paletas físicas con las que se despachó ese palet.
+   * Es opcional y solo informativo: no interviene en cuánto se descuenta ni de
+   * qué palet. Sin cargar nada, la salida se comporta igual que siempre.
+   */
+  dispatchedByPallet: Record<string, string>;
 };
 
 /** Selecciona pallets en orden hasta cubrir targetQty. */
@@ -169,19 +176,29 @@ export default function MovementsPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const [warehousesQ, locationsQ, usersQ, pendingQ] = useQueries({
+  // Entrada/Salida operan siempre dentro del depósito activo: no se vuelve a
+  // elegir depósito en el formulario, se muestra como contexto.
+  const { activeWarehouse } = useWarehouse();
+  const activeWarehouseId = useActiveWarehouseId();
+
+  const [locationsQ, usersQ, pendingQ] = useQueries({
     queries: [
-      { queryKey: ["warehouses"], queryFn: listWarehouses },
-      { queryKey: ["locations"], queryFn: listLocations },
+      {
+        queryKey: ["locations", activeWarehouseId],
+        queryFn: () => listLocations(activeWarehouseId),
+        enabled: !!activeWarehouseId,
+      },
       { queryKey: ["users", "active"], queryFn: listActiveUsers },
       {
-        queryKey: ["movements", "pending"],
-        queryFn: () => getMovements({ page: 1, limit: 100, status: "PENDING_REGULARIZATION" }),
+        queryKey: ["movements", "pending", activeWarehouseId],
+        queryFn: () => getMovements({
+          page: 1, limit: 100, status: "PENDING_REGULARIZATION", warehouseId: activeWarehouseId,
+        }),
+        enabled: !!activeWarehouseId,
         select: (resp: { data: Movement[] }) => resp.data,
       },
     ],
   });
-  const warehouses = warehousesQ.data ?? [];
   const locations = useMemo(() => locationsQ.data ?? [], [locationsQ.data]);
   const users = usersQ.data ?? [];
   const pending = pendingQ.data ?? [];
@@ -234,7 +251,9 @@ export default function MovementsPage() {
   });
   const documents: LogisticsDocument[] = docsQ.data ?? [];
   const [product, setProduct] = useState<Product | null>(null);
-  const [warehouseId, setWarehouseId] = useState("");
+  // El depósito de la operación es el activo: no hay estado local que pueda
+  // divergir de lo que muestra el header.
+  const warehouseId = activeWarehouseId ?? "";
   const [fromLocationId, setFromLocationId] = useState("");
   const [toLocationId, setToLocationId] = useState("");
   const [documentNumber, setDocumentNumber] = useState("");
@@ -516,11 +535,14 @@ export default function MovementsPage() {
       selectedIds: new Set<string>(),
       expanded: true,
       exitQtyInput: "",
+      dispatchedByPallet: {},
     })));
   }, [fefoQ.data, fefoEnabled]);
 
   function resetForm() {
-    setProduct(null); setWarehouseId(""); setFromLocationId(""); setToLocationId("");
+    // El depósito NO se limpia: es el contexto de la sesión, no un campo del
+    // formulario. Limpiar la carga no saca al operador de su depósito.
+    setProduct(null); setFromLocationId(""); setToLocationId("");
     setDocumentNumber(""); setSupplier(""); setCarrier(""); setDriver(""); setDriverDocument(""); setVehiclePlate(""); setDestination(""); setDocumentoMaterial(""); setNotes("");
     setEncargadoId(""); setDate(todayISO());
     setEntrySapLot(generateSapLot()); setLotGroups([newLotGroup()]);
@@ -639,6 +661,12 @@ export default function MovementsPage() {
         .reduce((s, p) => s + p.quantity, 0);
       return { ...r, selectedIds: ids, exitQtyInput: selQty > 0 ? String(selQty) : "" };
     }));
+  }
+  /** Paletas físicas resultantes de un palet — dato informativo de la nota. */
+  function setDispatchedPallets(lotIdx: number, palletId: string, value: string) {
+    setFefoRows((rows) => rows.map((r, i) => i === lotIdx
+      ? { ...r, dispatchedByPallet: { ...r.dispatchedByPallet, [palletId]: value } }
+      : r));
   }
   function toggleExpanded(lotIdx: number) {
     setFefoRows((rows) => rows.map((r, i) => i === lotIdx ? { ...r, expanded: !r.expanded } : r));
@@ -799,7 +827,9 @@ export default function MovementsPage() {
           lotCode: g.lotCode.trim(),
           fechaVencimiento: g.fechaVencimiento || undefined,
           fechaFabricacion: g.fechaFabricacion || undefined,
-          sapLot: entrySapLot.trim() || undefined,
+          // En una entrada multi-producto cada línea resuelve su lote SAP con su
+          // propio material, porque se arma al agregarlo al remito.
+          sapLot: sapLotForProduct(product, entrySapLot),
         };
         // Peso y sector se definen exclusivamente por pallet en el gestor.
         if (g.palletLines.length > 0) {
@@ -836,6 +866,14 @@ export default function MovementsPage() {
       const targetQty = Number(row.exitQtyInput);
       const selectedPallets = row.lot.pallets.filter((p) => row.selectedIds.has(p.id));
       if (selectedPallets.length === 0) continue;
+      // Paletas físicas resultantes: informativo, opcional y por palet. Si el
+      // campo quedó vacío no se manda nada y la salida es la de siempre.
+      const dispatchedOf = (palletId: string) => {
+        const raw = (row.dispatchedByPallet[palletId] ?? "").trim();
+        if (raw === "") return undefined;
+        const parsed = Number(raw);
+        return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+      };
       if (targetQty > 0) {
         const disponible = selectedPallets.reduce((s, p) => s + p.quantity, 0);
         if (targetQty > disponible) {
@@ -846,12 +884,12 @@ export default function MovementsPage() {
         for (const p of selectedPallets) {
           if (remaining <= 0) break;
           const take = Math.min(p.quantity, remaining);
-          palletItems.push({ palletId: p.id, quantity: take });
+          palletItems.push({ palletId: p.id, quantity: take, dispatchedPallets: dispatchedOf(p.id) });
           remaining -= take;
         }
       } else {
         for (const p of selectedPallets) {
-          palletItems.push({ palletId: p.id, quantity: p.quantity });
+          palletItems.push({ palletId: p.id, quantity: p.quantity, dispatchedPallets: dispatchedOf(p.id) });
         }
       }
     }
@@ -1184,6 +1222,17 @@ export default function MovementsPage() {
             >
                Etiquetas de pallet
             </button>
+            {/* El checklist de recepción solo existe para Entradas. */}
+            {lastCreatedDoc.type === "ENTRY" && (
+              <button
+                type="button"
+                className="btn btn--primary"
+                style={{ fontSize: 15, padding: "10px 22px", gap: 8, display: "flex", alignItems: "center" }}
+                onClick={() => window.open(`/print/checklist/${lastCreatedDoc.id}`, "_blank")}
+              >
+                📋 Checklist
+              </button>
+            )}
           </div>
           <div>
             <button
@@ -1314,6 +1363,17 @@ export default function MovementsPage() {
                         >
                           
                         </button>
+                        {/* Reimpresión del checklist: solo para remitos de Entrada. */}
+                        {doc.type === "ENTRY" && (
+                          <button
+                            type="button"
+                            title="Imprimir checklist de recepción"
+                            onClick={() => window.open(`/print/checklist/${doc.id}`, "_blank")}
+                            style={{ background: "none", border: "1px solid var(--border)", borderRadius: 5, padding: "3px 8px", cursor: "pointer", fontSize: 14, marginLeft: 4 }}
+                          >
+                            📋
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -1427,19 +1487,23 @@ export default function MovementsPage() {
           </div>
           )}
 
-          {/* Entrada: el depósito se define aquí; la ubicación física se asigna después por pallet. */}
+          {/* El depósito ya no se elige acá: la operación pertenece al depósito
+              activo de la sesión (el del header). Se muestra como contexto para
+              que el operador vea sin ambigüedad dónde está cargando. */}
           {(movType !== "ENTRY" || wizardStep === 1) && !isTransfer && movType !== "EXIT" && (
             <>
               <div className="form-section-title">Depósito</div>
-              <div style={{ display: "grid", gap: 8, maxWidth: 420 }}>
-                <SearchableSelect
-                  options={warehouses}
-                  value={warehouses.find((w) => w.id === warehouseId) ?? null}
-                  onChange={(w) => setWarehouseId(w?.id ?? "")}
-                  getKey={(w) => w.id}
-                  getLabel={(w) => w.name}
-                  placeholder="Depósito"
-                />
+              <div style={{ display: "grid", gap: 4, maxWidth: 420 }}>
+                <div
+                  className="input"
+                  aria-label="Depósito de la operación"
+                  style={{ display: "flex", alignItems: "center", fontWeight: 700, background: "var(--panel-hi)" }}
+                >
+                  {warehouseLabel(activeWarehouse)}
+                </div>
+                <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                  Para operar en otro depósito, cambiálo en el selector del encabezado.
+                </span>
               </div>
             </>
           )}
@@ -1669,9 +1733,18 @@ export default function MovementsPage() {
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
                 <div className="form-section-title" style={{ marginBottom: 0 }}>Lotes y cantidades</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {/* El material puede estar configurado como "no utiliza Lote SAP":
+                      ahí el campo se deshabilita y no se manda nada. El input sigue
+                      visible porque la cabecera es del remito, no de un material. */}
                   <label style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", whiteSpace: "nowrap" }}>Lote SAP:</label>
-                  <input className="input" value={entrySapLot} onChange={(e) => setEntrySapLot(e.target.value)}
-                    placeholder={generateSapLot()} style={{ width: 140, fontSize: 13 }} title="Lote SAP del día — compartido para toda la entrada" />
+                  {product?.usesSapLot === false ? (
+                    <span style={{ fontSize: 12, color: "var(--muted)", fontStyle: "italic" }}>
+                      No aplica a este material
+                    </span>
+                  ) : (
+                    <input className="input" value={entrySapLot} onChange={(e) => setEntrySapLot(e.target.value)}
+                      placeholder={generateSapLot()} style={{ width: 140, fontSize: 13 }} title="Lote SAP del día — compartido para toda la entrada" />
+                  )}
                 </div>
               </div>
               <div style={{ display: "grid", gap: 10 }}>
@@ -1928,7 +2001,7 @@ export default function MovementsPage() {
                                         key={p.id}
                                         style={{
                                           display: "grid",
-                                          gridTemplateColumns: "auto auto 1fr auto",
+                                          gridTemplateColumns: "auto auto 1fr auto auto",
                                           alignItems: "center",
                                           gap: 10,
                                           padding: "7px 16px",
@@ -1987,6 +2060,31 @@ export default function MovementsPage() {
                                         {!isSelected && p.currentLocationId && (
                                           <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "monospace", justifySelf: "end" }}>
                                             {locationMap[p.currentLocationId] ?? p.currentLocationId.slice(0, 8)}
+                                          </span>
+                                        )}
+                                        {/* Paletas físicas con las que sale este palet. Opcional:
+                                            en blanco, la salida se registra como siempre. */}
+                                        {isSelected && (
+                                          <span
+                                            style={{ display: "flex", alignItems: "center", gap: 5, justifySelf: "end" }}
+                                            onClick={(e) => e.preventDefault()}
+                                            title="Paletas físicas con las que se despacha este palet. Solo informativo: no cambia el stock ni el descuento. En blanco = 1."
+                                          >
+                                            <span style={{ fontSize: 10, color: "var(--muted)", whiteSpace: "nowrap" }}>
+                                              Paletas fís.
+                                            </span>
+                                            <input
+                                              className="input"
+                                              type="number"
+                                              min={0}
+                                              max={999}
+                                              placeholder="1"
+                                              value={row.dispatchedByPallet[p.id] ?? ""}
+                                              disabled={blocked}
+                                              onChange={(e) => setDispatchedPallets(lotIdx, p.id, e.target.value)}
+                                              style={{ width: 58, fontSize: 12, padding: "3px 6px", textAlign: "center" }}
+                                              aria-label={`Paletas físicas despachadas del palet ${p.code}`}
+                                            />
                                           </span>
                                         )}
                                       </label>

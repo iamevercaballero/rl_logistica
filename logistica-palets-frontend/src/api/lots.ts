@@ -11,7 +11,7 @@ export type Lot = {
   sapLot?: string | null;
   stockActual: number;
   status?: string;
-  product?: { id: string; code: string; description: string };
+  product?: { id: string; code: string; description: string; usesSapLot?: boolean };
   /** Pallets — embebidos en FEFO siempre; en `/lots` solo si se pide includePallets=true */
   pallets?: LotPallet[];
   /** Conteos siempre incluidos en `/lots` (no en FEFO) */
@@ -28,24 +28,26 @@ export function generateSapLot(date = new Date()): string {
   return `${letter}${mm}${dd}08201`;
 }
 
-export async function listLots(productId?: string, sapLot?: string, includePallets = false): Promise<Lot[]> {
+export async function listLots(productId?: string, sapLot?: string, includePallets = false, warehouseId?: string): Promise<Lot[]> {
   const { data } = await api.get<Lot[]>("/lots", {
     params: {
       ...(productId ? { productId } : {}),
       ...(sapLot ? { sapLot } : {}),
       ...(includePallets ? { includePallets: "true" } : {}),
+      ...(warehouseId ? { warehouseId } : {}),
     },
   });
   return data;
 }
 
 /** Lotes disponibles ordenados por FEFO. Filtra por productId, sapLot, locationId o combinaciones. */
-export async function fefoLots(productId?: string, sapLot?: string, locationId?: string): Promise<Lot[]> {
+export async function fefoLots(productId?: string, sapLot?: string, locationId?: string, warehouseId?: string): Promise<Lot[]> {
   const { data } = await api.get<Lot[]>("/lots/fefo", {
     params: {
       ...(productId ? { productId } : {}),
       ...(sapLot ? { sapLot } : {}),
       ...(locationId ? { locationId } : {}),
+      ...(warehouseId ? { warehouseId } : {}),
     },
   });
   return data;

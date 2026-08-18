@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getDocuments, type LogisticsDocument } from "../api/movements";
+import { useActiveWarehouseId } from "../contexts/WarehouseContext";
 import {
   getDispatchLog,
   deleteAttachment,
@@ -471,14 +472,19 @@ export default function BitacoraPage() {
   const [searchInput, setSearchInput] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  // La bitácora operativa muestra solo los remitos del depósito activo.
+  const activeWarehouseId = useActiveWarehouseId();
+
   const docsQ = useQuery({
-    queryKey: ["bitacora-docs", { typeFilter, from, to, search }],
+    queryKey: ["bitacora", activeWarehouseId, { typeFilter, from, to, search }],
     queryFn: () => getDocuments({
       type:   typeFilter || undefined,
       from:   from       || undefined,
       to:     to         || undefined,
       search: search     || undefined,
+      warehouseId: activeWarehouseId,
     }),
+    enabled: !!activeWarehouseId,
     placeholderData: (prev) => prev,
     staleTime: 30_000,
   });

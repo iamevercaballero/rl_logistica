@@ -42,7 +42,7 @@ import ExpandableText from "../design-system/ExpandableText";
 import DocumentPreviewModal from "../components/DocumentPreviewModal";
 import type { DocumentPreview, PreviewLine } from "./documentPreviewModel";
 import HybridSearchInput from "../design-system/HybridSearchInput";
-import { formatDateOnly, formatDateTimePY, todayInputValue } from "../utils/dateFormat";
+import { daysUntil, formatDateOnly, formatDateTimePY, todayInputValue } from "../utils/dateFormat";
 import { responsibleFieldLabel, sapLotApplies, sapLotForProduct, showsExternalDocumentNumber } from "./movementFormModel";
 
 /**
@@ -345,9 +345,11 @@ export default function MovementsPage() {
 
   const isDocType = movType === "ENTRY" || movType === "EXIT";
   const docsQ = useQuery({
-    queryKey: ["documents", movType, showDocHistory],
-    queryFn: () => getDocuments({ type: movType as "ENTRY" | "EXIT" }),
-    enabled: isDocType && showDocHistory,
+    // "Historial reciente" es del depósito activo, como el resto del módulo —
+    // sin esto mezclaba remitos de todos los depósitos que ve el usuario.
+    queryKey: ["documents", movType, showDocHistory, activeWarehouseId],
+    queryFn: () => getDocuments({ type: movType as "ENTRY" | "EXIT", warehouseId: activeWarehouseId }),
+    enabled: isDocType && showDocHistory && !!activeWarehouseId,
     staleTime: 30_000,
   });
   const documents: LogisticsDocument[] = docsQ.data ?? [];
@@ -458,11 +460,14 @@ export default function MovementsPage() {
     enabled: isTransfer && !!toLocationId,
     staleTime: 10_000,
   });
-  // TRANSFERENCIA producto-primero: pallets disponibles del producto buscado
+  // TRANSFERENCIA producto-primero: pallets disponibles del producto buscado.
+  // Sin `warehouseId` esto mostraba ubicaciones de origen de OTROS depósitos —
+  // justo lo que el comentario de arriba de `warehouseId` descarta ("el
+  // depósito de la operación es el activo, no hay estado que pueda divergir").
   const transferProductPalletsQ = useQuery({
-    queryKey: ["pallets", "by-product", transferProduct?.id],
-    queryFn: () => listPallets({ productId: transferProduct!.id, status: "AVAILABLE" }),
-    enabled: isTransfer && !!transferProduct,
+    queryKey: ["pallets", "by-product", transferProduct?.id, activeWarehouseId],
+    queryFn: () => listPallets({ productId: transferProduct!.id, status: "AVAILABLE", warehouseId: activeWarehouseId }),
+    enabled: isTransfer && !!transferProduct && !!activeWarehouseId,
     staleTime: 10_000,
   });
   // Agrupa los pallets del producto por ubicación origen, para elegir desde dónde mover
@@ -518,11 +523,14 @@ export default function MovementsPage() {
 
 
   // FEFO via useQuery — SALIDA (sin filtro de ubicación)
-  const fefoEnabled = movType === "EXIT" && !!product;
+  const fefoEnabled = movType === "EXIT" && !!product && !!activeWarehouseId;
 
   const fefoQ = useQuery({
-    queryKey: ["lots", "fefo", { productId: product?.id }],
-    queryFn: () => fefoLots(product?.id),
+    // Sin `activeWarehouseId` acá, una Salida en el depósito 02 podía listar y
+    // dejar seleccionar lotes/palets que en realidad están en el 01 — el
+    // remito se armaba con stock que físicamente no está en ese depósito.
+    queryKey: ["lots", "fefo", { productId: product?.id }, activeWarehouseId],
+    queryFn: () => fefoLots(product?.id, undefined, undefined, activeWarehouseId),
     enabled: fefoEnabled,
     staleTime: 15_000,
   });
@@ -897,9 +905,6 @@ export default function MovementsPage() {
   // es exactamente lo que se va a descontar.
   const totalExitQty = fefoRows.reduce((sum, row) => sum + rowExitQty(row), 0);
   const totalExitPallets = fefoRows.reduce((sum, row) => sum + row.selectedIds.size, 0);
-
-  const daysUntil = (fecha?: string | null) =>
-    fecha ? Math.ceil((new Date(fecha).getTime() - Date.now()) / 86400000) : null;
 
   const expiryBadge = (days: number | null) => {
     if (days === null) return null;

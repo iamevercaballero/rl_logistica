@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { searchProducts, type Product } from "../../api/products";
 import { listPallets } from "../../api/pallets";
+import { useActiveWarehouseId } from "../../contexts/WarehouseContext";
 
 type Props = {
   value: Product | null;
@@ -23,6 +24,10 @@ export default function MaterialSearchBar({ value, onChange, placeholder = "Busc
   const [loading, setLoading] = useState(false);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  // Sin esto, buscar por lote/pallet encontraba coincidencias de CUALQUIER
+  // depósito: un operador en el depósito 02 podía terminar eligiendo (y
+  // ajustando) un material que solo existe en el 01.
+  const activeWarehouseId = useActiveWarehouseId();
 
   useEffect(() => {
     if (debounce.current) clearTimeout(debounce.current);
@@ -33,7 +38,7 @@ export default function MaterialSearchBar({ value, onChange, placeholder = "Busc
       try {
         const [products, pallets] = await Promise.all([
           searchProducts(q),
-          listPallets({ search: q }),
+          listPallets({ search: q, warehouseId: activeWarehouseId }),
         ]);
         const byId = new Map<string, Product>();
         for (const p of pallets) {
@@ -61,7 +66,7 @@ export default function MaterialSearchBar({ value, onChange, placeholder = "Busc
         setLoading(false);
       }
     }, 250);
-  }, [query, value]);
+  }, [query, value, activeWarehouseId]);
 
   useEffect(() => {
     function handler(e: MouseEvent) {

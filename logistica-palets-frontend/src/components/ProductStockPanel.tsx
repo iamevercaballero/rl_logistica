@@ -1,17 +1,23 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { listPallets } from "../api/pallets";
+import { useActiveWarehouseId } from "../contexts/WarehouseContext";
 
 /**
  * Panel de contexto: al seleccionar un producto muestra stock total, lotes
  * activos, pallets disponibles y ubicaciones donde está (con cantidad por
  * ubicación). Usado en Diferencia de inventario para no cargar la ubicación a mano.
+ *
+ * Sin acotar por depósito, "Stock total" sumaba pallets de todos los
+ * depósitos que ve el usuario — un ajuste de inventario del depósito activo
+ * terminaba comparado contra un número que incluía stock de otro lado.
  */
 export default function ProductStockPanel({ productId }: { productId: string }) {
+  const activeWarehouseId = useActiveWarehouseId();
   const { data: allPallets = [], isLoading } = useQuery({
-    queryKey: ["pallets", "with-stock", productId],
-    queryFn: () => listPallets({ productId }),
-    enabled: !!productId,
+    queryKey: ["pallets", "with-stock", productId, activeWarehouseId],
+    queryFn: () => listPallets({ productId, warehouseId: activeWarehouseId }),
+    enabled: !!productId && !!activeWarehouseId,
   });
 
   // AVAILABLE y PARTIAL: los parciales son pallets abiertos con saldo y también

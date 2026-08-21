@@ -6,6 +6,7 @@ import DispatchLogDrawer from "../components/DispatchLogDrawer";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { fmtDateTime } from "../utils/dateFormat";
+import { useActiveWarehouseId } from "../contexts/WarehouseContext";
 
 interface Props {
   onTypeChange: (t: MovementType | "INVENTORY_ADJUSTMENT") => void;
@@ -17,6 +18,7 @@ type TypeFilter = "ALL" | "ENTRY" | "EXIT";
 export default function CorregirMovimientoForm({ onTypeChange }: Props) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const activeWarehouseId = useActiveWarehouseId();
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("ALL");
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
@@ -42,15 +44,20 @@ export default function CorregirMovimientoForm({ onTypeChange }: Props) {
     },
   });
 
+  // Sin `warehouseId`, esta lista mostraba movimientos de todos los depósitos
+  // del alcance del usuario — se podía terminar corrigiendo (o anulando) un
+  // movimiento de un depósito distinto al que muestra el encabezado.
   const movementsQ = useQuery({
-    queryKey: ["movements", "correction-list", { typeFilter, search, page }],
+    queryKey: ["movements", "correction-list", { typeFilter, search, page }, activeWarehouseId],
     queryFn: () =>
       getMovements({
         type: typeFilter === "ALL" ? ["ENTRY", "EXIT"] : typeFilter,
         search: search || undefined,
         page,
         limit: PAGE_SIZE,
+        warehouseId: activeWarehouseId,
       }),
+    enabled: !!activeWarehouseId,
     staleTime: 20_000,
     placeholderData: (prev) => prev,
   });

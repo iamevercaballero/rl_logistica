@@ -140,30 +140,38 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
     queryFn: () => listLocations(activeWarehouseId),
     enabled: !!activeWarehouseId,
   });
+  // El backend ya soportaba filtrar por depósito (`AdjustmentQueryDto.warehouseId`);
+  // acá nunca se lo mandábamos, así que la lista mezclaba ajustes de todos los
+  // depósitos del alcance del usuario en vez de solo el activo.
   const listQ = useQuery({
-    queryKey: ["adjustments", filterType, filterStatus],
+    queryKey: ["adjustments", filterType, filterStatus, activeWarehouseId],
     queryFn: () => getAdjustments({
       type: (filterType || undefined) as AdjustmentType | undefined,
       status: (filterStatus || undefined) as AdjustmentStatus | undefined,
       limit: 60,
+      warehouseId: activeWarehouseId,
     }),
+    enabled: !!activeWarehouseId,
   });
   const adjustments = listQ.data?.data ?? [];
   const logAdj = adjustments.find((a) => a.id === logAdjId);
 
-  // Contador de pendientes — independiente del filtro que esté mirando el operador.
+  // Contador de pendientes del depósito activo — independiente del filtro que
+  // esté mirando el operador, pero no de qué depósito está trabajando.
   const pendingQ = useQuery({
-    queryKey: ["adjustments", "pending-count"],
-    queryFn: () => getAdjustments({ status: "PENDIENTE_APROBACION", limit: 1 }),
-    enabled: userCanApprove,
+    queryKey: ["adjustments", "pending-count", activeWarehouseId],
+    queryFn: () => getAdjustments({ status: "PENDIENTE_APROBACION", limit: 1, warehouseId: activeWarehouseId }),
+    enabled: userCanApprove && !!activeWarehouseId,
   });
   const pendingCount = pendingQ.data?.meta.total ?? 0;
 
   // Lotes + pallets del producto — fuente única para contexto, nivel Lote/Pallet, sobrante y faltante.
+  // Acotado al depósito activo: sin esto, un faltante se comparaba contra
+  // stock que en realidad estaba en otro depósito.
   const lotsQ = useQuery({
-    queryKey: ["lots", "fefo", { productId: product?.id }],
-    queryFn: () => fefoLots(product?.id),
-    enabled: !!product,
+    queryKey: ["lots", "fefo", { productId: product?.id }, activeWarehouseId],
+    queryFn: () => fefoLots(product?.id, undefined, undefined, activeWarehouseId),
+    enabled: !!product && !!activeWarehouseId,
   });
   const lots = (lotsQ.data ?? []) as ScopedLot[];
 

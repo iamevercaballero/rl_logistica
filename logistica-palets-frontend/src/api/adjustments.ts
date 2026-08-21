@@ -121,6 +121,8 @@ export async function getAdjustments(params: {
   to?: string;
   page?: number;
   limit?: number;
+  /** El backend ya lo soporta (ver `AdjustmentQueryDto`); faltaba exponerlo acá. */
+  warehouseId?: string;
 }): Promise<{ data: AdjustmentRequest[]; meta: { page: number; limit: number; total: number; totalPages: number } }> {
   const { data } = await api.get("/adjustments", { params });
   return data;

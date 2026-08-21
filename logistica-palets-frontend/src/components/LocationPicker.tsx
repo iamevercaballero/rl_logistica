@@ -149,8 +149,13 @@ export default function LocationPicker({
 
   // Mapa del depósito — solo se pide cuando se abre el modal.
   const { data: map, isLoading: mapLoading } = useQuery({
-    queryKey: ["location-map", warehouseId ?? "all"],
-    queryFn: () => getLocationMap(warehouseId),
+    // `scopeWarehouseId`, no el `warehouseId` crudo: el resto del picker ya cae
+    // al depósito activo cuando no viene por prop (ver más arriba), pero el
+    // mapa usaba el prop tal cual y mostraba ubicaciones de otros depósitos
+    // (inofensivo porque quedaban deshabilitadas por `disabledIds`, pero
+    // igual mal — el mapa no tiene por qué mostrar lo que no se puede elegir).
+    queryKey: ["location-map", scopeWarehouseId ?? "all"],
+    queryFn: () => getLocationMap(scopeWarehouseId),
     enabled: mapOpen,
     staleTime: 30_000,
   });

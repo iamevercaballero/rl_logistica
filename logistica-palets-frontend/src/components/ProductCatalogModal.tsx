@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { listProducts, type Product } from "../api/products";
 import { getStockReport } from "../api/reports";
+import { useActiveWarehouseId } from "../contexts/WarehouseContext";
 
 type Props = {
   onSelect: (product: Product) => void;
@@ -17,9 +18,18 @@ type Props = {
  */
 export default function ProductCatalogModal({ onSelect, onClose, onlyActive }: Props) {
   const [search, setSearch] = useState("");
+  // El catálogo (código, descripción, atributos) es el mismo en cualquier
+  // depósito y no se re-pide al cambiar — pero el STOCK sí es por depósito.
+  // Sin esto, la columna Stock seguía mostrando el número del depósito
+  // anterior después de cambiar el activo.
+  const activeWarehouseId = useActiveWarehouseId();
 
   const productsQ = useQuery({ queryKey: ["products", "catalog"], queryFn: () => listProducts() });
-  const stockQ = useQuery({ queryKey: ["stock-report", "catalog"], queryFn: () => getStockReport() });
+  const stockQ = useQuery({
+    queryKey: ["stock", "report", "catalog", activeWarehouseId],
+    queryFn: () => getStockReport(activeWarehouseId),
+    enabled: !!activeWarehouseId,
+  });
 
   const stockByProduct = useMemo(() => {
     const map = new Map<string, number>();

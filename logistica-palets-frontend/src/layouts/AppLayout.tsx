@@ -3,6 +3,7 @@ import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-route
 import { canRead } from "../auth/rbac";
 import WarehouseSelector from "../components/WarehouseSelector";
 import { useAuth } from "../auth/AuthContext";
+import { useActiveWarehouseId } from "../contexts/WarehouseContext";
 import { ThemeToggleButton } from "../design-system/theme";
 import {
   CommandPalette,
@@ -138,6 +139,32 @@ export default function AppLayout() {
    * salir y volver), sin tocar el resto del layout (sidebar, depósito activo, etc).
    */
   const [refreshNonce, setRefreshNonce] = useState(0);
+
+  /**
+   * Cambiar el depósito activo limpia la caché de React Query (ver
+   * `WarehouseContext.setActiveWarehouse`), pero no toca el estado local de
+   * la página — carrito de un remito, selección FEFO, ubicación origen/destino
+   * de una transferencia. Ese estado queda armado con pallets/ubicaciones del
+   * depósito anterior; seguir operando sobre él después de cambiar de depósito
+   * es exactamente el tipo de inconsistencia que no puede pasar acá. Por eso el
+   * cambio de depósito remonta la página activa igual que el refresh manual de
+   * arriba: mismo mecanismo, un gatillo más.
+   *
+   * Se ignora la resolución inicial (`undefined` → primer depósito al cargar
+   * la página) — ahí no hay nada armado todavía que limpiar.
+   *
+   * Se ajusta durante el render (no en un `useEffect`) siguiendo el patrón que
+   * React recomienda para "derivar estado de un cambio": evita el render de
+   * más que implicaría detectar el cambio recién después de pintar.
+   */
+  const activeWarehouseId = useActiveWarehouseId();
+  const [prevWarehouseId, setPrevWarehouseId] = useState(activeWarehouseId);
+  if (activeWarehouseId !== prevWarehouseId) {
+    setPrevWarehouseId(activeWarehouseId);
+    if (prevWarehouseId && activeWarehouseId) {
+      setRefreshNonce((n) => n + 1);
+    }
+  }
 
   if (!isReady) return null;
   if (!user) return <Navigate to="/login" replace />;

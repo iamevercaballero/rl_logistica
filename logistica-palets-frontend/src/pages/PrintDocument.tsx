@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { getDocumentForPrint, type DocumentPrintData, type PrintProduct, type PrintLot, type PrintPallet, type RawMovement } from "../api/movements";
 import { formatDateOnly } from "../utils/dateFormat";
-import { buildPrintPresentation, dispatchedPalletsOf, PRINT_PLATE_LABEL } from "./printDocumentModel";
+import { buildPrintPresentation, dispatchedPalletsOf, effectivePalletCount, PRINT_PLATE_LABEL } from "./printDocumentModel";
 
 function buildMaps(data: DocumentPrintData) {
   const productMap: Record<string, PrintProduct> = Object.fromEntries(data.products.map((p) => [p.id, p]));
@@ -42,7 +42,10 @@ export default function PrintDocumentPage() {
       const palletCount = movDetails.filter((d) => d.palletId).length || m.pallets || 0;
       // Salida: cuántas paletas físicas salieron, si la operadora lo informó.
       const dispatched = dispatchedPalletsOf(movDetails);
-      return { movement: m, product, lots, palletCount, dispatched };
+      // Un solo número para la columna Pallets: la cifra física si se informó,
+      // si no la de origen. Nunca las dos juntas (ver `effectivePalletCount`).
+      const pallets = effectivePalletCount(palletCount, dispatched);
+      return { movement: m, product, lots, pallets };
     });
   }, [data]);
 
@@ -58,14 +61,9 @@ export default function PrintDocumentPage() {
   const docTypeLabel = isEntry ? "NOTA DE ENTRADA" : "NOTA DE ENTREGA";
   const presentation = buildPrintPresentation(data);
   const totalQty  = lines.reduce((s, l) => s + l.movement.quantity, 0);
-  const totalPallets = lines.reduce((s, l) => s + l.palletCount, 0);
-  // Solo se informa el total físico si alguna línea lo trae: sin eso, la nota
-  // sale idéntica a como salía antes de existir el campo.
-  const anyDispatched = lines.some((l) => l.dispatched.informed);
-  const totalDispatched = lines.reduce(
-    (s, l) => s + (l.dispatched.informed ? l.dispatched.total : l.palletCount),
-    0,
-  );
+  // Un solo total: la cifra física informada reemplaza a la de origen línea por
+  // línea (ver `effectivePalletCount`), no se suman las dos por separado.
+  const totalPallets = lines.reduce((s, l) => s + l.pallets, 0);
 
   /* Filas vacías para completar mínimo de 12 líneas en la tabla */
   const MIN_ROWS = 12;
@@ -150,7 +148,6 @@ export default function PrintDocumentPage() {
         .lot-sap  { font-size: 8.5px; color: #777; letter-spacing: -0.2px; }
         .col-exp  { width: 70px; font-size: 10px; color: #555; }
         .col-pal  { width: 45px; text-align: center; font-size: 10px; }
-        .pal-dispatched { font-size: 9px; font-weight: 700; color: #000; white-space: nowrap; }
 
         /* ── Totales ── */
         .totals-bar {
@@ -178,6 +175,7 @@ export default function PrintDocumentPage() {
         .sig-cell:last-child { border-right: none; }
         .sig-header { font-size: 11px; font-weight: 900; text-transform: uppercase; border-bottom: 1px solid #000; padding-bottom: 3px; margin-bottom: 5px; color: #000; }
         .sig-prefill { min-height: 15px; font-size: 10px; font-weight: 700; color: #000; }
+        .sig-subline { font-size: 9px; color: #444; margin-top: 1px; }
         .sig-space { height: 24px; }
         .sig-line-label { font-size: 10px; color: #333; border-top: 1px solid #555; padding-top: 3px; }
         .sig-ruc { font-size: 10px; color: #333; margin-top: 6px; }
@@ -287,7 +285,7 @@ export default function PrintDocumentPage() {
             </tr>
           </thead>
           <tbody>
-            {lines.map(({ movement, product, lots, palletCount, dispatched }) => (
+            {lines.map(({ movement, product, lots, pallets }) => (
               <tr key={movement.id}>
                 <td className="col-qty">{movement.quantity.toLocaleString("es-PY")}</td>
                 <td className="col-um">{product.unitOfMeasure ?? "—"}</td>
@@ -310,14 +308,7 @@ export default function PrintDocumentPage() {
                     <div key={l.id}>{formatDateOnly(l.fechaVencimiento)}</div>
                   ))}
                 </td>
-                <td className="col-pal">
-                  {palletCount > 0 ? palletCount : "—"}
-                  {/* Paletas con las que efectivamente se despachó, cuando difieren
-                      de los palets de origen consumidos. */}
-                  {dispatched.informed && dispatched.total !== palletCount && (
-                    <div className="pal-dispatched">→ {dispatched.total} fís.</div>
-                  )}
-                </td>
+                <td className="col-pal">{pallets > 0 ? pallets : "—"}</td>
               </tr>
             ))}
             {/* Filas vacías */}
@@ -341,9 +332,6 @@ export default function PrintDocumentPage() {
           {totalPallets > 0 && (
             <span><span className="tot-lbl">Total pallets:</span><span className="tot-val">{totalPallets}</span></span>
           )}
-          {anyDispatched && (
-            <span><span className="tot-lbl">Pallets despachados:</span><span className="tot-val">{totalDispatched}</span></span>
-          )}
         </div>
 
         {/* ── OBSERVACIONES ── */}
@@ -357,9 +345,16 @@ export default function PrintDocumentPage() {
             <div className="sig-cell" key={signature.label}>
               <div className="sig-header">{signature.label}</div>
               <div className="sig-prefill">{signature.prefill || <>&nbsp;</>}</div>
+              {/* Transportadora del chofer: quien firma es la persona, la
+                  empresa acompaña. */}
+              {signature.subline && <div className="sig-subline">{signature.subline}</div>}
               <div className="sig-space" />
               <div className="sig-line-label">Firma y Aclaración</div>
-              <div className="sig-ruc">RUC / CI: ___________________</div>
+              {/* Con la cédula cargada la línea sale completa; sin ella queda el
+                  renglón para escribirla a mano, como siempre. */}
+              <div className="sig-ruc">
+                RUC / CI: {signature.document ? <strong>{signature.document}</strong> : "___________________"}
+              </div>
             </div>
           ))}
         </div>

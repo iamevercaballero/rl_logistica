@@ -63,7 +63,8 @@ export type Movement = {
   encargado?: { id: string; username: string; fullName?: string | null } | null;
   /** `usesSapLot`: el material se maneja con Lote SAP. Ausente en respuestas viejas → se asume `true`. */
   material: { id: string; code: string; description: string; unitOfMeasure?: string | null; usesSapLot?: boolean };
-  warehouse?: { id: string; name: string } | null;
+  /** `usesSapLot`: el depósito opera con Lote SAP. Ausente en respuestas viejas → se asume `true`. */
+  warehouse?: { id: string; name: string; usesSapLot?: boolean } | null;
   location?: { id: string; code: string } | null;
   from?: { warehouseId?: string | null; warehouseName?: string | null; locationId?: string | null; locationCode?: string | null } | null;
   to?: { warehouseId?: string | null; warehouseName?: string | null; locationId?: string | null; locationCode?: string | null } | null;
@@ -225,9 +226,11 @@ export async function getDocument(id: string): Promise<{
   return data;
 }
 
-export type PrintProduct = { id: string; code: string; description: string; unitOfMeasure?: string | null };
+/** `usesSapLot`: el material se maneja con Lote SAP. Ausente en respuestas viejas → `true`. */
+export type PrintProduct = { id: string; code: string; description: string; unitOfMeasure?: string | null; usesSapLot?: boolean };
 export type PrintLot = { id: string; lotCode: string; productId: string; fechaVencimiento?: string | null; fechaFabricacion?: string | null; sapLot?: string | null };
-export type PrintWarehouse = { id: string; name: string; documentCode?: string | null };
+/** `usesSapLot`: el depósito opera con Lote SAP. Ausente en respuestas viejas → `true`. */
+export type PrintWarehouse = { id: string; name: string; documentCode?: string | null; usesSapLot?: boolean };
 export type PrintDocumentWarehouse = { id: string | null; name: string; documentCode: string | null };
 export type PrintUserSnapshot = { id: string; username: string; fullName: string | null };
 export type PrintLogisticsSnapshot = {

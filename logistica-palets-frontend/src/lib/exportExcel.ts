@@ -5,6 +5,7 @@ import type { StockItemRow, ReportMovementRow, DailyStockRow, ReportTraceEvent, 
 import type { Movement } from "../api/movements";
 import type { Lot } from "../api/lots";
 import { buildSalidasExportRows, DOCUMENTO_MATERIAL_PENDING } from "./salidasExportRows";
+import { sapLotApplies } from "../pages/movementFormModel";
 
 /* ── Brand colors ─────────────────────────────────────────────────────────── */
 
@@ -376,13 +377,16 @@ export async function exportEntradasExcel(data: Movement[], filename = "entradas
     const lots = (m.lotsDetail && m.lotsDetail.length > 0)
       ? m.lotsDetail
       : [{ lotCode: m.lotCode ?? null, sapLot: m.sapLot ?? null, pallets: m.pallets ?? null, quantity: m.quantity }];
+    // Un lote SAP legado no sale en el export como si siguiera vigente — misma
+    // regla que en la etiqueta de pallet y en la pantalla del reporte.
+    const showSapLot = sapLotApplies(m.warehouse, m.material);
 
     lots.forEach((ld) => {
       const row = ws.addRow([
         fmtDateTime(m.createdAt ?? m.date),
         `${m.material.code} - ${m.material.description}`,
         ld.lotCode ?? "-",
-        ld.sapLot ?? "-",
+        showSapLot ? (ld.sapLot ?? "-") : "-",
         m.documentNumber ?? "-",
         ld.quantity,
         ld.pallets ?? "-",
@@ -545,12 +549,16 @@ export async function exportFreshnessExcel(data: FreshnessRow[], filename = "con
   ]);
 
   data.forEach((r) => {
+    // Solo el material decide acá: esta consulta puede sumar stock de varios
+    // depósitos del alcance del usuario en una sola fila, así que no hay un
+    // único depósito contra el cual chequear (ver comentario en el backend).
+    const showSapLot = sapLotApplies(undefined, r.product);
     const row = ws.addRow([
       r.product.code,
       r.product.description,
       r.product.unitOfMeasure ?? "",
       r.lotCode,
-      r.sapLot ?? "-",
+      showSapLot ? (r.sapLot ?? "-") : "-",
       r.proveedor ?? "-",
       r.stockActual,
       fmtDate(r.fechaFabricacion),

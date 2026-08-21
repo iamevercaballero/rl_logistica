@@ -20,7 +20,65 @@
  */
 
 const LOCALE = "es-PY" as const;
-const TZ     = "America/Asuncion" as const;
+
+const IANA_TZ = "America/Asuncion" as const;
+
+/**
+ * UTC-3 fijo, sin reglas de horario de verano. En los identificadores
+ * `Etc/GMT±N` el signo va invertido por convención POSIX: `Etc/GMT+3` **es**
+ * UTC-3. Existe en todas las versiones de tzdata, así que sirve de red aun en
+ * un navegador o contenedor con datos de zonas viejos.
+ */
+const FIXED_TZ = "Etc/GMT+3" as const;
+
+/** Offset vigente de Paraguay, todo el año. */
+const EXPECTED_OFFSET_MINUTES = -180;
+
+function offsetMinutesOf(timeZone: string, instant: Date): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  }).formatToParts(instant);
+  const pick = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0);
+  // Se re-arma la lectura local como si fuera UTC: la diferencia contra el
+  // instante original es el offset de la zona en ese momento.
+  const asIfUtc = Date.UTC(
+    pick("year"), pick("month") - 1, pick("day"),
+    pick("hour") % 24, pick("minute"), pick("second"),
+  );
+  return (asIfUtc - instant.getTime()) / 60_000;
+}
+
+/**
+ * Zona efectiva de la app.
+ *
+ * Paraguay derogó el horario de verano en octubre de 2024 (Ley 7324): desde
+ * entonces es UTC-3 **todo el año**. Un runtime con tzdata anterior a 2024b
+ * sigue aplicando la regla derogada y devuelve UTC-4 entre marzo y octubre — y
+ * ahí toda la app muestra una hora menos de la real, que es exactamente lo que
+ * se veía en reportes e historial de movimientos.
+ *
+ * Por eso la zona se verifica una vez, contra un día de invierno conocido, y si
+ * el runtime está desactualizado se cae al offset fijo. Mismo criterio y misma
+ * red que en el backend (`src/common/date.ts`): las dos puntas tienen que
+ * coincidir o el desfase reaparece de un lado.
+ */
+const TZ: string = (() => {
+  // 15/07: pleno invierno en Paraguay. Con tzdata ≥2024b da -180; con la regla
+  // vieja (horario de verano de octubre a marzo), -240.
+  const winter = new Date("2025-07-15T12:00:00Z");
+  try {
+    return offsetMinutesOf(IANA_TZ, winter) === EXPECTED_OFFSET_MINUTES ? IANA_TZ : FIXED_TZ;
+  } catch {
+    // El runtime no conoce la zona: Intl tira RangeError.
+    return FIXED_TZ;
+  }
+})();
+
+/** `true` si el navegador resolvió la zona IANA correctamente — para diagnóstico. */
+export const TIME_ZONE_IS_IANA = TZ === IANA_TZ;
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 

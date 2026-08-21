@@ -31,6 +31,12 @@ type LabelData = {
   unitOfMeasure: string | null | undefined;
   lotCode: string;
   sapLot: string | null;
+  /**
+   * El Lote SAP corresponde en esta etiqueta: lo usan el depósito **y** el
+   * material. Cuando no corresponde, la fila entera (título y valor) no se
+   * imprime — una etiqueta con un campo vacío invita a completarlo a mano.
+   */
+  sapLotApplies: boolean;
   lotFabricacion: string | null | undefined;
   lotExpiry: string | null | undefined;
   quantity: number;
@@ -80,9 +86,10 @@ function PalletLabel({ label }: { label: LabelData }) {
       {/* ── SECCIÓN 2 ── */}
       <div className="lbl-section-bar">GESTION DE FRESCURA DE INSUMOS</div>
 
-      {/* Lote SAP grande */}
+      {/* Lote grande: el SAP cuando corresponde, y si no el código de lote —
+          el recuadro nunca queda vacío. */}
       <div className="lbl-big-lot-box">
-        {label.sapLot ?? label.lotCode}
+        {(label.sapLotApplies && label.sapLot) || label.lotCode}
       </div>
 
       {/* Tabla de datos */}
@@ -112,11 +119,20 @@ function PalletLabel({ label }: { label: LabelData }) {
               <span className="lbl-pallet-code">{label.palletCode}</span>
             </td>
           </tr>
+          {/* La fila decía "Lote prov" pero el valor que imprime es el Lote SAP.
+              Si el Lote SAP no corresponde, no se imprime ni el título ni el
+              campo, y el peso ocupa la fila entera. */}
           <tr>
-            <td className="lbl-td-key">Lote prov:</td>
-            <td className="lbl-td-val">{label.sapLot ?? "—"}</td>
-            <td className="lbl-td-key" style={{ borderLeft: "2px solid #000" }}>Peso Paleta (kg):</td>
-            <td className="lbl-td-val">{label.weightKg != null ? label.weightKg.toLocaleString("es-PY") : "—"}</td>
+            {label.sapLotApplies && (
+              <>
+                <td className="lbl-td-key">Lote SAP:</td>
+                <td className="lbl-td-val">{label.sapLot ?? "—"}</td>
+              </>
+            )}
+            <td className="lbl-td-key" style={label.sapLotApplies ? { borderLeft: "2px solid #000" } : undefined}>Peso Paleta (kg):</td>
+            <td className="lbl-td-val" colSpan={label.sapLotApplies ? 1 : 3}>
+              {label.weightKg != null ? label.weightKg.toLocaleString("es-PY") : "—"}
+            </td>
           </tr>
           <tr>
             <td className="lbl-td-key">Cantidad:</td>
@@ -168,6 +184,11 @@ export default function PrintLabelsPage() {
   const labels: LabelData[] = (() => {
     if (!data) return [];
 
+    // Lote SAP a nivel depósito: si el depósito no lo maneja, no corresponde en
+    // ninguna etiqueta del remito, sin importar el material.
+    const docWarehouse = data.warehouses.find((w) => w.id === data.document.warehouseId);
+    const warehouseUsesSap = docWarehouse?.usesSapLot !== false;
+
     const productMap: Record<string, PrintProduct> = Object.fromEntries(data.products.map((p) => [p.id, p]));
     const lotMap: Record<string, PrintLot> = Object.fromEntries(data.lots.map((l) => [l.id, l]));
     const palletMap: Record<string, PrintPallet> = Object.fromEntries(data.pallets.map((p) => [p.id, p]));
@@ -180,6 +201,9 @@ export default function PrintLabelsPage() {
         const movement = movMap[detail.movementId];
         const productId = movement?.productId ?? "";
         const product = productMap[productId] ?? { code: "—", description: "—", unitOfMeasure: null };
+        // AND entre depósito y material — el mismo criterio que usa el backend
+        // para decidir si escribe un `sapLot`.
+        const sapLotApplies = warehouseUsesSap && product.usesSapLot !== false;
         const lotId = detail.lotId ?? pallet.lotId;
         const lot = lotId ? (lotMap[lotId] ?? null) : null;
 
@@ -197,6 +221,7 @@ export default function PrintLabelsPage() {
           unitOfMeasure: product.unitOfMeasure,
           lotCode: lot?.lotCode ?? "SIN LOTE",
           sapLot: lot?.sapLot ?? null,
+          sapLotApplies,
           lotFabricacion: lot?.fechaFabricacion ?? null,
           lotExpiry: lot?.fechaVencimiento ?? null,
           quantity: detail.quantity,

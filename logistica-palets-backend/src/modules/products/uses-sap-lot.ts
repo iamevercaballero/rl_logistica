@@ -1,8 +1,10 @@
 import { EntityManager } from 'typeorm';
+import { Warehouse } from '../warehouses/entities/warehouse.entity';
 import { Product } from './entities/product.entity';
 
 /**
- * Regla de Lote SAP por material (`Product.usesSapLot`).
+ * Regla de Lote SAP: por depósito (`Warehouse.usesSapLot`) y por material
+ * (`Product.usesSapLot`).
  *
  * `sapLot` es un dato **complementario** del lote: la identidad operativa sigue
  * siendo `lotCode`, y FEFO, vencimiento, fabricación, pallets, pilas, stock y
@@ -23,6 +25,12 @@ import { Product } from './entities/product.entity';
  *
  * En ningún caso se toca un `sapLot` ya guardado: apagar el flag es
  * configuración para operaciones futuras, no una limpieza retroactiva.
+ *
+ * La configuración vive en dos niveles y se combina con un AND: el lote SAP se
+ * usa cuando el **depósito** (`Warehouse.usesSapLot`) y el **material**
+ * (`Product.usesSapLot`) lo usan. Un depósito que no maneja el concepto lo
+ * apaga de una vez para todos sus materiales, sin tocar el catálogo — que es
+ * compartido entre depósitos.
  */
 
 /** `false` solo si el material está configurado explícitamente como no-SAP. */
@@ -37,15 +45,34 @@ export async function productUsesSapLot(manager: EntityManager, productId: strin
 }
 
 /**
- * Devuelve el lote SAP a guardar: `undefined` si el material no lo usa.
- * Solo consulta el material cuando hay un valor que descartar.
+ * `false` solo si el depósito está configurado explícitamente como no-SAP.
+ * Sin depósito resuelto (movimiento que todavía no lo derivó) se asume que sí:
+ * el nivel que decide en ese caso es el material.
+ */
+export async function warehouseUsesSapLot(
+  manager: EntityManager,
+  warehouseId?: string | null,
+): Promise<boolean> {
+  if (!warehouseId) return true;
+  const warehouse = await manager.getRepository(Warehouse).findOne({
+    where: { id: warehouseId },
+    select: { id: true, usesSapLot: true },
+  });
+  return warehouse?.usesSapLot ?? true;
+}
+
+/**
+ * Devuelve el lote SAP a guardar: `undefined` si el depósito o el material no
+ * lo usan. Solo consulta la configuración cuando hay un valor que descartar.
  */
 export async function dropSapLotIfUnused(
   manager: EntityManager,
   productId: string,
   sapLot?: string | null,
+  warehouseId?: string | null,
 ): Promise<string | undefined> {
   if (!sapLot) return undefined;
+  if (!(await warehouseUsesSapLot(manager, warehouseId))) return undefined;
   return (await productUsesSapLot(manager, productId)) ? sapLot : undefined;
 }
 

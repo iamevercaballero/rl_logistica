@@ -565,8 +565,10 @@ export class ReportsService {
       .addSelect('p.code', 'productCode')
       .addSelect('p.description', 'productDescription')
       .addSelect('p."unitOfMeasure"', 'unitOfMeasure')
+      .addSelect('p."usesSapLot"', 'productUsesSapLot')
       .addSelect('w.id', 'warehouseId')
       .addSelect('w.name', 'warehouseName')
+      .addSelect('w."usesSapLot"', 'warehouseUsesSapLot')
       .addSelect('l.id', 'locationId')
       .addSelect('l.code', 'locationCode')
       .addSelect('fw.name', 'fromWarehouseName')
@@ -637,8 +639,14 @@ export class ReportsService {
           code: row.productCode,
           description: row.productDescription,
           unitOfMeasure: row.unitOfMeasure,
+          // El reporte también decide si corresponde mostrar `sapLot`: sin esto,
+          // el frontend no puede distinguir un lote SAP vigente de uno que
+          // quedó de antes de que el material o el depósito se reconfiguraran.
+          usesSapLot: row.productUsesSapLot ?? true,
         },
-        warehouse: row.warehouseId ? { id: row.warehouseId, name: row.warehouseName } : null,
+        warehouse: row.warehouseId
+          ? { id: row.warehouseId, name: row.warehouseName, usesSapLot: row.warehouseUsesSapLot ?? true }
+          : null,
         location: row.locationId ? { id: row.locationId, code: row.locationCode } : null,
         lotCode: row.lotCode ?? null,
         sapLot: row.sapLot ?? null,
@@ -1032,6 +1040,7 @@ export class ReportsService {
       .addSelect('p.code', 'productCode')
       .addSelect('p.description', 'productDescription')
       .addSelect('p."unitOfMeasure"', 'unitOfMeasure')
+      .addSelect('p."usesSapLot"', 'productUsesSapLot')
       .where('l."fechaVencimiento" IS NOT NULL')
       .groupBy('l.id')
       .addGroupBy('l."lotCode"')
@@ -1043,6 +1052,7 @@ export class ReportsService {
       .addGroupBy('p.code')
       .addGroupBy('p.description')
       .addGroupBy('p."unitOfMeasure"')
+      .addGroupBy('p."usesSapLot"')
       .having('SUM(pa.quantity) > 0');
 
     if (productId) {
@@ -1074,6 +1084,12 @@ export class ReportsService {
           code: r.productCode,
           description: r.productDescription,
           unitOfMeasure: r.unitOfMeasure ?? null,
+          // Solo el nivel material: esta consulta agrupa por lote y puede sumar
+          // stock de varios depósitos del alcance del usuario en una sola fila,
+          // así que acá no hay un único depósito contra el cual decidir si el
+          // Lote SAP corresponde. El frontend igual puede ocultarlo cuando el
+          // material no lo usa, que es el caso sin ambigüedad.
+          usesSapLot: r.productUsesSapLot ?? true,
         },
       };
     });

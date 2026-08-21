@@ -26,6 +26,20 @@ export class Warehouse {
   @Column({ default: true })
   active: boolean;
 
+  /**
+   * El depósito opera con Lote SAP ("Lote Ypané").
+   *
+   * Complementa a `Product.usesSapLot`: el lote SAP se usa cuando el depósito
+   * **y** el material lo usan. Apagarlo acá saca el concepto de todo el
+   * depósito — el campo de la entrada y la fila de la etiqueta de pallet — sin
+   * tener que apagarlo material por material.
+   *
+   * Como el flag de material, es configuración de operaciones futuras: los
+   * `lots.sapLot` ya registrados no se modifican.
+   */
+  @Column({ default: true })
+  usesSapLot: boolean;
+
   @OneToMany(() => Location, (location) => location.warehouse)
   locations: Location[];
 

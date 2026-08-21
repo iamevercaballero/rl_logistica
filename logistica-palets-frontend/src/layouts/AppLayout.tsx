@@ -1,5 +1,5 @@
-import React from "react";
-import { Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
+import React, { useState } from "react";
+import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { canRead } from "../auth/rbac";
 import WarehouseSelector from "../components/WarehouseSelector";
 import { useAuth } from "../auth/AuthContext";
@@ -126,7 +126,18 @@ const modules = [
 export default function AppLayout() {
   const { user, isReady, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const cmdPalette = useCommandPalette();
+
+  /**
+   * React Router no remonta la ruta activa al navegar a la misma URL en la que
+   * ya se está: el click en el módulo actual queda sin efecto, y la única forma
+   * de "refrescar" es salir a otro módulo y volver. Este contador fuerza ese
+   * mismo remount con un solo click: se suma a la `key` del `<Outlet>`, así que
+   * cambiarlo desmonta y vuelve a montar la página activa (mismo efecto que
+   * salir y volver), sin tocar el resto del layout (sidebar, depósito activo, etc).
+   */
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   if (!isReady) return null;
   if (!user) return <Navigate to="/login" replace />;
@@ -137,6 +148,11 @@ export default function AppLayout() {
   function handleLogout() {
     logout();
     navigate("/login", { replace: true });
+  }
+
+  /** Click en el módulo en el que ya se está parado: fuerza el refresh en vez de no hacer nada. */
+  function handleNavClick(path: string) {
+    if (location.pathname === path) setRefreshNonce((n) => n + 1);
   }
 
   /* Build command palette items */
@@ -249,6 +265,7 @@ export default function AppLayout() {
               key={m.key}
               to={m.path}
               end={m.path === "/"}
+              onClick={() => handleNavClick(m.path)}
               className={({ isActive }) =>
                 `sidebar-link${isActive ? " sidebar-link--active" : ""}`
               }
@@ -261,6 +278,7 @@ export default function AppLayout() {
             <>
               <NavLink
                 to="/users"
+                onClick={() => handleNavClick("/users")}
                 className={({ isActive }) =>
                   `sidebar-link${isActive ? " sidebar-link--active" : ""}`
                 }
@@ -271,6 +289,7 @@ export default function AppLayout() {
               </NavLink>
               <NavLink
                 to="/seed"
+                onClick={() => handleNavClick("/seed")}
                 className={({ isActive }) =>
                   `sidebar-link${isActive ? " sidebar-link--active" : ""}`
                 }
@@ -316,13 +335,14 @@ export default function AppLayout() {
           </div>
         </div>
 
-        <Outlet />
+        <Outlet key={refreshNonce} />
       </main>
 
       <CommandPalette
         items={commandItems}
         isOpen={cmdPalette.isOpen}
         onClose={cmdPalette.close}
+        onNavigateSamePath={() => setRefreshNonce((n) => n + 1)}
       />
     </div>
   );

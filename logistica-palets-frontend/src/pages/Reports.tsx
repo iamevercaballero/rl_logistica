@@ -8,6 +8,8 @@ import {
   startOfWeekInputValue,
 } from "../utils/dateFormat";
 import { useTableSort, sortArrow } from "../hooks/useTableSort";
+import ExpandableText from "../design-system/ExpandableText";
+import { sapLotApplies } from "./movementFormModel";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getDailyStockReport,
@@ -868,9 +870,13 @@ export default function ReportsPage() {
                   </thead>
                   <tbody>
                     {entradasSort.sortedData.flatMap((m) => {
+                      // Un lote SAP legado (de antes de que el depósito o el material se
+                      // reconfiguraran) no debe mostrarse como si siguiera vigente — misma
+                      // regla que en la etiqueta de pallet.
+                      const showSapLot = sapLotApplies(m.warehouse, m.material);
                       const rows = (m.lotsDetail && m.lotsDetail.length > 0)
-                        ? m.lotsDetail.map((ld) => ({ lot: ld.lotCode, sapLot: ld.sapLot ?? null, pallets: ld.pallets, quantity: ld.quantity }))
-                        : [{ lot: m.lotCode ?? null, sapLot: m.sapLot ?? null, pallets: m.pallets ?? null, quantity: m.quantity }];
+                        ? m.lotsDetail.map((ld) => ({ lot: ld.lotCode, sapLot: showSapLot ? (ld.sapLot ?? null) : null, pallets: ld.pallets, quantity: ld.quantity }))
+                        : [{ lot: m.lotCode ?? null, sapLot: showSapLot ? (m.sapLot ?? null) : null, pallets: m.pallets ?? null, quantity: m.quantity }];
                       const voided = m.voidStatus === "VOIDED";
                       return rows.map((r, i) => (
                       <tr key={`${m.id}-${i}`} style={voided ? { opacity: 0.6 } : m.status === "PENDING_REGULARIZATION" ? { background: "var(--badge-adjout-bg)" } : {}}>
@@ -889,8 +895,8 @@ export default function ReportsPage() {
                         <td style={{ fontSize: 12 }}>{m.supplier ?? "—"}</td>
                         <td style={{ fontSize: 12 }}>{m.carrier ?? "—"}</td>
                         <td style={{ fontSize: 12 }}>{m.driver ?? "—"}</td>
-                        <td style={{ fontSize: 12, color: "var(--muted)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {m.notes ?? "—"}
+                        <td style={{ fontSize: 12, color: "var(--muted)", maxWidth: 220, minWidth: 140 }}>
+                          <ExpandableText value={m.notes} label="la nota" />
                         </td>
                         <td>
                           {voided
@@ -1165,9 +1171,12 @@ export default function ReportsPage() {
                   </thead>
                   <tbody>
                     {salidasSort.sortedData.flatMap((m) => {
+                      // Un lote SAP legado no debe mostrarse como si siguiera vigente —
+                      // misma regla que en la etiqueta de pallet.
+                      const showSapLot = sapLotApplies(m.warehouse, m.material);
                       const rows = (m.lotsDetail && m.lotsDetail.length > 0)
-                        ? m.lotsDetail.map((ld) => ({ lot: ld.lotCode, sapLot: ld.sapLot ?? null, pallets: ld.pallets, quantity: ld.quantity }))
-                        : [{ lot: m.lotCode ?? null, sapLot: m.sapLot ?? null, pallets: m.pallets ?? null, quantity: m.quantity }];
+                        ? m.lotsDetail.map((ld) => ({ lot: ld.lotCode, sapLot: showSapLot ? (ld.sapLot ?? null) : null, pallets: ld.pallets, quantity: ld.quantity }))
+                        : [{ lot: m.lotCode ?? null, sapLot: showSapLot ? (m.sapLot ?? null) : null, pallets: m.pallets ?? null, quantity: m.quantity }];
                       const voided = m.voidStatus === "VOIDED";
                       return rows.map((r, i) => (
                       <tr key={`${m.id}-${i}`} style={voided ? { opacity: 0.6 } : undefined}>
@@ -1190,8 +1199,8 @@ export default function ReportsPage() {
                         <td style={{ fontSize: 12 }}>{m.destination ?? "—"}</td>
                         <td style={{ fontSize: 12 }}>{m.carrier ?? "—"}</td>
                         <td style={{ fontSize: 12 }}>{m.driver ?? "—"}</td>
-                        <td style={{ fontSize: 12, color: "var(--muted)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {m.notes ?? "—"}
+                        <td style={{ fontSize: 12, color: "var(--muted)", maxWidth: 220, minWidth: 140 }}>
+                          <ExpandableText value={m.notes} label="la nota" />
                         </td>
                         <td><VoidBadge voidStatus={m.voidStatus} /></td>
                       </tr>
@@ -1419,7 +1428,12 @@ export default function ReportsPage() {
                           <td style={{ fontSize: 13 }}>{r.product.description}</td>
                           <td style={{ color: "var(--muted)", fontSize: 12, textAlign: "center" }}>{r.product.unitOfMeasure ?? "—"}</td>
                           <td style={{ fontSize: 12 }}>{r.lotCode}</td>
-                          <td style={{ fontFamily: "monospace", fontSize: 12, color: "var(--muted)" }}>{r.sapLot ?? "—"}</td>
+                          {/* Solo el material decide acá: esta consulta puede sumar stock de
+                              varios depósitos del alcance del usuario en una sola fila, así que
+                              no hay un único depósito contra el cual chequear. */}
+                          <td style={{ fontFamily: "monospace", fontSize: 12, color: "var(--muted)" }}>
+                            {sapLotApplies(undefined, r.product) ? (r.sapLot ?? "—") : "—"}
+                          </td>
                           <td style={{ fontWeight: 600, textAlign: "right" }}>{r.stockActual.toLocaleString("es-PY")}</td>
                           <td style={{ fontSize: 12 }}>{fmtDate(r.fechaVencimiento)}</td>
                           <td style={{ fontWeight: 700, color: diasColor, textAlign: "right" }}>

@@ -10,17 +10,27 @@
  * medianoche local, no a la UTC.
  */
 
-/** Zona horaria operativa del depósito. */
-export const APP_TIME_ZONE = 'America/Asuncion';
-
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Zona IANA del depósito — la buena, mientras el runtime la conozca al día. */
+const IANA_TIME_ZONE = 'America/Asuncion';
+
+/**
+ * UTC-3 fijo, sin reglas de DST. En los identificadores `Etc/GMT±N` el signo va
+ * invertido por convención POSIX: `Etc/GMT+3` **es** UTC-3. Existe en todas las
+ * versiones de tzdata, así que sirve de red incluso en un runtime sin zoneinfo.
+ */
+const FIXED_TIME_ZONE = 'Etc/GMT+3';
+
+/** Offset vigente de Paraguay, todo el año. */
+const EXPECTED_OFFSET_MINUTES = -180;
 
 /**
  * Offset de la zona (en minutos) para un instante dado. Se calcula con Intl en
  * vez de hardcodear -180 para que siga siendo correcto si Paraguay vuelve a
  * aplicar horario de verano.
  */
-function zoneOffsetMinutes(instant: Date, timeZone = APP_TIME_ZONE): number {
+function zoneOffsetMinutes(instant: Date, timeZone: string = APP_TIME_ZONE): number {
   const dtf = new Intl.DateTimeFormat('en-US', {
     timeZone,
     hour12: false,
@@ -45,6 +55,39 @@ function zoneOffsetMinutes(instant: Date, timeZone = APP_TIME_ZONE): number {
   );
   return (asIfUtc - instant.getTime()) / 60_000;
 }
+
+/**
+ * Zona horaria operativa del depósito.
+ *
+ * Paraguay derogó el horario de verano en octubre de 2024 (Ley 7324): desde
+ * entonces es UTC-3 **todo el año**. Un runtime con tzdata anterior a 2024b
+ * sigue aplicando la regla derogada y devuelve UTC-4 entre marzo y octubre, con
+ * lo cual toda la app muestra una hora menos. Es lo que pasa en las imágenes
+ * `*-alpine` sin el paquete `tzdata` y en cualquier Node cuyo ICU quedó atrás,
+ * y por qué los reportes y el historial de movimientos se veían atrasados.
+ *
+ * Por eso la zona no se toma por dada: se verifica una vez, al cargar el
+ * módulo, contra un día de invierno conocido. Si el runtime está
+ * desactualizado se cae al offset fijo, que no depende de reglas de DST.
+ */
+function resolveAppTimeZone(): string {
+  // 15/07: pleno invierno en Paraguay. Con tzdata ≥2024b da -180; con la regla
+  // vieja (horario de verano de octubre a marzo), -240.
+  const winter = new Date('2025-07-15T12:00:00Z');
+  try {
+    return zoneOffsetMinutes(winter, IANA_TIME_ZONE) === EXPECTED_OFFSET_MINUTES
+      ? IANA_TIME_ZONE
+      : FIXED_TIME_ZONE;
+  } catch {
+    // El runtime no conoce la zona (contenedor sin zoneinfo): Intl tira RangeError.
+    return FIXED_TIME_ZONE;
+  }
+}
+
+export const APP_TIME_ZONE = resolveAppTimeZone();
+
+/** `true` si el runtime resolvió la zona IANA correctamente — para diagnóstico. */
+export const APP_TIME_ZONE_IS_IANA = APP_TIME_ZONE === IANA_TIME_ZONE;
 
 /**
  * Convierte lo que llega del cliente en el instante correcto.

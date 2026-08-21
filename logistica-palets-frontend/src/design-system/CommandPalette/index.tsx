@@ -19,7 +19,7 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import './CommandPalette.css';
 
 /* ── Types ────────────────────────────────────────────────────────────────── */
@@ -123,12 +123,20 @@ interface CommandPaletteProps {
   items: CommandItem[];
   isOpen: boolean;
   onClose: () => void;
+  /**
+   * Se elige un ítem de navegación hacia la página en la que ya se está.
+   * `navigate()` a la misma URL no remonta nada, así que sin esto elegir
+   * "Movimientos" desde acá estando ya en Movimientos no tiene ningún efecto
+   * visible — igual que le pasaba al link del mismo módulo en el sidebar.
+   */
+  onNavigateSamePath?: () => void;
 }
 
-export function CommandPalette({ items, isOpen, onClose }: CommandPaletteProps) {
+export function CommandPalette({ items, isOpen, onClose, onNavigateSamePath }: CommandPaletteProps) {
   const [query, setQuery] = useState('');
   const [activeIdx, setActiveIdx] = useState(0);
   const navigate = useNavigate();
+  const location = useLocation();
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [history, setHistory] = useState<string[]>([]);
@@ -216,6 +224,7 @@ export function CommandPalette({ items, isOpen, onClose }: CommandPaletteProps) 
     saveToHistory(item.label);
     onClose();
     if (item.path) {
+      if (item.path === location.pathname) onNavigateSamePath?.();
       navigate(item.path);
     } else if (item.action) {
       item.action();

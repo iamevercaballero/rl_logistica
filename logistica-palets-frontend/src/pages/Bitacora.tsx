@@ -11,6 +11,7 @@ import {
 } from "../api/attachments";
 import AttachmentUploader from "../components/AttachmentUploader";
 import { useToast } from "../design-system/toast";
+import ExpandableText from "../design-system/ExpandableText";
 import { getFriendlyApiError } from "../utils/apiError";
 import { useAuth } from "../auth/AuthContext";
 import { fmtDateTime } from "../utils/dateFormat";
@@ -409,12 +410,12 @@ function DocRow({
             {doc.notes && (
               <>
                 <span style={{ fontSize: 11, color: "var(--border)" }}>·</span>
-                <span
-                  style={{ fontSize: 11, color: "var(--muted)", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                  title={doc.notes}
-                >
-                   {doc.notes}
-                </span>
+                <ExpandableText
+                  value={doc.notes}
+                  lines={1}
+                  label="la nota"
+                  style={{ fontSize: 11, color: "var(--muted)", maxWidth: 220 }}
+                />
               </>
             )}
           </div>

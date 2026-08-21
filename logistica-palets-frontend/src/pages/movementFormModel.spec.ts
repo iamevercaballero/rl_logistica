@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sapLotForProduct, responsibleFieldLabel, showsExternalDocumentNumber } from "./movementFormModel";
+import { sapLotApplies, sapLotForProduct, responsibleFieldLabel, showsExternalDocumentNumber } from "./movementFormModel";
 
 describe("modelo del formulario de remitos", () => {
   it("muestra N° MIC/Factura/Remito únicamente en Entrada", () => {
@@ -41,5 +41,31 @@ describe("lote SAP según la configuración del material", () => {
     const sinSap = { usesSapLot: false };
     expect([conSap, sinSap, conSap].map((p) => sapLotForProduct(p, SAP)))
       .toEqual([SAP, undefined, SAP]);
+  });
+});
+
+describe("lote SAP según la configuración del depósito", () => {
+  const SAP = "Z051308201";
+  const conSap = { usesSapLot: true };
+  const sinSap = { usesSapLot: false };
+
+  it("depósito que no maneja lote SAP: no aplica ni para un material que sí lo usa", () => {
+    expect(sapLotApplies(sinSap, conSap)).toBe(false);
+    expect(sapLotForProduct(conSap, SAP, sinSap)).toBeUndefined();
+  });
+
+  it("depósito que lo maneja: decide el material", () => {
+    expect(sapLotApplies(conSap, conSap)).toBe(true);
+    expect(sapLotApplies(conSap, sinSap)).toBe(false);
+    expect(sapLotForProduct(conSap, SAP, conSap)).toBe(SAP);
+    expect(sapLotForProduct(sinSap, SAP, conSap)).toBeUndefined();
+  });
+
+  it("sin el dato del depósito se asume que sí lo maneja, como el default de la columna", () => {
+    expect(sapLotApplies({}, conSap)).toBe(true);
+    expect(sapLotApplies(null, conSap)).toBe(true);
+    expect(sapLotApplies(undefined, conSap)).toBe(true);
+    // Los call sites que todavía no pasan depósito se comportan igual que antes.
+    expect(sapLotForProduct(conSap, SAP)).toBe(SAP);
   });
 });

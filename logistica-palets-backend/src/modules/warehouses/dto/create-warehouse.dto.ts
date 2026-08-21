@@ -16,4 +16,9 @@ export class CreateWarehouseDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+
+  /** El depósito opera con Lote SAP. Por defecto `true`, como los ya existentes. */
+  @IsOptional()
+  @IsBoolean()
+  usesSapLot?: boolean;
 }

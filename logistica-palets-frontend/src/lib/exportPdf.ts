@@ -7,6 +7,7 @@ import type { PalletHistoryEvent } from "../api/pallets";
 import type { Movement } from "../api/movements";
 import type { Lot } from "../api/lots";
 import { buildSalidasExportRows, DOCUMENTO_MATERIAL_PENDING } from "./salidasExportRows";
+import { sapLotApplies } from "../pages/movementFormModel";
 
 /* ── Constants ────────────────────────────────────────────────────────────── */
 
@@ -198,13 +199,16 @@ export function exportEntradasPDF(data: Movement[], filename = "entradas"): void
     const lots = (m.lotsDetail && m.lotsDetail.length > 0)
       ? m.lotsDetail
       : [{ lotCode: m.lotCode ?? null, sapLot: m.sapLot ?? null, pallets: m.pallets ?? null, quantity: m.quantity }];
+    // Un lote SAP legado no sale en el export como si siguiera vigente — misma
+    // regla que en la etiqueta de pallet y en la pantalla del reporte.
+    const showSapLot = sapLotApplies(m.warehouse, m.material);
 
     for (const ld of lots) {
       body.push([
         fmtDateTime(m.createdAt ?? m.date),
         `${m.material.code} · ${m.material.description}`,
         ld.lotCode ?? "-",
-        ld.sapLot ?? "-",
+        showSapLot ? (ld.sapLot ?? "-") : "-",
         m.documentNumber ?? "-",
         `${ld.quantity.toLocaleString("es-PY")} ${m.material.unitOfMeasure ?? ""}`.trim(),
         ld.pallets != null ? String(ld.pallets) : "-",

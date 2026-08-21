@@ -6,7 +6,21 @@ export type Warehouse = {
   documentCode?: string | null;
   address?: string;
   active: boolean;
+  /**
+   * El depósito opera con Lote SAP ("Lote Ypané"). Se combina con
+   * `Product.usesSapLot` con un AND: apagarlo acá saca el concepto de todo el
+   * depósito — el campo de la Entrada y la fila de la etiqueta de pallet.
+   * Ausente en respuestas viejas → se asume `true`, el default de la columna.
+   */
+  usesSapLot?: boolean;
 };
+
+/** El depósito maneja Lote SAP. Sin el dato (respuesta vieja) se asume que sí. */
+export function warehouseUsesSapLot(
+  warehouse: Pick<Warehouse, "usesSapLot"> | null | undefined,
+): boolean {
+  return warehouse?.usesSapLot !== false;
+}
 
 export async function listWarehouses() {
   const { data } = await api.get<Warehouse[]>("/warehouses");
@@ -69,6 +83,7 @@ export async function createWarehouse(payload: {
   documentCode: string;
   address?: string;
   active?: boolean;
+  usesSapLot?: boolean;
 }) {
   const { data } = await api.post<Warehouse>("/warehouses", payload);
   return data;
@@ -79,6 +94,7 @@ export async function updateWarehouse(id: string, payload: {
   documentCode?: string;
   address?: string;
   active?: boolean;
+  usesSapLot?: boolean;
 }) {
   const { data } = await api.patch<Warehouse>(`/warehouses/${id}`, payload);
   return data;

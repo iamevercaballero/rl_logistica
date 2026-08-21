@@ -1,5 +1,6 @@
 import type { Movement } from "../api/movements";
 import { fmtDateTime } from "../utils/dateFormat";
+import { sapLotApplies } from "../pages/movementFormModel";
 
 export const DOCUMENTO_MATERIAL_PENDING = "Pendiente";
 
@@ -32,12 +33,16 @@ export function buildSalidasExportRows(data: Movement[]): SalidaExportRow[] {
           quantity: movement.quantity,
         }];
     const documentoMaterial = movement.documentoMaterial?.trim() || DOCUMENTO_MATERIAL_PENDING;
+    // Un lote SAP legado (de antes de que el depósito o el material se
+    // reconfiguraran) no debe salir en el export como si siguiera vigente —
+    // misma regla que en la etiqueta de pallet y en la pantalla del reporte.
+    const showSapLot = sapLotApplies(movement.warehouse, movement.material);
 
     return lots.map((lot) => ({
       fecha: fmtDateTime(movement.createdAt ?? movement.date),
       material: `${movement.material.code} - ${movement.material.description}`,
       lote: lot.lotCode ?? "-",
-      sapLot: lot.sapLot ?? "-",
+      sapLot: showSapLot ? (lot.sapLot ?? "-") : "-",
       documentoMaterial,
       quantity: lot.quantity,
       unit: movement.material.unitOfMeasure ?? "",

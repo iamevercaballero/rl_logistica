@@ -68,8 +68,11 @@ export type ReportMovementRow = {
     code: string;
     description: string;
     unitOfMeasure?: string | null;
+    /** `usesSapLot`: el material se maneja con Lote SAP. Ausente en respuestas viejas → `true`. */
+    usesSapLot?: boolean;
   };
-  warehouse?: { id: string; name: string } | null;
+  /** `usesSapLot`: el depósito opera con Lote SAP. Ausente en respuestas viejas → `true`. */
+  warehouse?: { id: string; name: string; usesSapLot?: boolean } | null;
   location?: { id: string; code: string } | null;
   from?: { warehouseName?: string | null; locationCode?: string | null } | null;
   to?: { warehouseName?: string | null; locationCode?: string | null } | null;
@@ -189,6 +192,13 @@ export type FreshnessRow = {
     code: string;
     description: string;
     unitOfMeasure: string | null;
+    /**
+     * `usesSapLot`: el material se maneja con Lote SAP. Ausente en respuestas
+     * viejas → `true`. Esta consulta agrupa por lote y puede sumar stock de
+     * varios depósitos del alcance del usuario en una sola fila, así que solo
+     * decide el material — no hay un único depósito contra el cual chequear.
+     */
+    usesSapLot?: boolean;
   };
 };
 

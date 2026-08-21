@@ -27,7 +27,7 @@ import { listPallets, type LotPallet } from "../api/pallets";
 import { listTransports, type Transport, type TransportDriver } from "../api/transports";
 import { listSuppliers, createSupplier } from "../api/suppliers";
 import { createDestination, listDestinations } from "../api/destinations";
-import { warehouseLabel } from "../api/warehouses";
+import { warehouseLabel, warehouseUsesSapLot } from "../api/warehouses";
 import { listLocations } from "../api/locations";
 import { useActiveWarehouseId, useWarehouse } from "../contexts/WarehouseContext";
 import { listActiveUsers } from "../api/users";
@@ -38,9 +38,12 @@ import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { useAuth } from "../auth/AuthContext";
 import { canCreate } from "../auth/rbac";
 import SearchableSelect from "../design-system/SearchableSelect";
+import ExpandableText from "../design-system/ExpandableText";
+import DocumentPreviewModal from "../components/DocumentPreviewModal";
+import type { DocumentPreview, PreviewLine } from "./documentPreviewModel";
 import HybridSearchInput from "../design-system/HybridSearchInput";
 import { formatDateOnly, formatDateTimePY, todayInputValue } from "../utils/dateFormat";
-import { responsibleFieldLabel, sapLotForProduct, showsExternalDocumentNumber } from "./movementFormModel";
+import { responsibleFieldLabel, sapLotApplies, sapLotForProduct, showsExternalDocumentNumber } from "./movementFormModel";
 
 /**
  * Un pallet físico de la entrada: su cantidad, su peso y su sector destino.
@@ -54,6 +57,17 @@ const todayISO = () => todayInputValue();
 
 // ── Línea del carrito de remito: un producto ya cargado (con sus lotes/pallets)
 //    listo para agregarse al documento multi-producto.
+/**
+ * Estado editable crudo que generó una línea del carrito — lo necesario para
+ * volver a mostrar el gestor de lotes/pallets (Entrada) o la selección FEFO
+ * (Salida) tal como habían quedado. `palletItems`/`preview` alcanzan para
+ * enviar o imprimir la línea, pero no para reconstruir el formulario: sin
+ * esto, "Editar" solo podría ofrecer un resumen de lectura, no los campos.
+ */
+type CartLineEditState =
+  | { movType: "ENTRY"; product: Product; lotGroups: LotGroup[]; entrySapLot: string }
+  | { movType: "EXIT"; product: Product; fefoRows: FefoRow[] };
+
 type CartLine = {
   key: number;
   productId: string;
@@ -62,6 +76,13 @@ type CartLine = {
   totalQty: number;
   palletsCount: number;
   summary: string;
+  /**
+   * Cómo se va a ver este producto en la nota. Se arma junto con `palletItems`,
+   * en el mismo lugar y con los mismos datos, para que la vista previa no pueda
+   * mostrar algo distinto de lo que se envía.
+   */
+  preview: PreviewLine;
+  editState: CartLineEditState;
 };
 let _cartKey = 0;
 
@@ -85,12 +106,52 @@ type FefoRow = {
   expanded: boolean;
   exitQtyInput: string;   // EXIT only — cantidad a despachar del lote (auto-selecciona pallets)
   /**
+   * EXIT only — palletId → cuánto se descuenta de **ese** palet.
+   *
+   * Se prellena con el reparto automático (FEFO: se vacía un palet antes de
+   * tocar el siguiente) y queda editable, porque el reparto real no siempre es
+   * ese: en una salida fraccionaria el operador saca 200 de un palet y 300 de
+   * otro según cómo estén armados en el piso. Lo que se escribe acá es lo que
+   * se descuenta del stock y del palet — la suma tiene que dar la cantidad del
+   * lote, y se valida antes de armar el remito.
+   */
+  qtyByPallet: Record<string, string>;
+  /**
    * EXIT only — palletId → paletas físicas con las que se despachó ese palet.
    * Es opcional y solo informativo: no interviene en cuánto se descuenta ni de
    * qué palet. Sin cargar nada, la salida se comporta igual que siempre.
    */
   dispatchedByPallet: Record<string, string>;
 };
+
+/**
+ * Reparto automático → valores iniciales de los campos por palet.
+ * Es el mismo criterio que ya usaba la salida; ahora queda escrito en campos
+ * editables en vez de resolverse solo al confirmar.
+ */
+function distributeExitQty(
+  pallets: LotPallet[],
+  selectedIds: Set<string>,
+  targetQty: number,
+): Record<string, string> {
+  const amounts = calcDispatchAmounts(pallets, selectedIds, targetQty);
+  const result: Record<string, string> = {};
+  for (const [palletId, info] of amounts) result[palletId] = String(info.dispatch);
+  return result;
+}
+
+/** Cuánto se descuenta de un palet según lo cargado. Sin dato, nada. */
+function palletExitQty(row: FefoRow, palletId: string): number {
+  const raw = (row.qtyByPallet[palletId] ?? "").trim();
+  if (raw === "") return 0;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+/** Suma de lo que efectivamente se despacha del lote: la de los campos por palet. */
+function rowExitQty(row: FefoRow): number {
+  return [...row.selectedIds].reduce((sum, palletId) => sum + palletExitQty(row, palletId), 0);
+}
 
 /** Selecciona pallets en orden hasta cubrir targetQty. */
 function autoSelectForQty(pallets: LotPallet[], targetQty: number): Set<string> {
@@ -134,6 +195,40 @@ function calcDispatchAmounts(
     }
   }
   return result;
+}
+
+/**
+ * Campo de "Datos logísticos": etiqueta arriba, control abajo.
+ *
+ * Antes eran seis o siete inputs sueltos en una sola grilla de `minmax(160px,
+ * 1fr)`, identificados solo por su placeholder. En una pantalla ancha entraban
+ * todos en una línea a 160px cada uno — ilegibles y sin forma de saber qué es
+ * cada campo una vez escrito, porque el placeholder desaparece al tipear.
+ *
+ * Con etiqueta fija el campo se sigue entendiendo lleno, y con un mínimo más
+ * generoso la grilla corta a dos o tres columnas en vez de exprimir siete.
+ */
+function Field({
+  label,
+  children,
+  hint,
+  span,
+}: {
+  label: string;
+  children: React.ReactNode;
+  hint?: React.ReactNode;
+  /** El campo ocupa toda la fila (observaciones). */
+  span?: boolean;
+}) {
+  return (
+    <div style={{ display: "grid", gap: 4, alignContent: "start", gridColumn: span ? "1 / -1" : undefined }}>
+      <span style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+        {label}
+      </span>
+      {children}
+      {hint}
+    </div>
+  );
 }
 
 // ── Payload regularización
@@ -233,6 +328,12 @@ export default function MovementsPage() {
   // UI-only: ficha "Ver productos" (catálogo buscable con stock y atributos)
   const [showProductCatalog, setShowProductCatalog] = useState(false);
 
+  /**
+   * Remito armado esperando confirmación. Mientras exista, se muestra la vista
+   * previa de la nota y no se mandó nada todavía.
+   */
+  const [pendingSubmission, setPendingSubmission] =
+    useState<{ payload: CreateDocumentPayload; preview: DocumentPreview } | null>(null);
   // UI-only: último documento confirmado (panel post-confirmación)
   const [lastCreatedDoc, setLastCreatedDoc] = useState<{
     id: string; code: string; type: "ENTRY" | "EXIT"; totalProducts: number; attachments: number;
@@ -427,8 +528,40 @@ export default function MovementsPage() {
   });
   const fefoLoading = fefoQ.isFetching;
 
+  /**
+   * Para qué producto ya se inicializó `fefoRows` (a mano o restaurado por
+   * "Editar"). Evita que un refetch en segundo plano de `fefoQ` — stock que
+   * cambió en otra pestaña, un `invalidateQueries(["lots"])` disparado por
+   * otra operación — pise en silencio la selección que el operador ya venía
+   * armando para ese mismo producto. Solo se vuelve a inicializar cuando el
+   * producto cambia de verdad.
+   *
+   * "Editar" (más abajo) marca este ref *antes* de que el efecto llegue a
+   * correr: así el efecto nunca compite con la restauración, la respeta
+   * siempre, sin depender de si `fefoQ` ya tenía los datos en caché o todavía
+   * los estaba pidiendo.
+   */
+  const fefoRowsBuiltForProduct = useRef<string | null>(null);
+
   // ── Gestor de pallets (Entrada) ──
   const [showPalletManager, setShowPalletManager] = useState(false);
+  /**
+   * Lotes plegados dentro del gestor de pallets (por `group.id`).
+   *
+   * Una entrada de tres lotes con ocho pallets cada uno son 24 filas apiladas:
+   * hay que scrollear el modal entero para llegar al lote que falta cargar. Un
+   * lote resuelto se pliega y deja ver su resumen; se vuelve a abrir con un
+   * click en el encabezado, para revisarlo o corregirlo.
+   */
+  const [collapsedLots, setCollapsedLots] = useState<Set<number>>(() => new Set());
+
+  function toggleLotCollapsed(groupId: number) {
+    setCollapsedLots((current) => {
+      const next = new Set(current);
+      if (next.has(groupId)) next.delete(groupId); else next.add(groupId);
+      return next;
+    });
+  }
 
   /** Todos los pallets del producto actual, aplanados con su lote de origen. */
   const palletRows = useMemo(
@@ -528,16 +661,28 @@ export default function MovementsPage() {
   }, [palletsByLocation, planByLocation, rowNumbersByLocation]);
 
   useEffect(() => {
-    if (!fefoEnabled) { setFefoRows([]); return; }
+    if (!fefoEnabled) {
+      fefoRowsBuiltForProduct.current = null;
+      setFefoRows([]);
+      return;
+    }
+    const pid = product?.id ?? null;
+    // Ya se inicializó para este producto (a mano, o restaurado por "Editar"):
+    // un refetch de fondo con datos nuevos no debe pisar lo que el operador ya
+    // tiene armado.
+    if (fefoRowsBuiltForProduct.current === pid) return;
     if (!fefoQ.data) return;
+
+    fefoRowsBuiltForProduct.current = pid;
     setFefoRows(fefoQ.data.map((l) => ({
       lot: l as Lot & { pallets: LotPallet[] },
       selectedIds: new Set<string>(),
       expanded: true,
       exitQtyInput: "",
+      qtyByPallet: {},
       dispatchedByPallet: {},
     })));
-  }, [fefoQ.data, fefoEnabled]);
+  }, [fefoQ.data, fefoEnabled, product?.id]);
 
   function resetForm() {
     // El depósito NO se limpia: es el contexto de la sesión, no un campo del
@@ -553,6 +698,7 @@ export default function MovementsPage() {
     setShowAttachModal(false);
     setFormError("");
     setWizardStep(1);
+    setPendingSubmission(null);
   }
 
   // ── TRANSFERENCIA: agrupar contenido del origen por producto ──
@@ -629,14 +775,20 @@ export default function MovementsPage() {
   }
 
   /** Copia la ubicación general de un lote a todos sus pallets; luego cada fila sigue editable. */
+  /**
+   * Aplica el sector general a todos los pallets del lote y lo pliega: aplicar
+   * es justo el momento en que el bloque queda resuelto, y dejarlo abierto
+   * obliga a scrollear de más para llegar al lote siguiente.
+   */
   function applyLocationToLot(groupId: number) {
-    setLotGroups((groups) => groups.map((group) => {
-      if (group.id !== groupId || !group.bulkLocationId) return group;
-      return {
-        ...group,
-        palletLines: group.palletLines.map((line) => ({ ...line, locationId: group.bulkLocationId })),
-      };
-    }));
+    const target = lotGroups.find((group) => group.id === groupId);
+    if (!target?.bulkLocationId) return;
+    setCollapsedLots((current) => new Set(current).add(groupId));
+    setLotGroups((groups) => groups.map((group) => (
+      group.id === groupId
+        ? { ...group, palletLines: group.palletLines.map((line) => ({ ...line, locationId: target.bulkLocationId })) }
+        : group
+    )));
   }
 
   /** Copia el peso general de un lote a todos sus pallets; luego cada fila sigue editable. */
@@ -651,16 +803,60 @@ export default function MovementsPage() {
   }
 
   // ── Helpers FEFO
+  /**
+   * Tilda o destilda un palet del lote.
+   *
+   * Sin cantidad cargada, tildar palets **es** la forma de indicar cuánto sale:
+   * el lote despacha esos palets completos. Con una cantidad ya cargada, en
+   * cambio, el total manda — sumar un palet solo agrega otro entre los cuales
+   * repartir esa misma cantidad (entra en cero, para que el operador decida
+   * cuánto sacarle), y quitarlo devuelve su parte al desglose. Recalcular el
+   * total en ese caso pisaría lo que el operador acaba de escribir.
+   */
   function togglePallet(lotIdx: number, palletId: string) {
     setFefoRows((rows) => rows.map((r, i) => {
       if (i !== lotIdx) return r;
       const ids = new Set(r.selectedIds);
-      if (ids.has(palletId)) ids.delete(palletId); else ids.add(palletId);
+      const adding = !ids.has(palletId);
+      if (adding) ids.add(palletId); else ids.delete(palletId);
+
+      const hasTarget = !!r.exitQtyInput.trim() && Number(r.exitQtyInput) > 0;
+      if (hasTarget) {
+        return {
+          ...r,
+          selectedIds: ids,
+          qtyByPallet: { ...r.qtyByPallet, [palletId]: adding ? "0" : "" },
+        };
+      }
+
+      // Selección manual sin cantidad: el lote despacha los palets elegidos enteros.
       const selQty = r.lot.pallets
         .filter((p) => ids.has(p.id))
         .reduce((s, p) => s + p.quantity, 0);
-      return { ...r, selectedIds: ids, exitQtyInput: selQty > 0 ? String(selQty) : "" };
+      return {
+        ...r,
+        selectedIds: ids,
+        exitQtyInput: selQty > 0 ? String(selQty) : "",
+        qtyByPallet: distributeExitQty(r.lot.pallets, ids, selQty),
+      };
     }));
+  }
+
+  /**
+   * EXIT — cantidad a descontar de un palet puntual. Es el reparto fino de la
+   * cantidad del lote; el total del lote no se toca (se valida que la suma dé).
+   */
+  function setPalletExitQty(lotIdx: number, palletId: string, value: string) {
+    setFefoRows((rows) => rows.map((r, i) => i === lotIdx
+      ? { ...r, qtyByPallet: { ...r.qtyByPallet, [palletId]: value } }
+      : r));
+  }
+
+  /** Vuelve a repartir la cantidad del lote entre los palets elegidos, en orden. */
+  function redistributeExitQty(lotIdx: number) {
+    setFefoRows((rows) => rows.map((r, i) => i === lotIdx
+      ? { ...r, qtyByPallet: distributeExitQty(r.lot.pallets, r.selectedIds, Number(r.exitQtyInput) || 0) }
+      : r));
   }
   /** Paletas físicas resultantes de un palet — dato informativo de la nota. */
   function setDispatchedPallets(lotIdx: number, palletId: string, value: string) {
@@ -671,8 +867,16 @@ export default function MovementsPage() {
   function toggleExpanded(lotIdx: number) {
     setFefoRows((rows) => rows.map((r, i) => i === lotIdx ? { ...r, expanded: !r.expanded } : r));
   }
+  /** Abre el desglose (sin alternar): para acciones que hay que ver aplicarse. */
+  function toggleExpandedOpen(lotIdx: number) {
+    setFefoRows((rows) => rows.map((r, i) => i === lotIdx ? { ...r, expanded: true } : r));
+  }
 
-  /** EXIT: al ingresar una cantidad por lote, auto-selecciona pallets en orden FEFO. */
+  /**
+   * EXIT: al ingresar una cantidad por lote, auto-selecciona pallets en orden
+   * FEFO y reparte esa cantidad entre ellos. El reparto queda escrito en los
+   * campos por palet, listos para ajustarse a mano.
+   */
   function handleExitQtyChange(lotIdx: number, qtyStr: string) {
     setFefoRows((rows) => rows.map((row, i) => {
       if (i !== lotIdx) return row;
@@ -680,16 +884,18 @@ export default function MovementsPage() {
       const selectedIds = (!qtyStr || qty <= 0)
         ? new Set<string>()
         : autoSelectForQty(row.lot.pallets, qty);
-      return { ...row, exitQtyInput: qtyStr, selectedIds };
+      return {
+        ...row,
+        exitQtyInput: qtyStr,
+        selectedIds,
+        qtyByPallet: distributeExitQty(row.lot.pallets, selectedIds, qty > 0 ? qty : 0),
+      };
     }));
   }
 
-  // EXIT: suma de cantidades exactas ingresadas (respeta parciales)
-  const totalExitQty = fefoRows.reduce((sum, row) => {
-    const entered = Number(row.exitQtyInput);
-    if (entered > 0) return sum + entered;
-    return sum + row.lot.pallets.filter((p) => row.selectedIds.has(p.id)).reduce((s, p) => s + p.quantity, 0);
-  }, 0);
+  // EXIT: total real de la salida — la suma de lo cargado palet por palet, que
+  // es exactamente lo que se va a descontar.
+  const totalExitQty = fefoRows.reduce((sum, row) => sum + rowExitQty(row), 0);
   const totalExitPallets = fefoRows.reduce((sum, row) => sum + row.selectedIds.size, 0);
 
   const daysUntil = (fecha?: string | null) =>
@@ -781,6 +987,7 @@ export default function MovementsPage() {
   const createDocumentMut = useMutation({
     mutationFn: (payload: CreateDocumentPayload) => createDocument(payload),
     onSuccess: (res, variables) => {
+      setPendingSubmission(null);
       invalidateAfterMovement();
       void uploadPendingFiles(res.documentId, pendingFiles);
       setLastCreatedDoc({
@@ -829,7 +1036,7 @@ export default function MovementsPage() {
           fechaFabricacion: g.fechaFabricacion || undefined,
           // En una entrada multi-producto cada línea resuelve su lote SAP con su
           // propio material, porque se arma al agregarlo al remito.
-          sapLot: sapLotForProduct(product, entrySapLot),
+          sapLot: sapLotForProduct(product, entrySapLot, activeWarehouse),
         };
         // Peso y sector se definen exclusivamente por pallet en el gestor.
         if (g.palletLines.length > 0) {
@@ -843,24 +1050,48 @@ export default function MovementsPage() {
         return [{ ...base, quantity: Number(g.quantity) }];
       });
       const totalQty = palletItems.reduce((s, i) => s + (i.quantity || 0), 0);
+      const productLabel = `${product.code} · ${product.description}`;
+      const entryLotSap = sapLotForProduct(product, entrySapLot, activeWarehouse) ?? null;
       return {
         line: {
           key: ++_cartKey,
           productId: product.id,
-          productLabel: `${product.code} · ${product.description}`,
+          productLabel,
           palletItems,
           totalQty,
           palletsCount: palletItems.length,
           summary: `Lotes: ${validGroups.map((g) => g.lotCode.trim()).join(", ")}`,
+          preview: {
+            productLabel,
+            unitOfMeasure: product.unitOfMeasure,
+            quantity: totalQty,
+            pallets: palletItems.length,
+            lots: validGroups.map((g) => ({
+              lotCode: g.lotCode.trim(),
+              sapLot: entryLotSap,
+              fechaVencimiento: g.fechaVencimiento || null,
+            })),
+          },
+          // Se guarda `lotGroups` tal cual está en pantalla (no solo `validGroups`):
+          // así "Editar" devuelve exactamente lo que había, filas a medio llenar
+          // incluidas, no una versión depurada.
+          editState: { movType: "ENTRY", product, lotGroups, entrySapLot },
         },
       };
     }
 
-    // SALIDA: arma palletItems desde la selección FEFO.
+    // SALIDA: arma palletItems desde la selección FEFO. Lo que se despacha de
+    // cada palet es lo que quedó cargado en su campo — el reparto automático es
+    // solo el valor inicial de esos campos, no lo que se envía.
     const palletItems: PalletItem[] = [];
     // Lotes donde lo pedido supera lo que suman los palets tildados. Despachar de
     // menos en silencio cambiaría la intención del operador sin que se entere.
     const faltantes: { lotCode: string; pedido: number; disponible: number }[] = [];
+    // Lotes donde el reparto por palet no cuadra con el total del lote, o donde
+    // a un palet se le pidió más de lo que tiene.
+    const repartoInvalido: string[] = [];
+    // Lotes que efectivamente aportan cantidad — los que van a salir impresos.
+    const lotesDespachados: FefoRow[] = [];
 
     for (const row of fefoRows) {
       const targetQty = Number(row.exitQtyInput);
@@ -874,24 +1105,46 @@ export default function MovementsPage() {
         const parsed = Number(raw);
         return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
       };
+
+      const n = (v: number) => v.toLocaleString("es-PY");
+
       if (targetQty > 0) {
         const disponible = selectedPallets.reduce((s, p) => s + p.quantity, 0);
         if (targetQty > disponible) {
           faltantes.push({ lotCode: row.lot.lotCode, pedido: targetQty, disponible });
           continue;
         }
-        let remaining = targetQty;
-        for (const p of selectedPallets) {
-          if (remaining <= 0) break;
-          const take = Math.min(p.quantity, remaining);
-          palletItems.push({ palletId: p.id, quantity: take, dispatchedPallets: dispatchedOf(p.id) });
-          remaining -= take;
-        }
-      } else {
-        for (const p of selectedPallets) {
-          palletItems.push({ palletId: p.id, quantity: p.quantity, dispatchedPallets: dispatchedOf(p.id) });
+        // La suma de los campos por palet manda: es lo que se descuenta. Si no
+        // coincide con el total del lote se corta acá — el stock del lote y el
+        // de sus palets tienen que moverse por el mismo número.
+        const repartido = rowExitQty(row);
+        if (repartido !== targetQty) {
+          repartoInvalido.push(
+            `Lote ${row.lot.lotCode}: las cantidades por palet suman ${n(repartido)} y el lote despacha ${n(targetQty)}. ` +
+            `Ajustá el reparto o usá "Repartir automático".`,
+          );
+          continue;
         }
       }
+
+      const excedidos = selectedPallets.filter((p) => palletExitQty(row, p.id) > p.quantity);
+      if (excedidos.length > 0) {
+        repartoInvalido.push(
+          `Lote ${row.lot.lotCode}: ${excedidos.map((p) => p.code).join(", ")} no tiene(n) esa cantidad disponible.`,
+        );
+        continue;
+      }
+
+      let aportaAlgo = false;
+      for (const p of selectedPallets) {
+        const take = palletExitQty(row, p.id);
+        // Un palet tildado pero en cero no sale: es una selección que el
+        // operador terminó dejando sin cantidad.
+        if (take <= 0) continue;
+        palletItems.push({ palletId: p.id, quantity: take, dispatchedPallets: dispatchedOf(p.id) });
+        aportaAlgo = true;
+      }
+      if (aportaAlgo) lotesDespachados.push(row);
     }
 
     if (faltantes.length > 0) {
@@ -905,18 +1158,38 @@ export default function MovementsPage() {
       return { error: `Cantidad seleccionada insuficiente. ${detalle}` };
     }
 
+    if (repartoInvalido.length > 0) {
+      return { error: repartoInvalido.join(" ") };
+    }
+
     if (palletItems.length === 0) return { error: "Ingresá una cantidad en al menos un lote para despachar." };
     const totalQty = palletItems.reduce((s, i) => s + (i.quantity || 0), 0);
-    const lotsUsed = fefoRows.filter((r) => r.selectedIds.size > 0).map((r) => r.lot.lotCode);
+    const lotsUsed = lotesDespachados.map((r) => r.lot.lotCode);
+    const productLabel = `${product.code} · ${product.description}`;
     return {
       line: {
         key: ++_cartKey,
         productId: product.id,
-        productLabel: `${product.code} · ${product.description}`,
+        productLabel,
         palletItems,
         totalQty,
         palletsCount: palletItems.length,
         summary: lotsUsed.length ? `Lotes: ${lotsUsed.join(", ")}` : `${palletItems.length} pallet(s)`,
+        preview: {
+          productLabel,
+          unitOfMeasure: product.unitOfMeasure,
+          quantity: totalQty,
+          pallets: palletItems.length,
+          lots: lotesDespachados.map((r) => ({
+            lotCode: r.lot.lotCode,
+            sapLot: r.lot.sapLot ?? null,
+            fechaVencimiento: r.lot.fechaVencimiento ?? null,
+          })),
+        },
+        // `fefoRows` completo (no solo los lotes que aportaron cantidad): así
+        // "Editar" devuelve toda la lista con las mismas selecciones y
+        // cantidades por palet, no solo un resumen de lo que quedó armado.
+        editState: { movType: "EXIT", product, fefoRows },
       },
     };
   }
@@ -945,18 +1218,60 @@ export default function MovementsPage() {
     setCart((c) => c.filter((l) => l.key !== key));
   }
 
-  /** Envía el remito completo: carrito + producto actual (si está cargado y válido). */
-  function submitDocument() {
+  /**
+   * Saca una línea del carrito y la devuelve al formulario tal como había
+   * quedado — mismo producto y mismos lotes/pallets (Entrada), o misma
+   * selección FEFO con sus cantidades por palet (Salida). Se vuelve a sumar al
+   * carrito con "Agregar otro producto" o al confirmar el remito, ya con los
+   * cambios.
+   *
+   * Si hay un producto sin agregar en el formulario, no se pisa en silencio:
+   * se corta acá para no perder esa carga.
+   */
+  function editCartLine(key: number) {
+    if (product) {
+      setFormError("Agregá o quitá el material que estás cargando antes de editar otro producto del remito.");
+      return;
+    }
+    const line = cart.find((l) => l.key === key);
+    if (!line) return;
+    setCart((c) => c.filter((l) => l.key !== key));
+    setFormError("");
+    setMovType(line.editState.movType);
+    setProduct(line.editState.product);
+    if (line.editState.movType === "ENTRY") {
+      setLotGroups(line.editState.lotGroups);
+      setEntrySapLot(line.editState.entrySapLot);
+      // Van directo a "Lotes y cantidades" — el paso donde están los lotes,
+      // vencimientos y pallets que vinieron a corregir.
+      setWizardStep(2);
+    } else {
+      // Se marca ANTES de que el efecto de fefoQ llegue a correr: así, tenga o
+      // no ya los datos en caché, nunca reconstruye filas vacías por encima de
+      // esta selección restaurada.
+      fefoRowsBuiltForProduct.current = line.editState.product.id;
+      setFefoRows(line.editState.fefoRows);
+    }
+  }
+
+  /**
+   * Arma el remito completo (carrito + producto actual) y lo deja listo para
+   * confirmar. Devuelve `null` y escribe el error del formulario si algo falta.
+   *
+   * El payload y la vista previa se construyen de una sola pasada sobre las
+   * mismas líneas: lo que muestra la previa es literalmente lo que se envía.
+   */
+  function buildSubmission(): { payload: CreateDocumentPayload; preview: DocumentPreview } | null {
     let lines = cart;
     if (product) {
       const res = buildCurrentLine();
       if (res && "error" in res) {
-        if (cart.length === 0) { setFormError(res.error); return; }
+        if (cart.length === 0) { setFormError(res.error); return null; }
       } else if (res && "line" in res) {
         lines = [...cart, res.line];
       }
     }
-    if (lines.length === 0) { setFormError("Agregá al menos un producto al remito."); return; }
+    if (lines.length === 0) { setFormError("Agregá al menos un producto al remito."); return null; }
     setFormError("");
 
     const payload: CreateDocumentPayload = {
@@ -978,7 +1293,39 @@ export default function MovementsPage() {
         palletItems: l.palletItems,
       })),
     };
-    createDocumentMut.mutate(payload);
+
+    // Encargado tal como va a quedar: el elegido si se reasignó, si no el propio.
+    const responsible = users.find((u) => u.id === (encargadoId || user?.userId));
+    const preview: DocumentPreview = {
+      type: isEntry ? "ENTRY" : "EXIT",
+      date: date || todayISO(),
+      warehouseName: warehouseLabel(activeWarehouse),
+      supplier: isEntry ? supplier : undefined,
+      destination: !isEntry ? destination : undefined,
+      documentNumber: isEntry ? documentNumber : undefined,
+      documentoMaterial: !isEntry ? documentoMaterial.trim() : undefined,
+      carrier,
+      vehiclePlate,
+      driver,
+      driverDocument,
+      responsibleName: responsible?.fullName || responsible?.username || user?.username || "",
+      notes,
+      attachments: pendingFiles.map((f) => f.name),
+      lines: lines.map((l) => l.preview),
+    };
+
+    return { payload, preview };
+  }
+
+  /**
+   * Paso de confirmación: en vez de registrar de una, se muestra cómo va a
+   * quedar la nota. Una entrada o una salida mueven stock real y corregirlas
+   * después cuesta un ajuste — mirar antes es más barato que revertir.
+   */
+  function submitDocument() {
+    const submission = buildSubmission();
+    if (!submission) return;
+    setPendingSubmission(submission);
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -1092,7 +1439,9 @@ export default function MovementsPage() {
                     <td style={{ fontSize: 12, whiteSpace: "nowrap", color: "var(--muted)" }}>{formatDateTimePY(m.createdAt ?? m.date)}</td>
                     <td><strong>{m.material.code}</strong><span style={{ color: "var(--muted)", fontSize: 12 }}> · {m.material.description}</span></td>
                     <td style={{ fontWeight: 700 }}>{m.quantity.toLocaleString("es-PY")}</td>
-                    <td style={{ fontSize: 12, color: "var(--muted)", maxWidth: 220 }}>{m.notes || "—"}</td>
+                    <td style={{ fontSize: 12, color: "var(--muted)", maxWidth: 220, minWidth: 140 }}>
+                      <ExpandableText value={m.notes} label="la nota" />
+                    </td>
                     <td>
                       <button className="btn btn--primary" style={{ fontSize: 12, padding: "4px 12px" }} onClick={() => openReg(m)}>
                         Regularizar datos
@@ -1732,20 +2081,24 @@ export default function MovementsPage() {
             <>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
                 <div className="form-section-title" style={{ marginBottom: 0 }}>Lotes y cantidades</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  {/* El material puede estar configurado como "no utiliza Lote SAP":
-                      ahí el campo se deshabilita y no se manda nada. El input sigue
-                      visible porque la cabecera es del remito, no de un material. */}
-                  <label style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", whiteSpace: "nowrap" }}>Lote SAP:</label>
-                  {product?.usesSapLot === false ? (
-                    <span style={{ fontSize: 12, color: "var(--muted)", fontStyle: "italic" }}>
-                      No aplica a este material
-                    </span>
-                  ) : (
-                    <input className="input" value={entrySapLot} onChange={(e) => setEntrySapLot(e.target.value)}
-                      placeholder={generateSapLot()} style={{ width: 140, fontSize: 13 }} title="Lote SAP del día — compartido para toda la entrada" />
-                  )}
-                </div>
+                {/* Si el depósito no maneja Lote SAP, el concepto no existe acá:
+                    no se muestra ni el título ni el campo. Dentro de un depósito
+                    que sí lo maneja, el material puede estar configurado como "no
+                    utiliza Lote SAP" y ahí se avisa — el input sigue apareciendo
+                    porque la cabecera es del remito, no de un material. */}
+                {warehouseUsesSapLot(activeWarehouse) && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", whiteSpace: "nowrap" }}>Lote SAP:</label>
+                    {product?.usesSapLot === false ? (
+                      <span style={{ fontSize: 12, color: "var(--muted)", fontStyle: "italic" }}>
+                        No aplica a este material
+                      </span>
+                    ) : (
+                      <input className="input" value={entrySapLot} onChange={(e) => setEntrySapLot(e.target.value)}
+                        placeholder={generateSapLot()} style={{ width: 140, fontSize: 13 }} title="Lote SAP del día — compartido para toda la entrada" />
+                    )}
+                  </div>
+                )}
               </div>
               <div style={{ display: "grid", gap: 10 }}>
                 {lotGroups.map((group) => (
@@ -1871,6 +2224,11 @@ export default function MovementsPage() {
                     const selQty = selPallets.reduce((s, p) => s + p.quantity, 0);
                     const enteredQty = Number(row.exitQtyInput);
                     const qtyMismatch = !!row.exitQtyInput && enteredQty > 0 && selQty !== enteredQty;
+                    // Lo que realmente se va a descontar: la suma de los campos
+                    // por palet. Si no coincide con el total del lote, el remito
+                    // no se arma.
+                    const repartido = rowExitQty(row);
+                    const repartoDesbalanceado = enteredQty > 0 && selPallets.length > 0 && repartido !== enteredQty;
                     const days = daysUntil(row.lot.fechaVencimiento);
 
                     const borderColor = blocked
@@ -1886,7 +2244,7 @@ export default function MovementsPage() {
                         <div style={{ padding: "9px 12px", background: blocked ? "var(--badge-adjout-bg)" : row.selectedIds.size > 0 ? "var(--primary-light)" : "var(--bg)", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                             <span style={{ fontWeight: 800, fontSize: 14 }}>{row.lot.lotCode}</span>
-                            {row.lot.sapLot && (
+                            {row.lot.sapLot && sapLotApplies(activeWarehouse, product) && (
                               <span style={{ fontSize: 11, color: "var(--primary)", fontWeight: 600, fontFamily: "monospace" }}>{row.lot.sapLot}</span>
                             )}
                             {blocked && (
@@ -1939,21 +2297,31 @@ export default function MovementsPage() {
                           {/* Resumen de selección */}
                           <div>
                             {selPallets.length > 0 ? (
-                              <div style={{ fontSize: 12 }}>
-                                <span style={{ color: "var(--success)", fontWeight: 700 }}>
-                                  ✓ {selPallets.length} palet{selPallets.length !== 1 ? "s" : ""}
+                              <div style={{ fontSize: 12, display: "grid", gap: 3 }}>
+                                <span style={{ color: repartoDesbalanceado ? "var(--danger)" : "var(--success)", fontWeight: 700 }}>
+                                  {repartoDesbalanceado ? "⚠" : "✓"} {selPallets.length} palet{selPallets.length !== 1 ? "s" : ""}
                                   {" · "}
-                                  {enteredQty > 0
-                                    ? <>{enteredQty.toLocaleString("es-PY")} unid. a despachar</>
-                                    : <>{selQty.toLocaleString("es-PY")} unid. (palets completos)</>
-                                  }
+                                  {repartido.toLocaleString("es-PY")} unid. repartidas
                                 </span>
-                                {/* Advertencia: selección manual sin cantidad → despacha pallet completo */}
-                                {!row.exitQtyInput && selPallets.length > 0 && (
-                                  <span style={{ color: "var(--warning)", marginLeft: 8, fontWeight: 600 }}>
-                                    ⚠ Sin cantidad → se despachan palets completos
+                                {/* La suma por palet es lo que se descuenta: si no da el total
+                                    del lote, se dice acá y no recién al confirmar. */}
+                                {repartoDesbalanceado && (
+                                  <span style={{ color: "var(--danger)" }}>
+                                    El lote despacha {enteredQty.toLocaleString("es-PY")}: {" "}
+                                    {repartido > enteredQty
+                                      ? `sobran ${(repartido - enteredQty).toLocaleString("es-PY")}`
+                                      : `faltan ${(enteredQty - repartido).toLocaleString("es-PY")}`}
+                                    {" "}en el desglose.
                                   </span>
                                 )}
+                                <button
+                                  type="button"
+                                  onClick={() => { toggleExpandedOpen(lotIdx); redistributeExitQty(lotIdx); }}
+                                  disabled={blocked}
+                                  style={{ justifySelf: "start", background: "none", border: "none", padding: 0, font: "inherit", fontSize: 11, fontWeight: 700, color: "var(--primary-text)", cursor: "pointer", textDecoration: "underline" }}
+                                >
+                                  Repartir automático entre los palets
+                                </button>
                               </div>
                             ) : blocked ? (
                               <span style={{ fontSize: 12, color: "var(--muted)" }}>Pendiente de regularización — no se puede despachar</span>
@@ -1985,17 +2353,14 @@ export default function MovementsPage() {
                               )}
                             </button>
                             {row.expanded && (() => {
-                              // Calcula exactamente cuánto se despacha por pallet
-                              const dispatchMap = calcDispatchAmounts(
-                                availPallets,
-                                row.selectedIds,
-                                enteredQty,
-                              );
                               return (
                                 <div style={{ borderTop: "1px solid var(--border-dim)" }}>
                                   {availPallets.map((p, pIdx) => {
                                     const isSelected = row.selectedIds.has(p.id);
-                                    const info = dispatchMap.get(p.id);
+                                    // Lo cargado para este palet: es lo que se descuenta.
+                                    const take = palletExitQty(row, p.id);
+                                    const excede = take > p.quantity;
+                                    const isPartial = take > 0 && take < p.quantity;
                                     return (
                                       <label
                                         key={p.id}
@@ -2007,7 +2372,9 @@ export default function MovementsPage() {
                                           padding: "7px 16px",
                                           cursor: blocked ? "not-allowed" : "pointer",
                                           background: isSelected
-                                            ? info?.isPartial
+                                            ? excede
+                                              ? "var(--badge-exit-bg)"
+                                              : isPartial
                                               ? "rgba(var(--warning-rgb, 255,170,0), 0.08)"
                                               : "var(--primary-light)"
                                             : undefined,
@@ -2028,31 +2395,44 @@ export default function MovementsPage() {
                                         <span style={{ fontSize: 13, color: "var(--muted)" }}>
                                           {p.quantity.toLocaleString("es-PY")} unid. stock
                                         </span>
-                                        {/* Badge de qué pasará con este pallet */}
-                                        {isSelected && info && (
-                                          <span style={{ fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
-                                            {info.isPartial ? (
-                                              <>
-                                                <span style={{
-                                                  background: "var(--badge-adjout-bg)",
-                                                  color: "var(--badge-adjout-text)",
-                                                  border: "1px solid var(--badge-adjout-border)",
-                                                  borderRadius: 4, padding: "1px 6px",
-                                                }}>
-                                                  −{info.dispatch.toLocaleString("es-PY")}
-                                                </span>
-                                                <span style={{ color: "var(--success)" }}>
-                                                  quedan {info.remaining.toLocaleString("es-PY")}
-                                                </span>
-                                              </>
+                                        {/* Cuánto sale de ESTE palet. Editable: en una salida
+                                            fraccionaria el reparto real lo decide el operador, y
+                                            este número es el que descuenta stock y palet. */}
+                                        {isSelected && (
+                                          <span
+                                            style={{ display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}
+                                            onClick={(e) => e.preventDefault()}
+                                          >
+                                            <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 700 }}>Sale</span>
+                                            <input
+                                              className="input"
+                                              type="number"
+                                              min={0}
+                                              value={row.qtyByPallet[p.id] ?? ""}
+                                              disabled={blocked}
+                                              onChange={(e) => setPalletExitQty(lotIdx, p.id, e.target.value)}
+                                              style={{
+                                                width: 92, fontSize: 12, padding: "3px 6px", textAlign: "right",
+                                                fontWeight: 700,
+                                                borderColor: excede ? "var(--danger)" : undefined,
+                                              }}
+                                              aria-label={`Cantidad a despachar del palet ${p.code}`}
+                                            />
+                                            {excede ? (
+                                              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--danger)" }}>
+                                                solo tiene {p.quantity.toLocaleString("es-PY")}
+                                              </span>
+                                            ) : isPartial ? (
+                                              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--success)" }}>
+                                                quedan {(p.quantity - take).toLocaleString("es-PY")}
+                                              </span>
+                                            ) : take > 0 ? (
+                                              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--danger)" }}>
+                                                palet completo
+                                              </span>
                                             ) : (
-                                              <span style={{
-                                                background: "var(--badge-exit-bg, rgba(239,68,68,0.1))",
-                                                color: "var(--danger)",
-                                                border: "1px solid var(--badge-exit-border, rgba(239,68,68,0.3))",
-                                                borderRadius: 4, padding: "1px 6px",
-                                              }}>
-                                                −{info.dispatch.toLocaleString("es-PY")} total
+                                              <span style={{ fontSize: 11, color: "var(--warning)", fontWeight: 700 }}>
+                                                sin cantidad
                                               </span>
                                             )}
                                           </span>
@@ -2107,11 +2487,29 @@ export default function MovementsPage() {
           {(movType !== "ENTRY" || wizardStep === 1) && (
             <>
               <div className="form-section-title">Datos logísticos</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8 }}>
-                {showsExternalDocumentNumber(movType) && <input className="input" placeholder="N° MIC/Factura/Remito" value={documentNumber} onChange={(e) => setDocumentNumber(e.target.value)} />}
+              {/* Grilla responsive con etiquetas: el mínimo de 230px corta a dos
+                  o tres columnas en vez de apretar siete campos en una línea. */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 12, alignItems: "start" }}>
+                {showsExternalDocumentNumber(movType) && (
+                  <Field label="N° MIC / Factura / Remito">
+                    <input className="input" placeholder="Ej: 001-001-0001234" value={documentNumber}
+                      onChange={(e) => setDocumentNumber(e.target.value)} aria-label="N° MIC/Factura/Remito" />
+                  </Field>
+                )}
                 {/* Proveedor: del catálogo. Si no existe, se da de alta sin salir del formulario. */}
                 {isEntry && (
-                  <div style={{ display: "grid", gap: 4 }}>
+                  <Field
+                    label="Proveedor"
+                    hint={
+                      <button
+                        type="button"
+                        onClick={() => setShowNewSupplier(true)}
+                        style={{ background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", fontSize: 11, color: "var(--muted)", textDecoration: "underline", justifySelf: "start" }}
+                      >
+                        Agregar proveedor
+                      </button>
+                    }
+                  >
                     <SearchableSelect
                       options={suppliers}
                       value={suppliers.find((s) => s.name === supplier) ?? null}
@@ -2119,111 +2517,124 @@ export default function MovementsPage() {
                       getKey={(s) => s.id}
                       getLabel={(s) => s.name}
                       getDescription={(s) => s.ruc ?? ""}
-                      placeholder="Proveedor"
+                      placeholder="Buscar proveedor"
                     />
-                    <button
-                      type="button"
-                      onClick={() => setShowNewSupplier(true)}
-                      style={{ background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", fontSize: 11, color: "var(--muted)", textDecoration: "underline" }}
-                    >
-                      Agregar proveedor
-                    </button>
-                  </div>
+                  </Field>
                 )}
                 {/* Vehículo/patente: campo híbrido — busca en Transportes o acepta uno nuevo sin registrarlo antes. */}
                 {!isTransfer && (
-                  <HybridSearchInput<Transport>
-                    options={transports.filter((t) => t.active)}
-                    value={vehiclePlate}
-                    onChange={setVehiclePlate}
-                    onSelect={(t) => {
-                      // Patente registrada: autocompleta transportadora y, si el
-                      // vehículo tiene un único chofer activo, también el conductor y su CI.
-                      setVehiclePlate(t.plate);
-                      setCarrier(t.carrier || t.description || "");
-                      const activos = t.drivers.filter((d) => d.status !== "INACTIVO");
-                      if (activos.length === 1) {
-                        setDriver(activos[0].name);
-                        setDriverDocument(activos[0].document ?? "");
-                      } else {
-                        setDriver("");
-                        setDriverDocument("");
-                      }
-                    }}
-                    getKey={(t) => t.id}
-                    getLabel={(t) => t.plate}
-                    getDescription={(t) => [t.carrier, t.type].filter(Boolean).join(" · ")}
-                    placeholder="Vehículo / chapa"
-                  />
+                  <Field label="Vehículo / chapa">
+                    <HybridSearchInput<Transport>
+                      options={transports.filter((t) => t.active)}
+                      value={vehiclePlate}
+                      onChange={setVehiclePlate}
+                      onSelect={(t) => {
+                        // Patente registrada: autocompleta transportadora y, si el
+                        // vehículo tiene un único chofer activo, también el conductor y su CI.
+                        setVehiclePlate(t.plate);
+                        setCarrier(t.carrier || t.description || "");
+                        const activos = t.drivers.filter((d) => d.status !== "INACTIVO");
+                        if (activos.length === 1) {
+                          setDriver(activos[0].name);
+                          setDriverDocument(activos[0].document ?? "");
+                        } else {
+                          setDriver("");
+                          setDriverDocument("");
+                        }
+                      }}
+                      getKey={(t) => t.id}
+                      getLabel={(t) => t.plate}
+                      getDescription={(t) => [t.carrier, t.type].filter(Boolean).join(" · ")}
+                      placeholder="Buscar o escribir chapa"
+                    />
+                  </Field>
                 )}
                 {/* Transportadora: campo híbrido — sugiere transportadoras ya cargadas en Transportes, pero admite cualquier texto. */}
                 {!isTransfer && (
-                  <HybridSearchInput<string>
-                    options={carrierOptions}
-                    value={carrier}
-                    onChange={setCarrier}
-                    onSelect={setCarrier}
-                    getKey={(c) => c}
-                    getLabel={(c) => c}
-                    placeholder="Transportadora"
-                  />
+                  <Field label="Transportadora">
+                    <HybridSearchInput<string>
+                      options={carrierOptions}
+                      value={carrier}
+                      onChange={setCarrier}
+                      onSelect={setCarrier}
+                      getKey={(c) => c}
+                      getLabel={(c) => c}
+                      placeholder="Buscar o escribir transportadora"
+                    />
+                  </Field>
                 )}
                 {/* Conductor: campo híbrido sobre TODA la flota (no depende de elegir vehículo primero); al elegir uno registrado completa la CI. */}
                 {!isTransfer && (
-                  <HybridSearchInput<TransportDriver & { plates: string[] }>
-                    options={allDrivers}
-                    value={driver}
-                    onChange={(text) => { setDriver(text); setDriverDocument(""); }}
-                    onSelect={(d) => { setDriver(d.name); setDriverDocument(d.document ?? ""); }}
-                    getKey={(d) => d.name}
-                    getLabel={(d) => d.name}
-                    getDescription={(d) => (d.document ? `CI ${d.document}` : "")}
-                    getBadge={(d) => d.plates.join(", ") || undefined}
-                    placeholder="Conductor"
-                  />
+                  <Field label="Conductor" hint={
+                    <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                    </span>
+                  }>
+                    <HybridSearchInput<TransportDriver & { plates: string[] }>
+                      options={allDrivers}
+                      value={driver}
+                      onChange={(text) => { setDriver(text); setDriverDocument(""); }}
+                      onSelect={(d) => { setDriver(d.name); setDriverDocument(d.document ?? ""); }}
+                      getKey={(d) => d.name}
+                      getLabel={(d) => d.name}
+                      getDescription={(d) => (d.document ? `CI ${d.document}` : "")}
+                      getBadge={(d) => d.plates.join(", ") || undefined}
+                      placeholder="Buscar o escribir conductor"
+                    />
+                  </Field>
                 )}
                 {/* CI del conductor: se autocompleta al elegir un chofer registrado, pero queda editable para choferes manuales o correcciones. */}
                 {!isTransfer && (
-                  <input
-                    className="input"
-                    placeholder="CI del conductor (opcional)"
-                    value={driverDocument}
-                    onChange={(e) => setDriverDocument(e.target.value)}
-                  />
+                  <Field label="CI del conductor">
+                    <input
+                      className="input"
+                      placeholder="Opcional"
+                      value={driverDocument}
+                      onChange={(e) => setDriverDocument(e.target.value)}
+                      aria-label="CI del conductor"
+                    />
+                  </Field>
                 )}
                 {movType === "EXIT" && (
-                  <HybridSearchInput
-                    options={destinations}
-                    value={destination}
-                    onChange={setDestination}
-                    onSelect={(selected) => setDestination(selected.name)}
-                    getKey={(selected) => selected.id}
-                    getLabel={(selected) => selected.name}
-                    getDescription={(selected) => selected.notes ?? ""}
-                    placeholder="Buscar o escribir destino"
-                    onCreate={(name) => createDestinationMut.mutate({ name })}
-                    getCreateLabel={(name) => `Agregar nuevo destino: ${name}`}
-                    creating={createDestinationMut.isPending}
-                    registeredTitle="Destino guardado en el catálogo"
-                  />
+                  <Field
+                    label="Destino"
+                    hint={
+                      <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                        Escribí un destino nuevo y elegí "Agregar" para guardarlo en el listado.
+                      </span>
+                    }
+                  >
+                    <HybridSearchInput
+                      options={destinations}
+                      value={destination}
+                      onChange={setDestination}
+                      onSelect={(selected) => setDestination(selected.name)}
+                      getKey={(selected) => selected.id}
+                      getLabel={(selected) => selected.name}
+                      getDescription={(selected) => selected.notes ?? ""}
+                      placeholder="Buscar o escribir destino"
+                      onCreate={(name) => createDestinationMut.mutate({ name })}
+                      getCreateLabel={(name) => `Agregar nuevo destino: ${name}`}
+                      creating={createDestinationMut.isPending}
+                      registeredTitle="Destino guardado en el catálogo"
+                    />
+                  </Field>
                 )}
                 {movType === "EXIT" && (
-                  <input
-                    className="input"
-                    placeholder="Documento Material (opcional)"
-                    value={documentoMaterial}
-                    onChange={(e) => setDocumentoMaterial(e.target.value)}
-                    maxLength={80}
-                    aria-label="Documento Material"
-                  />
+                  <Field label="Documento Material">
+                    <input
+                      className="input"
+                      placeholder="Opcional"
+                      value={documentoMaterial}
+                      onChange={(e) => setDocumentoMaterial(e.target.value)}
+                      maxLength={80}
+                      aria-label="Documento Material"
+                    />
+                  </Field>
                 )}
                 {/* Encargado: siempre el usuario logueado. Solo ADMIN/MANAGER
                     pueden reasignarlo; el backend rechaza lo demás. */}
                 {!isTransfer && (
-                  <div style={{ display: "grid", gap: 3 }}>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>
-                      {responsibleFieldLabel(movType)}
-                    </span>
+                  <Field label={responsibleFieldLabel(movType)}>
                     {canReassignEncargado ? (
                       <SearchableSelect
                         options={users}
@@ -2244,13 +2655,15 @@ export default function MovementsPage() {
                         aria-label={responsibleFieldLabel(movType)}
                       />
                     )}
-                  </div>
+                  </Field>
                 )}
+                <Field label="Observaciones" span>
+                  <textarea className="input"
+                    placeholder="Opcional — se imprime en la nota"
+                    value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
+                    aria-label="Observaciones" />
+                </Field>
               </div>
-              <textarea className="input"
-                placeholder="Observaciones (opcional)"
-                value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
-                aria-label="Observaciones" />
             </>
           )}
 
@@ -2279,7 +2692,18 @@ export default function MovementsPage() {
                         <td style={{ color: "var(--muted)", fontSize: 12 }}>{l.summary}</td>
                         <td style={{ textAlign: "right" }}>{l.totalQty.toLocaleString("es-PY")}</td>
                         <td style={{ textAlign: "right" }}>{l.palletsCount}</td>
-                        <td style={{ textAlign: "right" }}>
+                        <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                          <button
+                            type="button"
+                            className="btn"
+                            onClick={() => editCartLine(l.key)}
+                            disabled={!!product}
+                            title={product ? "Agregá o quitá el material que estás cargando para poder editar esta línea" : "Volver a cargar este producto — lotes, pallets y fechas incluidos"}
+                            style={{ padding: "2px 8px", marginRight: 6, fontWeight: 700 }}
+                            aria-label={`Editar ${l.productLabel}`}
+                          >
+                            Editar
+                          </button>
                           <button type="button" className="btn" onClick={() => removeFromCart(l.key)} style={{ padding: "2px 8px", color: "var(--danger)" }} aria-label="Quitar producto">×</button>
                         </td>
                       </tr>
@@ -2341,9 +2765,9 @@ export default function MovementsPage() {
                     className="btn btn--primary"
                     type="submit"
                     disabled={savingDoc}
-                    aria-label="Confirmar entrada"
+                    aria-label="Revisar y confirmar la entrada"
                   >
-                    {savingDoc ? "Guardando..." : `✓ Confirmar entrada${cart.length ? ` (${cart.length + (product ? 1 : 0)} prod.)` : ""}`}
+                    {savingDoc ? "Guardando..." : `Revisar y confirmar entrada${cart.length ? ` (${cart.length + (product ? 1 : 0)} prod.)` : ""}`}
                   </button>
                   <button
                     type="button"
@@ -2364,7 +2788,7 @@ export default function MovementsPage() {
                 + Agregar otro producto
               </button>
               <button className="btn btn--primary" type="submit" disabled={savingDoc}>
-                {savingDoc ? "Guardando..." : `Registrar remito${cart.length ? ` (${cart.length + (product ? 1 : 0)} prod.)` : ""}`}
+                {savingDoc ? "Guardando..." : `Revisar y confirmar remito${cart.length ? ` (${cart.length + (product ? 1 : 0)} prod.)` : ""}`}
               </button>
               <button
                 type="button"
@@ -2380,6 +2804,16 @@ export default function MovementsPage() {
           )}
         </form>
       </section>}
+
+      {/* ── Revisión previa: la nota como va a quedar, antes de tocar stock ── */}
+      {pendingSubmission && (
+        <DocumentPreviewModal
+          preview={pendingSubmission.preview}
+          saving={savingDoc}
+          onConfirm={() => createDocumentMut.mutate(pendingSubmission.payload)}
+          onBack={() => setPendingSubmission(null)}
+        />
+      )}
 
       {/* ── Alta rápida de proveedor (sin salir del remito) ── */}
       {showNewSupplier && (
@@ -2474,14 +2908,43 @@ export default function MovementsPage() {
                 {lotGroups.filter((group) => group.palletLines.length > 0).map((group) => {
                   const locatedCount = group.palletLines.filter((line) => !!line.locationId).length;
                   const weightedCount = group.palletLines.filter((line) => line.weightKg !== "").length;
+                  const collapsed = collapsedLots.has(group.id);
+                  const pendingLocation = group.palletLines.length - locatedCount;
                   return (
                     <section key={group.id} aria-label={`Lote ${group.lotCode || "sin código"}`} style={{ border: "1px solid var(--border)", borderRadius: 9, overflow: "hidden" }}>
-                      <div style={{ padding: "9px 10px", background: "var(--bg)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", borderBottom: "1px solid var(--border)" }}>
-                        <div>
-                          <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4 }}>Lote</div>
-                          <strong style={{ fontFamily: "monospace", fontSize: 14 }}>{group.lotCode || "Sin código"}</strong>
+                      {/* Encabezado plegable: un click acá oculta o vuelve a mostrar
+                          el desglose del lote. */}
+                      <button
+                        type="button"
+                        onClick={() => toggleLotCollapsed(group.id)}
+                        aria-expanded={!collapsed}
+                        aria-label={`${collapsed ? "Mostrar" : "Ocultar"} el desglose del lote ${group.lotCode || "sin código"}`}
+                        style={{
+                          width: "100%", textAlign: "left", cursor: "pointer", font: "inherit",
+                          padding: "9px 10px", background: "var(--bg)", border: "none",
+                          borderBottom: "1px solid var(--border)",
+                          display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <span style={{ fontSize: 11, color: "var(--muted)", width: 12, flexShrink: 0 }} aria-hidden="true">
+                            {collapsed ? "▼" : "▲"}
+                          </span>
+                          <span>
+                            <span style={{ display: "block", fontSize: 10, color: "var(--muted)", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4 }}>Lote</span>
+                            <strong style={{ fontFamily: "monospace", fontSize: 14 }}>{group.lotCode || "Sin código"}</strong>
+                          </span>
                         </div>
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                          {/* Plegado, el encabezado tiene que alcanzar para saber si
+                              al lote le falta algo. */}
+                          {collapsed && (
+                            <span style={{ fontSize: 11, fontWeight: 700, color: pendingLocation > 0 ? "var(--warning)" : "var(--success)" }}>
+                              {pendingLocation > 0
+                                ? `${pendingLocation} pallet(s) sin sector`
+                                : "Todos con sector"}
+                            </span>
+                          )}
                           <div style={{ padding: "5px 9px", border: "1px solid var(--border-dim)", borderRadius: 6, background: "var(--bg-base)" }}>
                             <div style={{ fontSize: 9, color: "var(--muted)", fontWeight: 700, textTransform: "uppercase" }}>Cantidad total</div>
                             <strong style={{ fontSize: 13 }}>{(Number(group.quantity) || 0).toLocaleString("es-PY")} unid.</strong>
@@ -2491,8 +2954,9 @@ export default function MovementsPage() {
                             <strong style={{ fontSize: 13 }}>{group.palletLines.length}</strong>
                           </div>
                         </div>
-                      </div>
+                      </button>
 
+                      {!collapsed && (<>
                       {/* Carga rápida por lote */}
                       <div style={{ padding: 10, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 10, borderBottom: "1px solid var(--border)", background: "var(--bg-base)" }}>
                         <div style={{ display: "grid", gap: 5, alignContent: "start" }}>
@@ -2630,6 +3094,7 @@ export default function MovementsPage() {
                           </tbody>
                         </table>
                       </div>
+                      </>)}
                     </section>
                   );
                 })}

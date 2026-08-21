@@ -41,7 +41,7 @@ import {
   parseExcelDateCell,
 } from '../../common/date';
 import { PilasService, PlacementItem } from '../pilas/pilas.service';
-import { dropSapLotIfUnused, productUsesSapLot } from '../products/uses-sap-lot';
+import { dropSapLotIfUnused, productUsesSapLot, warehouseUsesSapLot } from '../products/uses-sap-lot';
 import { buildReceptionChecklist, type ReceptionChecklist } from './reception-checklist';
 
 @Injectable()
@@ -618,7 +618,7 @@ export class MovementsService {
             item.fechaVencimiento, item.proveedor,
             item.fechaFabricacion, item.sapLot,
             dto.isProvisional ? 'PENDING_REGULARIZATION' : 'NORMAL',
-            item.supplierLot,
+            item.supplierLot, resolved.warehouseId,
           );
           lotByItemIndex.set(idx, lot);
           byLocation.set(locId, [
@@ -780,7 +780,7 @@ export class MovementsService {
               item.fechaVencimiento, item.proveedor,
               item.fechaFabricacion, item.sapLot,
               dto.isProvisional ? 'PENDING_REGULARIZATION' : 'NORMAL',
-              item.supplierLot,
+              item.supplierLot, resolved.warehouseId,
             );
             resolvedLotId = lot.id;
             const existingCount = await manager.getRepository(Pallet).count({ where: { lotId: lot.id } });
@@ -1362,9 +1362,13 @@ export class MovementsService {
           for (const field of lotStringFields) {
             const newVal = dto[field]?.trim() ?? null;
             if (newVal === null) continue;
-            // No se le asigna un lote SAP nuevo a un material que no los usa.
-            // El valor histórico del lote, si lo tiene, queda como está.
-            if (field === 'sapLot' && !(await productUsesSapLot(manager, lot.productId))) continue;
+            // No se le asigna un lote SAP nuevo si el depósito del movimiento o
+            // el material no los usan. El valor histórico del lote, si lo tiene,
+            // queda como está.
+            if (field === 'sapLot' && !(
+              await warehouseUsesSapLot(manager, movement.warehouseId)
+              && await productUsesSapLot(manager, lot.productId)
+            )) continue;
             const oldVal = lot[field] ?? null;
             if (newVal !== oldVal) {
               logs.push({ movementId: id, field: `lot.${lot.lotCode}.${field}`, oldValue: oldVal, newValue: newVal, changedById: userId, reason: dto.reason });
@@ -1558,6 +1562,10 @@ export class MovementsService {
         // Material sin Lote SAP: se avisa y se ignora ese campo en vez de
         // cortar la corrección entera, que puede traer cantidades y renombres
         // legítimos. El sapLot histórico del lote no se toca.
+        if (field === 'sapLot' && !(await warehouseUsesSapLot(this.dataSource.manager, movement?.warehouseId))) {
+          warnings.push(`El depósito del movimiento no utiliza Lote SAP: ese dato no se modificó.`);
+          continue;
+        }
         if (field === 'sapLot' && !(await productUsesSapLot(this.dataSource.manager, lot.productId))) {
           warnings.push(`El material del lote ${lot.lotCode} no utiliza Lote SAP: ese dato no se modificó.`);
           continue;
@@ -1860,9 +1868,13 @@ export class MovementsService {
           for (const field of lotStringFields) {
             const newVal = dto[field]?.trim() ?? null;
             if (newVal === null) continue;
-            // No se le asigna un lote SAP nuevo a un material que no los usa.
-            // El valor histórico del lote, si lo tiene, queda como está.
-            if (field === 'sapLot' && !(await productUsesSapLot(manager, lot.productId))) continue;
+            // No se le asigna un lote SAP nuevo si el depósito del movimiento o
+            // el material no los usan. El valor histórico del lote, si lo tiene,
+            // queda como está.
+            if (field === 'sapLot' && !(
+              await warehouseUsesSapLot(manager, movement.warehouseId)
+              && await productUsesSapLot(manager, lot.productId)
+            )) continue;
             const oldVal = lot[field] ?? null;
             if (newVal !== oldVal) {
               logs.push({ movementId: id, field: `lot.${lot.lotCode}.${field}`, oldValue: oldVal, newValue: newVal, changedById: userId, reason: dto.reason });
@@ -1980,6 +1992,7 @@ export class MovementsService {
         'product."usesSapLot" AS "usesSapLot"',
         'warehouse.id AS "warehouseId"',
         'warehouse.name AS "warehouseName"',
+        'warehouse."usesSapLot" AS "warehouseUsesSapLot"',
         'location.id AS "locationId"',
         'location.code AS "locationCode"',
         'fromWarehouse.id AS "fromWarehouseId"',
@@ -2115,6 +2128,7 @@ export class MovementsService {
         'product."usesSapLot" AS "usesSapLot"',
         'warehouse.id AS "warehouseId"',
         'warehouse.name AS "warehouseName"',
+        'warehouse."usesSapLot" AS "warehouseUsesSapLot"',
         'location.id AS "locationId"',
         'location.code AS "locationCode"',
         'fromWarehouse.id AS "fromWarehouseId"',
@@ -2263,13 +2277,14 @@ export class MovementsService {
     sapLot?: string,
     status = 'NORMAL',
     supplierLot?: string,
+    warehouseId?: string | null,
   ): Promise<Lot> {
     const repo = manager.getRepository(Lot);
     lotCode = normalizeLotCode(lotCode);
-    // Material configurado como "no utiliza Lote SAP": el sistema no le escribe
-    // uno, venga de donde venga. Es el único punto por el que pasan la entrada,
-    // el aumento de una corrección y el import de carga inicial.
-    sapLot = await dropSapLotIfUnused(manager, productId, sapLot);
+    // Depósito o material configurados como "no utiliza Lote SAP": el sistema no
+    // le escribe uno, venga de donde venga. Es el único punto por el que pasan la
+    // entrada, el aumento de una corrección y el import de carga inicial.
+    sapLot = await dropSapLotIfUnused(manager, productId, sapLot, warehouseId);
     // El formulario de Entrada no tiene un campo propio para "lote proveedor" —
     // por defecto es el mismo código de lote que se cargó. `supplierLot` sigue
     // existiendo aparte por si algún día se necesita distinguirlo (el caller que
@@ -2354,7 +2369,15 @@ export class MovementsService {
         // el material no usa. Materiales viejos sin el dato: se asume que sí.
         usesSapLot: row.usesSapLot ?? true,
       },
-      warehouse: row.warehouseId ? { id: row.warehouseId, name: row.warehouseName } : null,
+      warehouse: row.warehouseId
+        ? {
+            id: row.warehouseId, name: row.warehouseName,
+            // Junto con `material.usesSapLot`, es lo que el frontend usa para
+            // decidir si un `sapLot` guardado sigue vigente o quedó de antes
+            // de reconfigurar el depósito (ver `products/uses-sap-lot.ts`).
+            usesSapLot: row.warehouseUsesSapLot ?? true,
+          }
+        : null,
       location: row.locationId ? { id: row.locationId, code: row.locationCode } : null,
       from: row.fromLocationId || row.fromWarehouseId
         ? { warehouseId: row.fromWarehouseId, warehouseName: row.fromWarehouseName, locationId: row.fromLocationId, locationCode: row.fromLocationCode }

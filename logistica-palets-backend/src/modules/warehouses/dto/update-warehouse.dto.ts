@@ -17,4 +17,9 @@ export class UpdateWarehouseDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+
+  /** El depósito opera con Lote SAP. Apagarlo no toca los `lots.sapLot` ya guardados. */
+  @IsOptional()
+  @IsBoolean()
+  usesSapLot?: boolean;
 }

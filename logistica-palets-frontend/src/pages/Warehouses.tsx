@@ -58,6 +58,8 @@ export default function WarehousesPage() {
   const [name, setName] = useState("");
   const [documentCode, setDocumentCode] = useState("");
   const [address, setAddress] = useState("");
+  // Un depósito nuevo nace manejando Lote SAP, como los ya existentes.
+  const [usesSapLot, setUsesSapLot] = useState(true);
   const [submitted, setSubmitted] = useState(false);
   const [selectedIdChoice, setSelectedId] = useState<string | null>(null);
 
@@ -172,7 +174,7 @@ export default function WarehousesPage() {
     onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: ["warehouses"] });
       toast.success(`Depósito ${created.name} creado`);
-      setName(""); setDocumentCode(""); setAddress(""); setSubmitted(false);
+      setName(""); setDocumentCode(""); setAddress(""); setUsesSapLot(true); setSubmitted(false);
       setSelectedId(created.id);
     },
     onError: (err) => toast.error(getFriendlyApiError(err)),
@@ -192,6 +194,25 @@ export default function WarehousesPage() {
     mutationFn: ({ id, code }: { id: string; code: string }) => updateWarehouse(id, { documentCode: code }),
     onSuccess: (updated) => {
       toast.success(`Código documental ${updated.documentCode} configurado`);
+      void queryClient.invalidateQueries({ queryKey: ["warehouses"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouse-layout", updated.id] });
+    },
+    onError: (err) => toast.error(getFriendlyApiError(err)),
+  });
+
+  /**
+   * Lote SAP del depósito. Es configuración de operaciones futuras: apagarlo
+   * saca el campo de la Entrada y la fila de la etiqueta, y no toca ningún
+   * `sapLot` ya registrado.
+   */
+  const sapLotMut = useMutation({
+    mutationFn: ({ id, value }: { id: string; value: boolean }) => updateWarehouse(id, { usesSapLot: value }),
+    onSuccess: (updated) => {
+      toast.success(
+        updated.usesSapLot === false
+          ? `${updated.name} ya no maneja Lote SAP`
+          : `${updated.name} maneja Lote SAP`,
+      );
       void queryClient.invalidateQueries({ queryKey: ["warehouses"] });
       void queryClient.invalidateQueries({ queryKey: ["warehouse-layout", updated.id] });
     },
@@ -268,7 +289,10 @@ export default function WarehousesPage() {
     event.preventDefault();
     setSubmitted(true);
     if (!allowCreate || nameError || documentCodeError) return;
-    createMut.mutate({ name: name.trim(), documentCode: documentCode.trim(), address: address.trim(), active: true });
+    createMut.mutate({
+      name: name.trim(), documentCode: documentCode.trim(), address: address.trim(),
+      active: true, usesSapLot,
+    });
   }
 
   function handleDelete(item: Warehouse) {
@@ -442,6 +466,23 @@ export default function WarehousesPage() {
                 placeholder="Dirección"
                 aria-label="Dirección"
               />
+              {/* Lote SAP del depósito: se define acá, al crearlo, y de ahí en
+                  más manda sobre la Entrada y la etiqueta de pallet. */}
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  disabled={saving}
+                  checked={usesSapLot}
+                  onChange={(event) => setUsesSapLot(event.target.checked)}
+                  style={{ width: 15, height: 15, marginTop: 1, flexShrink: 0 }}
+                />
+                <span>
+                  <strong>Maneja Lote SAP</strong>
+                  <span style={{ display: "block", color: "var(--muted)", fontSize: 11, marginTop: 2 }}>
+                    Si se apaga, el Lote SAP no se pide en la Entrada ni sale en las etiquetas de este depósito.
+                  </span>
+                </span>
+              </label>
               {submitted && (nameError || documentCodeError) ? (
                 <p className="form-error" role="alert" style={{ margin: 0 }}>{nameError || documentCodeError}</p>
               ) : null}
@@ -483,6 +524,11 @@ export default function WarehousesPage() {
                   {item.active ? "Activo" : "Inactivo"}
                 </span>
               </div>
+              {item.usesSapLot === false && (
+                <span className="badge" style={{ fontSize: 10, marginTop: 4 }} title="Este depósito no opera con Lote SAP">
+                  SIN LOTE SAP
+                </span>
+              )}
               <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>{item.address || "—"}</div>
               {selectedId === item.id && summary && (
                 <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6 }}>
@@ -537,6 +583,27 @@ export default function WarehousesPage() {
                   ) : (
                     <span style={{ fontSize: 12, color: "var(--danger)" }}>Sin código documental</span>
                   )}
+                  {/* Lote SAP del depósito. Aplica a operaciones futuras: los
+                      `sapLot` ya registrados quedan como están. */}
+                  {allowCreate ? (
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, marginTop: 6, cursor: "pointer" }}>
+                      <input
+                        type="checkbox"
+                        checked={layout.warehouse.usesSapLot !== false}
+                        disabled={sapLotMut.isPending}
+                        onChange={(event) => sapLotMut.mutate({ id: layout.warehouse.id, value: event.target.checked })}
+                        style={{ width: 14, height: 14 }}
+                      />
+                      <span style={{ fontWeight: 700 }}>Maneja Lote SAP</span>
+                      <span style={{ color: "var(--muted)" }}>
+                        — si se apaga, no se pide en la Entrada ni sale en las etiquetas
+                      </span>
+                    </label>
+                  ) : layout.warehouse.usesSapLot === false ? (
+                    <span style={{ display: "block", fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
+                      No maneja Lote SAP
+                    </span>
+                  ) : null}
                 </div>
                 {allowStructure && (
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

@@ -21,8 +21,13 @@ import { Pila } from '../src/modules/pilas/entities/pila.entity';
 import { Supplier } from '../src/modules/suppliers/entities/supplier.entity';
 import { Destination } from '../src/modules/destinations/entities/destination.entity';
 import { User } from '../src/modules/users/entities/user.entity';
+import { UserAuditLog } from '../src/modules/users/entities/user-audit-log.entity';
 import { UserWarehouse } from '../src/modules/warehouses/entities/user-warehouse.entity';
 import { WarehouseAccessService } from '../src/modules/warehouses/warehouse-access.service';
+import { RolePermission } from '../src/modules/permissions/entities/role-permission.entity';
+import { UserPermission } from '../src/modules/permissions/entities/user-permission.entity';
+import { PermissionsService } from '../src/modules/permissions/permissions.service';
+import { ROLE_PERMISSIONS_SEED } from '../src/modules/permissions/role-permissions.seed';
 
 export const TEST_USER_ID = '00000000-0000-0000-0000-0000000000aa';
 
@@ -35,6 +40,7 @@ export const TEST_ENTITIES = [
   Product, Warehouse, Location, Stock, Lot, Pallet, Pila, Supplier, Destination, User, UserWarehouse,
   Movement, MovementDetail, LogisticsDocument, DocumentSequence, RegularizationLog,
   AdjustmentRequest, AdjustmentRequestLine, Attachment, DocumentEvent, SapStockSnapshot,
+  UserAuditLog, RolePermission, UserPermission,
 ];
 
 /** Tablas a vaciar entre tests (orden irrelevante por CASCADE). */
@@ -43,7 +49,8 @@ const TABLES = [
   'logistics_documents', 'regularization_logs',
   'adjustment_request_lines', 'adjustment_requests',
   'attachments', 'document_events', 'document_sequences',
-  'sap_stock_snapshots', 'user_warehouses', 'products', 'locations', 'warehouses', 'suppliers', 'destinations', 'users',
+  'sap_stock_snapshots', 'user_warehouses', 'products', 'locations', 'warehouses', 'suppliers', 'destinations',
+  'user_audit_log', 'role_permissions', 'user_permissions', 'users',
 ];
 
 /**
@@ -125,4 +132,25 @@ export function createAccessService(ds: DataSource): WarehouseAccessService {
     ds.getRepository(UserWarehouse),
     ds,
   );
+}
+
+/** `PermissionsService` real conectado al DataSource de test — mismo criterio que `createAccessService`. */
+export function createPermissionsService(ds: DataSource): PermissionsService {
+  return new PermissionsService(
+    ds.getRepository(RolePermission),
+    ds.getRepository(UserPermission),
+  );
+}
+
+/**
+ * Siembra `role_permissions` con la misma matriz que la migración real
+ * (`ROLE_PERMISSIONS_SEED`) — así los tests ejercitan la configuración real
+ * de los roles, no una inventada para la prueba.
+ */
+export async function seedRolePermissions(ds: DataSource): Promise<void> {
+  const repo = ds.getRepository(RolePermission);
+  const rows = ROLE_PERMISSIONS_SEED.flatMap((row) =>
+    row.roles.map((role) => repo.create({ role, module: row.module, action: row.action, allowed: true })),
+  );
+  await repo.save(rows);
 }

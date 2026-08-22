@@ -11,6 +11,7 @@ import { EventsModule } from './modules/events/events.module';
 import { AlertsModule } from './modules/alerts/alerts.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
+import { PermissionsModule } from './modules/permissions/permissions.module';
 import { ProductsModule } from './modules/products/products.module';
 import { LotsModule } from './modules/lots/lots.module';
 import { WarehousesModule } from './modules/warehouses/warehouses.module';
@@ -100,12 +101,19 @@ import { AppController } from './app.controller';
             process.env.DB_LOGGING === 'true'
               ? ['query', 'error', 'warn']
               : ['error'],
+          // Fuerza la zona de la sesión en el connect — ver el comentario en
+          // src/data-source.ts. No confiar en el default de sesión del server:
+          // el mismo Postgres puede resolver un `TimeZone` distinto según el
+          // camino de red por el que llega la conexión (host↔WSL2↔contenedor
+          // en dev vs. red interna del compose en prod).
+          extra: { options: '-c timezone=Etc/GMT+3' },
         };
       },
     }),
     CacheModule,
     EventsModule,
     AuthModule,
+    PermissionsModule,
     UsersModule,
     ProductsModule,
     LotsModule,

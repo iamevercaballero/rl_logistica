@@ -22,11 +22,19 @@ services:
     restart: unless-stopped
     env_file: [.env.prod]
     environment:
-      # Sin esto Postgres corre en UTC — el backend ya trata todas las fechas
-      # de forma explícita (ver src/common/date.ts), pero esto es defensa en
-      # profundidad para cualquier función SQL que use la zona de la sesión.
-      TZ:   America/Asuncion
-      PGTZ: America/Asuncion
+      # UTC-3 fijo, NO "America/Asuncion": ese nombre depende de que el
+      # tzdata bundleado en la imagen conozca la Ley 7324 (derogó el horario
+      # de verano en oct/2024). postgres:16-alpine quedó con un snapshot de
+      # tzdata anterior a la ley, así que CURRENT_TIMESTAMP calculaba UTC-4 en
+      # los meses que antes eran "invierno" — atrasando 1h (y a veces el día)
+      # todo timestamp con default de DB: movements.date/createdAt, y
+      # cualquier @CreateDateColumn/@UpdateDateColumn de TypeORM en toda la
+      # app. Etc/GMT+3 (el signo va invertido por convención POSIX) es UTC-3
+      # fijo en cualquier versión de tzdata — mismo criterio que
+      # APP_TIME_ZONE en src/common/date.ts, para que este contenedor no
+      # dependa de mantener su tzdata al día.
+      TZ:   Etc/GMT+3
+      PGTZ: Etc/GMT+3
     volumes:
       - postgres_data_prod:/var/lib/postgresql/data
     healthcheck:
@@ -61,8 +69,8 @@ services:
     env_file: [.env.prod]
     environment:
       # ── Overrides fijos (no pueden ser cambiados desde .env.prod) ──────────
-      # Zona horaria del proceso — defensa en profundidad (ver nota en `db`).
-      TZ:                America/Asuncion
+      # Etc/GMT+3, no America/Asuncion — ver el comentario en el servicio `db`.
+      TZ:                Etc/GMT+3
       # Redes internas del compose
       PORT:              3000
       DB_HOST:           db

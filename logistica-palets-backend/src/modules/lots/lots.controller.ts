@@ -24,11 +24,13 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles/roles.guard';
 import { Roles } from '../auth/roles/roles.decorator';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
 
 type AuthedRequest = Request & { user: AccessUser };
 const OptionalUuid = new ParseUUIDPipe({ optional: true });
 
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
 @Controller('lots')
 export class LotsController {
   constructor(
@@ -43,6 +45,7 @@ export class LotsController {
 
   @Get()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('lots', 'read')
   async findAll(
     @Req() req: AuthedRequest,
     @Query('productId') productId?: string,
@@ -62,6 +65,7 @@ export class LotsController {
    *  Filtra por productId, sapLot, o locationId (para selección de pallets en transferencias). */
   @Get('fefo')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('lots', 'read')
   async fefo(
     @Req() req: AuthedRequest,
     @Query('productId') productId?: string,
@@ -74,24 +78,28 @@ export class LotsController {
 
   @Get(':id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('lots', 'read')
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.findOne(id);
   }
 
   @Post()
   @Roles('ADMIN', 'MANAGER')
+  @RequirePermission('lots', 'create')
   create(@Body() dto: CreateLotDto) {
     return this.service.create(dto);
   }
 
   @Patch(':id')
   @Roles('ADMIN', 'MANAGER')
+  @RequirePermission('lots', 'update')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateLotDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(':id')
   @Roles('ADMIN', 'MANAGER')
+  @RequirePermission('lots', 'remove')
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.remove(id);
   }

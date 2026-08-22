@@ -1,11 +1,11 @@
-import { IsString, IsOptional, IsIn, MinLength } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional, IsString, Matches } from 'class-validator';
+import { PASSWORD_PATTERN, PASSWORD_POLICY_MESSAGE } from '../password-policy';
 
 export class CreateUserDto {
   @IsString()
   username: string;
 
-  @IsString()
-  @MinLength(6)
+  @Matches(PASSWORD_PATTERN, { message: PASSWORD_POLICY_MESSAGE })
   password: string;
 
   @IsOptional()
@@ -15,4 +15,9 @@ export class CreateUserDto {
   @IsOptional()
   @IsString()
   fullName?: string;
+
+  /** Si `true`, el usuario debe cambiar la contraseña temporal en su próximo ingreso. */
+  @IsOptional()
+  @IsBoolean()
+  mustChangePassword?: boolean;
 }

@@ -179,6 +179,28 @@ export function businessDaysUntil(value?: string | null, from: string = business
 }
 
 /**
+ * Normaliza una columna `date` de Postgres leída por una consulta cruda
+ * (`dataSource.query`/`getRawMany`): esas no pasan por los transformers de
+ * TypeORM, así que en vez de la string "YYYY-MM-DD" que entrega una consulta
+ * por Repository/QueryBuilder normal, `pg` la devuelve como un `Date` —
+ * anclado a la **medianoche local del proceso**, no UTC. Por eso se lee con
+ * los getters locales (`getFullYear`/`getMonth`/`getDate`): usar
+ * `toISOString()` o los getters UTC corre el resultado un día salvo que el
+ * proceso corra justo en UTC+0. Sin este paso, pasarla tal cual a
+ * `businessDaysUntil` tira `TypeError: value.slice is not a function` — el
+ * bug real detrás de `freshness()` (reports) y `evaluateExpiryAlerts`
+ * (alerts), las dos consultas crudas que tocan `fechaVencimiento`/`fechaFabricacion`.
+ */
+export function rawDateColumnToString(value: string | Date | null | undefined): string | null {
+  if (value == null) return null;
+  if (typeof value === 'string') return value.slice(0, 10);
+  const y = value.getFullYear();
+  const m = String(value.getMonth() + 1).padStart(2, '0');
+  const d = String(value.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
  * Medianoche del día siguiente a `value` menos 1ms, en la zona del depósito:
  * el límite superior (inclusive) de "todo el día `value` en Asunción". Junto
  * con `parseBusinessDate(value)` como límite inferior, arma un rango

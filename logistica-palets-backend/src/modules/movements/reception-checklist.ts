@@ -61,7 +61,14 @@ type DetailLike = {
   quantity: number;
 };
 
-type ProductLike = { id: string; code: string; description: string; unitOfMeasure?: string | null };
+type ProductLike = {
+  id: string;
+  code: string;
+  description: string;
+  unitOfMeasure?: string | null;
+  /** Ver `products/uses-sap-lot.ts`. En `false` el material nunca recibe Lote SAP. */
+  usesSapLot: boolean;
+};
 type LotLike = {
   id: string;
   lotCode: string;
@@ -317,7 +324,16 @@ export function buildReceptionChecklist(input: ChecklistInput): ReceptionCheckli
     lotDisplay: singleValueOrDetails(lotRows.map((row) => row.lotCode)),
     fabricationDisplay: singleValueOrDetails(lotRows.map((row) => row.fechaFabricacion)),
     expirationDisplay: singleValueOrDetails(lotRows.map((row) => row.fechaVencimiento)),
-    sapLotDisplay: singleValueOrDetails(lotRows.map((row) => row.sapLot)),
+    // Un material configurado como "no usa Lote SAP" nunca tiene `sapLot`
+    // (uses-sap-lot.ts lo descarta al guardar) — incluir esa fila en la
+    // comparación mandaría el campo a VER DETALLES aunque los materiales que sí
+    // usan Lote SAP coincidan en un único valor. Se excluyen del todo, no se
+    // tratan como "de acuerdo": ese material no participa de la pregunta.
+    sapLotDisplay: singleValueOrDetails(
+      lotRows
+        .filter((row) => productMap.get(row.productId)?.usesSapLot !== false)
+        .map((row) => row.sapLot),
+    ),
     totalPallets: computedTotalPallets,
     totalQuantity: computedTotalQuantity,
   };

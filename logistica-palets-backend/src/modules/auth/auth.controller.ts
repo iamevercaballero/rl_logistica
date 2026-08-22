@@ -11,7 +11,11 @@ import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { UsersService } from '../users/users.service';
+import { PermissionsService } from '../permissions/permissions.service';
+import type { UserRole } from '../users/entities/user.entity';
 
 /** Max-age for the refresh-token cookie: 7 days in milliseconds */
 const REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1_000;
@@ -22,9 +26,15 @@ const REFRESH_COOKIE = 'refreshToken';
 /** Cookie path: only sent for auth-related endpoints */
 const REFRESH_COOKIE_PATH = '/api/auth';
 
+type AuthedRequest = Request & { user: { userId: string; username: string; role: UserRole } };
+
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly users: UsersService,
+    private readonly permissions: PermissionsService,
+  ) {}
 
   // ── Login ──────────────────────────────────────────────────────────────────
 
@@ -73,11 +83,37 @@ export class AuthController {
     return { loggedOut: true };
   }
 
-  // ── Me ─────────────────────────────────────────────────────────────────────
+  // ── Cambio de contraseña propio ─────────────────────────────────────────────
 
   @UseGuards(JwtAuthGuard)
+  @Post('change-password')
+  changePassword(@Body() dto: ChangePasswordDto, @Req() req: AuthedRequest) {
+    return this.users.changeOwnPassword(req.user.userId, dto.currentPassword, dto.newPassword);
+  }
+
+  // ── Me ─────────────────────────────────────────────────────────────────────
+
+  /**
+   * Perfil completo del usuario autenticado + sus permisos efectivos
+   * (plantilla del rol con sus overrides aplicados). El frontend debe usar
+   * `permissions`, no `role === "..."`, para decidir qué mostrar — el backend
+   * sigue siendo quien realmente autoriza cada operación.
+   */
+  @UseGuards(JwtAuthGuard)
   @Get('me')
-  me(@Req() req: Request) {
-    return (req as any).user;
+  async me(@Req() req: AuthedRequest) {
+    const [profile, permissions] = await Promise.all([
+      this.users.findOne(req.user.userId),
+      this.permissions.getEffectivePermissions(req.user.userId, req.user.role),
+    ]);
+    return {
+      userId: profile.id,
+      username: profile.username,
+      fullName: profile.fullName,
+      role: profile.role,
+      active: profile.active,
+      mustChangePassword: profile.mustChangePassword,
+      permissions,
+    };
   }
 }

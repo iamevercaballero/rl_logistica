@@ -223,6 +223,22 @@ export class WarehouseAccessService {
     return rows.map((row) => row.warehouseId);
   }
 
+  /** Igual que `listAssignments`, para varios usuarios en una sola consulta — usado en la lista de Usuarios. */
+  async listAssignmentsForUsers(userIds: string[]): Promise<Map<string, string[]>> {
+    const map = new Map<string, string[]>();
+    if (userIds.length === 0) return map;
+    const rows = await this.assignmentRepo.find({
+      where: { userId: In(userIds) },
+      select: { userId: true, warehouseId: true },
+    });
+    for (const row of rows) {
+      const list = map.get(row.userId) ?? [];
+      list.push(row.warehouseId);
+      map.set(row.userId, list);
+    }
+    return map;
+  }
+
   /** Reemplaza las asignaciones de un usuario por el conjunto indicado. */
   async setAssignments(userId: string, warehouseIds: string[]): Promise<string[]> {
     const unique = [...new Set(warehouseIds)];

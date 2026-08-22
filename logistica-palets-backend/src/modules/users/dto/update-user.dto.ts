@@ -1,4 +1,5 @@
-import { IsBoolean, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional, IsString, Matches } from 'class-validator';
+import { PASSWORD_PATTERN, PASSWORD_POLICY_MESSAGE } from '../password-policy';
 
 export class UpdateUserDto {
   @IsOptional()
@@ -6,8 +7,7 @@ export class UpdateUserDto {
   username?: string;
 
   @IsOptional()
-  @IsString()
-  @MinLength(6)
+  @Matches(PASSWORD_PATTERN, { message: PASSWORD_POLICY_MESSAGE })
   password?: string;
 
   @IsOptional()

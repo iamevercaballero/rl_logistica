@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { UsersService } from '../users/users.service';
+import { wasIssuedBeforePasswordChange } from './token-freshness';
 
 @Injectable()
 export class AuthService {
@@ -49,6 +50,9 @@ export class AuthService {
       }),
     ]);
 
+    // Best-effort: un fallo acá no debe impedir el login.
+    void this.usersService.touchLastLogin(user.id).catch(() => {});
+
     return {
       access_token,
       refresh_token,
@@ -56,6 +60,8 @@ export class AuthService {
         userId: user.id,
         username: user.username,
         role: user.role,
+        fullName: user.fullName ?? null,
+        mustChangePassword: user.mustChangePassword,
       },
     };
   }
@@ -69,7 +75,7 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token ausente');
     }
 
-    let payload: { sub: string; username: string; role: string };
+    let payload: { sub: string; username: string; role: string; iat: number };
     try {
       payload = await this.jwt.verifyAsync(refreshToken, {
         secret: this.refreshSecret,
@@ -82,6 +88,11 @@ export class AuthService {
     const user = await this.usersService.findByUsername(payload.username);
     if (!user || !user.active) {
       throw new UnauthorizedException('Usuario inactivo o eliminado');
+    }
+    // Sin esto, "cerrar sesiones"/reset de contraseña solo cortaba el access
+    // token: el refresh token seguía vivo y renovaba acceso indefinidamente.
+    if (wasIssuedBeforePasswordChange(payload.iat, user.passwordChangedAt)) {
+      throw new UnauthorizedException('La sesión ya no es válida: la contraseña cambió o se cerraron las sesiones.');
     }
 
     const access_token = await this.jwt.signAsync({

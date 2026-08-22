@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { canRead } from "../auth/rbac";
+import { can } from "../auth/permissions";
 import WarehouseSelector from "../components/WarehouseSelector";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveWarehouseId } from "../contexts/WarehouseContext";
@@ -169,7 +169,7 @@ export default function AppLayout() {
   if (!isReady) return null;
   if (!user) return <Navigate to="/login" replace />;
 
-  const visible = modules.filter((m) => m.key === "dashboard" || canRead(m.key, user.role));
+  const visible = modules.filter((m) => m.key === "dashboard" || can(user, m.key, "read"));
   const initials = user.username.slice(0, 2).toUpperCase();
 
   function handleLogout() {
@@ -301,31 +301,38 @@ export default function AppLayout() {
               {m.label}
             </NavLink>
           ))}
+          {/* "Usuarios" no vive en `modules`/`visible`: necesita el separador
+              visual de la sección de administración. MANAGER también entra acá
+              (administra personal acotado) — antes quedaba escondido detrás de
+              un `role === "ADMIN"` que ignoraba lo que ya decía `rbac.ts`. */}
+          {can(user, "users", "read") && (
+            <NavLink
+              to="/users"
+              onClick={() => handleNavClick("/users")}
+              className={({ isActive }) =>
+                `sidebar-link${isActive ? " sidebar-link--active" : ""}`
+              }
+              style={{ borderTop: "1px solid rgba(255,255,255,.08)", marginTop: 8, paddingTop: 12 }}
+            >
+              {Icons["users"]}
+              Usuarios
+            </NavLink>
+          )}
+          {/* Carga masiva es una herramienta de mantenimiento (reimporta/pisa
+              catálogo e inventario) — deliberadamente fuera del sistema de
+              permisos granular, exclusiva de ADMIN sin excepción. */}
           {user.role === "ADMIN" && (
-            <>
-              <NavLink
-                to="/users"
-                onClick={() => handleNavClick("/users")}
-                className={({ isActive }) =>
-                  `sidebar-link${isActive ? " sidebar-link--active" : ""}`
-                }
-                style={{ borderTop: "1px solid rgba(255,255,255,.08)", marginTop: 8, paddingTop: 12 }}
-              >
-                {Icons["users"]}
-                Usuarios
-              </NavLink>
-              <NavLink
-                to="/seed"
-                onClick={() => handleNavClick("/seed")}
-                className={({ isActive }) =>
-                  `sidebar-link${isActive ? " sidebar-link--active" : ""}`
-                }
-                style={{ opacity: 0.7 }}
-              >
-                {Icons["seed"]}
-                Carga masiva
-              </NavLink>
-            </>
+            <NavLink
+              to="/seed"
+              onClick={() => handleNavClick("/seed")}
+              className={({ isActive }) =>
+                `sidebar-link${isActive ? " sidebar-link--active" : ""}`
+              }
+              style={{ opacity: 0.7 }}
+            >
+              {Icons["seed"]}
+              Carga masiva
+            </NavLink>
           )}
         </nav>
 

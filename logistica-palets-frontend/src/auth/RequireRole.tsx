@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { Navigate } from "react-router-dom";
 import { useAuth } from "./AuthContext";
-import { canRead, type ModuleKey } from "./rbac";
+import { can } from "./permissions";
+import type { ModuleKey } from "./rbac";
 
 export default function RequireRole({
   module,
@@ -20,7 +21,7 @@ export default function RequireRole({
     return <Navigate to="/login" replace />;
   }
 
-  if (!canRead(module, user.role)) {
+  if (!can(user, module, "read")) {
     return (
       <div>
         <h2>Sin permisos</h2>

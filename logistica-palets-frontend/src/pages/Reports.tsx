@@ -1368,8 +1368,8 @@ export default function ReportsPage() {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
             {([
               { bg: "rgba(220,38,38,0.18)", text: "#f87171", label: "Vencido" },
-              { bg: "rgba(217,119,6,0.18)", text: "#fbbf24", label: "≤ 30 días" },
-              { bg: "rgba(202,138,4,0.12)", text: "#d97706", label: "≤ 60 días" },
+              { bg: "rgba(202,138,4,0.12)", text: "#d97706", label: "≤ 30 días" },
+              { bg: "rgba(217,119,6,0.18)", text: "#fbbf24", label: "≤ 60 días" },
               { bg: "rgba(34,197,94,0.12)", text: "#4ade80", label: "> 60 días" },
             ] as const).map((s) => (
               <span key={s.label} style={{
@@ -1394,7 +1394,7 @@ export default function ReportsPage() {
                 <span className="badge" style={{ background: "rgba(220,38,38,0.18)", color: "#f87171" }}>
                   Vencidos: <strong>{freshnessData.filter(r => r.diasRestantes < 0).length}</strong>
                 </span>
-                <span className="badge" style={{ background: "rgba(217,119,6,0.18)", color: "#fbbf24" }}>
+                <span className="badge" style={{ background: "rgba(202,138,4,0.12)", color: "#d97706" }}>
                   Críticos (≤30d): <strong>{freshnessData.filter(r => r.diasRestantes >= 0 && r.diasRestantes <= 30).length}</strong>
                 </span>
               </div>
@@ -1416,12 +1416,12 @@ export default function ReportsPage() {
                     {freshnessSort.sortedData.map((r) => {
                       const rowBg =
                         r.diasRestantes < 0 ? "rgba(220,38,38,0.13)" :
-                        r.diasRestantes <= 30 ? "rgba(217,119,6,0.13)" :
-                        r.diasRestantes <= 60 ? "rgba(202,138,4,0.08)" : undefined;
+                        r.diasRestantes <= 30 ? "rgba(202,138,4,0.13)" :
+                        r.diasRestantes <= 60 ? "rgba(217,119,6,0.08)" : undefined;
                       const diasColor =
                         r.diasRestantes < 0 ? "#f87171" :
-                        r.diasRestantes <= 30 ? "#fbbf24" :
-                        r.diasRestantes <= 60 ? "#d97706" : "#4ade80";
+                        r.diasRestantes <= 30 ? "#d97706" :
+                        r.diasRestantes <= 60 ? "#fbbf24" : "#4ade80";
                       return (
                         <tr key={r.lotId} style={rowBg ? { background: rowBg } : {}}>
                           <td style={{ fontFamily: "monospace", fontSize: 13 }}><strong>{r.product.code}</strong></td>

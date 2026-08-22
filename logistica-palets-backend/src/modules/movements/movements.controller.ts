@@ -33,12 +33,14 @@ import { PreviewPlacementDto } from './dto/preview-placement.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles/roles.guard';
 import { Roles } from '../auth/roles/roles.decorator';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
 
 const SNAPSHOT_EXTENSIONS = ['.xlsx', '.xls', '.csv'];
 
 type AuthedRequest = Request & { user: AccessUser };
 
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
 @Controller('movements')
 export class MovementsController {
   constructor(
@@ -58,6 +60,7 @@ export class MovementsController {
 
   @Post()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
+  @RequirePermission('movements', 'create')
   create(@Body() dto: CreateMovementDto, @Req() req: AuthedRequest) {
     return this.service.create(dto, req.user.userId, req.user.role);
   }
@@ -65,6 +68,7 @@ export class MovementsController {
   /** Crea un documento logístico (remito) multi-producto/multi-lote con código RLNE/RLNS. */
   @Post('documents')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
+  @RequirePermission('movements', 'create')
   createDocument(@Body() dto: CreateDocumentDto, @Req() req: AuthedRequest) {
     return this.service.createDocument(dto, req.user.userId, req.user.role);
   }
@@ -75,6 +79,7 @@ export class MovementsController {
    */
   @Post('preview-placement')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
+  @RequirePermission('movements', 'create')
   previewPlacement(@Body() dto: PreviewPlacementDto, @Req() req: AuthedRequest) {
     return this.service.previewPlacement(dto, req.user);
   }
@@ -128,13 +133,15 @@ export class MovementsController {
   /** Transferencia multi-producto: N pallets de una ubicación a otra en una sola transacción. */
   @Post('transfer-batch')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
+  @RequirePermission('movements', 'create')
   createTransferBatch(@Body() dto: TransferBatchDto, @Req() req: AuthedRequest) {
     return this.service.createTransferBatch(dto, req.user.userId, req.user.role);
   }
 
-  /** Lista documentos logísticos (remitos). */
+  /** Lista documentos logísticos (remitos) — es la Bitácora. */
   @Get('documents')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('bitacora', 'read')
   async findDocuments(
     @Query() query: { type?: string; from?: string; to?: string; search?: string; warehouseId?: string },
     @Req() req: AuthedRequest,
@@ -145,6 +152,7 @@ export class MovementsController {
   /** Documento enriquecido para impresión (nombres de producto, lote, depósito y pallets). */
   @Get('documents/:id/print')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('bitacora', 'read')
   findDocumentForPrint(@Param('id', ParseUUIDPipe) id: string, @Req() req: AuthedRequest) {
     return this.service.findDocumentForPrint(id, req.user);
   }
@@ -156,6 +164,7 @@ export class MovementsController {
    */
   @Get('documents/:id/checklist')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('bitacora', 'read')
   findDocumentChecklist(@Param('id', ParseUUIDPipe) id: string, @Req() req: AuthedRequest) {
     return this.service.findDocumentChecklist(id, req.user);
   }
@@ -163,6 +172,7 @@ export class MovementsController {
   /** Detalle de un documento: cabecera + líneas (movimientos) + detalle por palet. */
   @Get('documents/:id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('bitacora', 'read')
   findDocument(@Param('id', ParseUUIDPipe) id: string, @Req() req: AuthedRequest) {
     return this.service.findDocument(id, req.user);
   }
@@ -174,6 +184,7 @@ export class MovementsController {
    */
   @Post(':id/void')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
+  @RequirePermission('movements', 'update')
   requestVoid(@Param('id', ParseUUIDPipe) id: string, @Req() req: AuthedRequest) {
     return this.service.requestVoid(id, req.user.userId, req.user.role);
   }
@@ -181,6 +192,7 @@ export class MovementsController {
   /** Edita metadatos de cualquier movimiento con trazabilidad completa. */
   @Patch(':id/edit')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
+  @RequirePermission('movements', 'update')
   editMetadata(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RegularizeMovementDto,
@@ -191,6 +203,7 @@ export class MovementsController {
 
   @Patch(':id/regularize')
   @Roles('ADMIN', 'MANAGER')
+  @RequirePermission('movements', 'approve')
   regularize(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RegularizeMovementDto,
@@ -202,6 +215,7 @@ export class MovementsController {
   /** Desglose por lote (cantidades y pallets actuales) — usado por el editor de ajustes. */
   @Get(':id/lots')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('movements', 'read')
   getLotsBreakdown(@Param('id', ParseUUIDPipe) id: string, @Req() req: AuthedRequest) {
     return this.service.getLotsBreakdown(id, req.user);
   }
@@ -213,6 +227,7 @@ export class MovementsController {
    */
   @Post(':id/request-quantity-edit')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
+  @RequirePermission('movements', 'update')
   requestQuantityEdit(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RequestQuantityEditDto,
@@ -223,12 +238,14 @@ export class MovementsController {
 
   @Get()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('movements', 'read')
   async findAll(@Query() query: MovementsQueryDto, @Req() req: AuthedRequest) {
     return this.service.findAll(query, await this.scopeOf(req, query.warehouseId));
   }
 
   @Get(':id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('movements', 'read')
   findOne(@Param('id', ParseUUIDPipe) id: string, @Req() req: AuthedRequest) {
     return this.service.findOne(id, req.user);
   }

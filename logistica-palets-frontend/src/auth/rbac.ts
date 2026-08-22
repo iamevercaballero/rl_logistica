@@ -92,10 +92,14 @@ export const PERMS: Record<ModuleKey, ModulePermissions> = {
     remove: ["ADMIN"],
   },
   users: {
-    read:   ["ADMIN"],
-    create: ["ADMIN"],
-    update: ["ADMIN"],
-    remove: ["ADMIN"],
+    // MANAGER administra personal acotado (OPERATOR/AUDITOR) — el techo real
+    // (a quién puede tocar, qué permisos puede otorgar) lo valida el backend
+    // (`UsersService.assertManagerCeiling`, `PermissionsService.assertCanManagePermission`),
+    // esto solo decide si ve el módulo. Mismo criterio que `role_permissions`.
+    read:   ["ADMIN", "MANAGER"],
+    create: ["ADMIN", "MANAGER"],
+    update: ["ADMIN", "MANAGER"],
+    remove: ["ADMIN", "MANAGER"],
   },
 };
 

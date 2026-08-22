@@ -245,6 +245,36 @@ describe('checklist de recepción — resumen de la Página 1', () => {
     expect(checklist.lots[1].productCode).toBe('50144376');
     expect(checklist.lots[1].productDescription).toBe('INTERLAYER CARTON 116 X 97M.');
   });
+
+  it('un material configurado sin Lote SAP no manda el campo a VER DETALLES', async () => {
+    const sinSap = await ds.getRepository(Product).save(
+      ds.getRepository(Product).create({
+        code: 'INS-SIN-SAP',
+        description: 'Insumo sin Lote SAP',
+        unitOfMeasure: 'UN',
+        active: true,
+        usesSapLot: false,
+      }),
+    );
+    const created = await createEntry([
+      {
+        productId: base.product.id,
+        items: [{ lotCode: 'CON-SAP-1', quantity: 100, fechaVencimiento: '2027-01-01', sapLot: 'Z777' }],
+      },
+      {
+        productId: sinSap.id,
+        items: [{ lotCode: 'SIN-SAP-1', quantity: 50, fechaVencimiento: '2027-01-01' }],
+      },
+    ]);
+
+    const checklist = await service.findDocumentChecklist(created.documentId);
+
+    // El lote del material sin Lote SAP queda sin sapLot (se descarta al guardar).
+    expect(checklist.lots.find((row) => row.lotCode === 'SIN-SAP-1')?.sapLot).toBeNull();
+    // Pero no arrastra el campo a VER DETALLES: ese material no participa de la
+    // comparación, y el único material que sí usa Lote SAP tiene un solo valor.
+    expect(checklist.summary.sapLotDisplay).toBe('Z777');
+  });
 });
 
 describe('checklist de recepción — datos operativos', () => {

@@ -28,7 +28,7 @@ import { listTransports, type Transport, type TransportDriver } from "../api/tra
 import { listSuppliers, createSupplier } from "../api/suppliers";
 import { createDestination, listDestinations } from "../api/destinations";
 import { warehouseLabel, warehouseUsesSapLot } from "../api/warehouses";
-import { listLocations } from "../api/locations";
+import { listLocations, zoneMeta, type Location } from "../api/locations";
 import { useActiveWarehouseId, useWarehouse } from "../contexts/WarehouseContext";
 import { listActiveUsers } from "../api/users";
 import type { Product } from "../api/products";
@@ -521,6 +521,29 @@ export default function MovementsPage() {
     return m;
   }, [locations]);
 
+  /** Ubicación completa por id — para el popover "dónde está" del desglose de palets. */
+  const locationById = useMemo<Record<string, Location>>(() => {
+    const m: Record<string, Location> = {};
+    for (const l of locations) m[l.id] = l;
+    return m;
+  }, [locations]);
+
+  /** Qué palet tiene abierto el popover de ubicación en el desglose (uno solo a la vez). */
+  const [locationPopoverPalletId, setLocationPopoverPalletId] = useState<string | null>(null);
+
+  /** Cierra el popover de ubicación al clickear afuera — mismo criterio que HybridSearchInput. */
+  useEffect(() => {
+    if (!locationPopoverPalletId) return;
+    function handler(e: MouseEvent) {
+      const target = e.target as Element;
+      if (!target.closest('[data-location-popover]') && !target.closest('[data-location-popover-trigger]')) {
+        setLocationPopoverPalletId(null);
+      }
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [locationPopoverPalletId]);
+
 
   // FEFO via useQuery — SALIDA (sin filtro de ubicación)
   const fefoEnabled = movType === "EXIT" && !!product && !!activeWarehouseId;
@@ -814,12 +837,14 @@ export default function MovementsPage() {
   /**
    * Tilda o destilda un palet del lote.
    *
-   * Sin cantidad cargada, tildar palets **es** la forma de indicar cuánto sale:
-   * el lote despacha esos palets completos. Con una cantidad ya cargada, en
-   * cambio, el total manda — sumar un palet solo agrega otro entre los cuales
-   * repartir esa misma cantidad (entra en cero, para que el operador decida
-   * cuánto sacarle), y quitarlo devuelve su parte al desglose. Recalcular el
-   * total en ese caso pisaría lo que el operador acaba de escribir.
+   * Tildar un palet **es** la forma de indicar cuánto sale: entra por defecto
+   * completo y se suma al total, tenga o no una cantidad ya cargada — antes
+   * un palet agregado con un total ya escrito entraba en cero ("sin
+   * cantidad"), invisible en el total, y no había forma de tildar y que
+   * "sume" sin además escribirle un número a mano. Destildar resta lo que
+   * ese palet venía aportando (haya quedado en el completo por defecto o el
+   * operador lo haya editado a mano). El operador sigue pudiendo ajustar
+   * cualquier campo "Sale" a un valor parcial después de tildar.
    */
   function togglePallet(lotIdx: number, palletId: string) {
     setFefoRows((rows) => rows.map((r, i) => {
@@ -828,24 +853,27 @@ export default function MovementsPage() {
       const adding = !ids.has(palletId);
       if (adding) ids.add(palletId); else ids.delete(palletId);
 
-      const hasTarget = !!r.exitQtyInput.trim() && Number(r.exitQtyInput) > 0;
-      if (hasTarget) {
+      const pallet = r.lot.pallets.find((p) => p.id === palletId);
+      const palletQty = pallet?.quantity ?? 0;
+      const currentTotal = Number(r.exitQtyInput) || 0;
+
+      if (adding) {
+        const newTotal = currentTotal + palletQty;
         return {
           ...r,
           selectedIds: ids,
-          qtyByPallet: { ...r.qtyByPallet, [palletId]: adding ? "0" : "" },
+          exitQtyInput: String(newTotal),
+          qtyByPallet: { ...r.qtyByPallet, [palletId]: String(palletQty) },
         };
       }
 
-      // Selección manual sin cantidad: el lote despacha los palets elegidos enteros.
-      const selQty = r.lot.pallets
-        .filter((p) => ids.has(p.id))
-        .reduce((s, p) => s + p.quantity, 0);
+      const removed = palletExitQty(r, palletId);
+      const newTotal = Math.max(0, currentTotal - removed);
       return {
         ...r,
         selectedIds: ids,
-        exitQtyInput: selQty > 0 ? String(selQty) : "",
-        qtyByPallet: distributeExitQty(r.lot.pallets, ids, selQty),
+        exitQtyInput: newTotal > 0 ? String(newTotal) : "",
+        qtyByPallet: { ...r.qtyByPallet, [palletId]: "" },
       };
     }));
   }
@@ -2409,6 +2437,65 @@ export default function MovementsPage() {
                                             onClick={(e) => e.preventDefault()}
                                           >
                                             <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 700 }}>Sale</span>
+                                            <span style={{ position: "relative" }}>
+                                              <button
+                                                type="button"
+                                                data-location-popover-trigger
+                                                onClick={() => setLocationPopoverPalletId((cur) => (cur === p.id ? null : p.id))}
+                                                aria-label={`Dónde está el palet ${p.code}`}
+                                                aria-expanded={locationPopoverPalletId === p.id}
+                                                title="Dónde está este palet"
+                                                style={{
+                                                  display: "flex", alignItems: "center", justifyContent: "center",
+                                                  width: 22, height: 22, padding: 0, borderRadius: 5,
+                                                  border: "1px solid var(--border)",
+                                                  background: locationPopoverPalletId === p.id ? "var(--primary-light)" : "none",
+                                                  color: locationPopoverPalletId === p.id ? "var(--primary)" : "var(--muted)",
+                                                  cursor: "pointer",
+                                                }}
+                                              >
+                                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                                  <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                                                  <circle cx="12" cy="10" r="3" />
+                                                </svg>
+                                              </button>
+                                              {locationPopoverPalletId === p.id && (() => {
+                                                const loc = p.currentLocationId ? locationById[p.currentLocationId] : undefined;
+                                                const zone = zoneMeta(loc?.zone);
+                                                return (
+                                                  <div
+                                                    role="dialog"
+                                                    data-location-popover
+                                                    aria-label={`Ubicación del palet ${p.code}`}
+                                                    style={{
+                                                      position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 20,
+                                                      width: 210, background: "var(--panel)", border: "1.5px solid var(--border)",
+                                                      borderRadius: 8, boxShadow: "0 8px 24px rgba(0,0,0,.25)", padding: 10,
+                                                    }}
+                                                  >
+                                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 6 }}>
+                                                      <span style={{ fontSize: 11, fontWeight: 800, fontFamily: "monospace" }}>{p.code}</span>
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => setLocationPopoverPalletId(null)}
+                                                        aria-label="Cerrar"
+                                                        style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--muted)", fontSize: 14, lineHeight: 1 }}
+                                                      >×</button>
+                                                    </div>
+                                                    {loc ? (
+                                                      <div style={{ fontSize: 12, display: "grid", gap: 2 }}>
+                                                        <span>Ubicación: <strong style={{ fontFamily: "monospace" }}>{loc.code}</strong></span>
+                                                        {zone && <span style={{ color: "var(--muted)" }}>Zona: {zone.label}</span>}
+                                                        {loc.aisle && <span style={{ color: "var(--muted)" }}>Sector: {loc.aisle}</span>}
+                                                        {loc.rack && <span style={{ color: "var(--muted)" }}>Subsector: {loc.rack}</span>}
+                                                      </div>
+                                                    ) : (
+                                                      <p style={{ fontSize: 12, color: "var(--muted)", margin: 0 }}>Sin ubicación registrada.</p>
+                                                    )}
+                                                  </div>
+                                                );
+                                              })()}
+                                            </span>
                                             <input
                                               className="input"
                                               type="number"
@@ -2515,14 +2602,15 @@ export default function MovementsPage() {
                       </button>
                     }
                   >
-                    <SearchableSelect
+                    <HybridSearchInput
                       options={suppliers}
-                      value={suppliers.find((s) => s.name === supplier) ?? null}
-                      onChange={(s) => setSupplier(s?.name ?? "")}
+                      value={supplier}
+                      onChange={setSupplier}
+                      onSelect={(s) => setSupplier(s.name)}
                       getKey={(s) => s.id}
                       getLabel={(s) => s.name}
                       getDescription={(s) => s.ruc ?? ""}
-                      placeholder="Buscar proveedor"
+                      placeholder="Buscar o escribir proveedor"
                     />
                   </Field>
                 )}

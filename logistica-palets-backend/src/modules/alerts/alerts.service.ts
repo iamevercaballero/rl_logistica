@@ -5,7 +5,7 @@ import { DataSource, Repository } from 'typeorm';
 import { AlertRule } from './entities/alert-rule.entity';
 import { CreateAlertRuleDto } from './dto/create-alert-rule.dto';
 import { EventsGateway } from '../events/events.gateway';
-import { businessDaysUntil, businessToday, shiftBusinessDate } from '../../common/date';
+import { businessDaysUntil, businessToday, rawDateColumnToString, shiftBusinessDate } from '../../common/date';
 import type { WarehouseScope } from '../warehouses/warehouse-access.service';
 
 /* ── Active alert types ────────────────────────────────────────────────────── */
@@ -188,8 +188,14 @@ export class AlertsService {
     );
 
     return rows.map((r) => {
-      const daysLeft = businessDaysUntil(r.fechaVencimiento, today)!;
-      const isCritical = r.fechaVencimiento <= in15;
+      // `dataSource.query` no pasa por los transformers de TypeORM:
+      // `r.fechaVencimiento` llega como `Date` (medianoche LOCAL, no UTC), no
+      // como el string "YYYY-MM-DD" que anuncia el tipo — de ahí el
+      // `TypeError: value.slice is not a function` en businessDaysUntil, y que
+      // `<= in15` comparaba un Date contra un string.
+      const fechaVencimiento = rawDateColumnToString(r.fechaVencimiento)!;
+      const daysLeft = businessDaysUntil(fechaVencimiento, today)!;
+      const isCritical = fechaVencimiento <= in15;
       return {
         id: `expiry-${r.id}`,
         type: isCritical ? ('LOT_EXPIRING_CRITICAL' as const) : ('LOT_EXPIRING_WARNING' as const),
@@ -199,7 +205,7 @@ export class AlertsService {
           lotId: r.id,
           lotCode: r.lotCode,
           productCode: r.productCode,
-          fechaVencimiento: r.fechaVencimiento,
+          fechaVencimiento,
           stockActual: Number(r.stockActual),
           daysLeft,
         },

@@ -7,8 +7,19 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      TZ: America/Asuncion
-      PGTZ: America/Asuncion
+      # UTC-3 fijo, no "America/Asuncion": ese nombre depende de que el tzdata
+      # bundleado en la imagen conozca la Ley 7324 (derogó el horario de
+      # verano en oct/2024). La imagen postgres:16-alpine en uso quedó con un
+      # snapshot de tzdata anterior a la ley, así que CURRENT_TIMESTAMP
+      # calculaba UTC-4 en los meses que antes eran "invierno" — atrasando 1h
+      # (y a veces el día) todo timestamp con default de DB: movements.date/
+      # createdAt, y cualquier @CreateDateColumn/@UpdateDateColumn de TypeORM.
+      # Etc/GMT+3 (el signo va invertido por convención POSIX) es UTC-3 fijo
+      # en cualquier versión de tzdata — mismo criterio que APP_TIME_ZONE en
+      # common/date.ts, para que este contenedor no dependa de mantener su
+      # tzdata al día.
+      TZ: Etc/GMT+3
+      PGTZ: Etc/GMT+3
     ports:
       - "5433:5432"
     volumes:
@@ -44,7 +55,8 @@ services:
       redis:
         condition: service_healthy
     environment:
-      TZ: America/Asuncion
+      # Etc/GMT+3, no America/Asuncion — ver el comentario en el servicio `db`.
+      TZ: Etc/GMT+3
       PORT: 3000
       DB_HOST: db
       DB_PORT: 5432

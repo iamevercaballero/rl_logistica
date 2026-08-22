@@ -24,6 +24,8 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles/roles.guard';
 import { Roles } from '../auth/roles/roles.decorator';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
 
 type AuthedRequest = Request & { user: AccessUser };
 const OptionalUuid = new ParseUUIDPipe({ optional: true });
@@ -33,7 +35,7 @@ const OptionalUuid = new ParseUUIDPipe({ optional: true });
  * incidencias son siempre del depósito activo. Nunca se mezclan sectores de
  * depósitos distintos en una misma vista.
  */
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
 @Controller('locations')
 export class LocationsController {
   constructor(
@@ -55,6 +57,7 @@ export class LocationsController {
   // ✅ READ: todos
   @Get()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('locations', 'read')
   async findAll(@Req() req: AuthedRequest, @Query('warehouseId', OptionalUuid) warehouseId?: string) {
     return this.service.findAll(await this.singleWarehouse(req, warehouseId));
   }
@@ -62,6 +65,7 @@ export class LocationsController {
   /** Disponibilidad por ubicación (ocupación vs capacidad) para el selector guiado. */
   @Get('availability')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('locations', 'read')
   async availability(@Req() req: AuthedRequest, @Query('warehouseId', OptionalUuid) warehouseId?: string) {
     return this.service.availability(await this.scopeOf(req, warehouseId));
   }
@@ -69,6 +73,7 @@ export class LocationsController {
   /** Slotting: ubicaciones recomendadas para guardar un pallet de un producto. */
   @Get('recommendations')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('locations', 'read')
   async recommendations(
     @Req() req: AuthedRequest,
     @Query('productId') productId: string,
@@ -85,6 +90,7 @@ export class LocationsController {
   /** Mapa del depósito con ocupación y diagnóstico por celda (localizador). */
   @Get('map')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('locations', 'read')
   async map(@Req() req: AuthedRequest, @Query('warehouseId', OptionalUuid) warehouseId?: string) {
     return this.service.map(await this.singleWarehouse(req, warehouseId));
   }
@@ -92,6 +98,7 @@ export class LocationsController {
   /** Localizador: dónde está un material / lote / lote proveedor / pallet / ubicación. */
   @Get('stock-search')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('locations', 'read')
   async stockSearch(
     @Req() req: AuthedRequest,
     @Query('q') q: string,
@@ -103,6 +110,7 @@ export class LocationsController {
   /** Ubicaciones con diferencias, sobrecapacidad, pallets bloqueados o stock sin ubicar. */
   @Get('incidents')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('locations', 'read')
   async incidents(@Req() req: AuthedRequest, @Query('warehouseId', OptionalUuid) warehouseId?: string) {
     return this.service.incidents(await this.singleWarehouse(req, warehouseId));
   }
@@ -110,6 +118,7 @@ export class LocationsController {
   /** Contenido de una ubicación para el panel lateral del localizador. */
   @Get(':id/content')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('locations', 'read')
   async content(@Param('id', ParseUUIDPipe) id: string, @Req() req: AuthedRequest) {
     await this.access.assertEntityAccess(req.user, 'location', id);
     return this.service.content(id);
@@ -117,6 +126,7 @@ export class LocationsController {
 
   @Get(':id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('locations', 'read')
   async findOne(@Param('id', ParseUUIDPipe) id: string, @Req() req: AuthedRequest) {
     await this.access.assertEntityAccess(req.user, 'location', id);
     return this.service.findOne(id);
@@ -124,6 +134,7 @@ export class LocationsController {
 
   @Post()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
+  @RequirePermission('locations', 'create')
   async create(@Body() dto: CreateLocationDto, @Req() req: AuthedRequest) {
     await this.access.assertWritableWarehouse(req.user, dto.warehouseId);
     return this.service.create(dto);
@@ -131,6 +142,7 @@ export class LocationsController {
 
   @Post('generate')
   @Roles('ADMIN', 'MANAGER')
+  @RequirePermission('locations', 'create')
   async generate(@Body() dto: GenerateLocationsDto, @Req() req: AuthedRequest) {
     await this.access.assertWritableWarehouse(req.user, dto.warehouseId);
     return this.service.generate(dto);
@@ -138,6 +150,7 @@ export class LocationsController {
 
   @Patch(':id')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
+  @RequirePermission('locations', 'update')
   async update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateLocationDto,
@@ -155,6 +168,7 @@ export class LocationsController {
    */
   @Delete('aisle')
   @Roles('ADMIN', 'MANAGER')
+  @RequirePermission('locations', 'remove')
   async removeAisle(
     @Query('warehouseId', ParseUUIDPipe) warehouseId: string,
     @Query('aisle') aisle: string,
@@ -166,6 +180,7 @@ export class LocationsController {
 
   @Delete(':id')
   @Roles('ADMIN', 'MANAGER')
+  @RequirePermission('locations', 'remove')
   async remove(@Param('id', ParseUUIDPipe) id: string, @Req() req: AuthedRequest) {
     await this.access.assertEntityAccess(req.user, 'location', id);
     return this.service.remove(id);

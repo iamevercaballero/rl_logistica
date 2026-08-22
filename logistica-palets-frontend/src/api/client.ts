@@ -1,5 +1,6 @@
 import axios, { type InternalAxiosRequestConfig } from "axios";
 import { clearAuthStorage, getToken, setToken } from "../auth/authStorage";
+import { queryClient } from "../lib/queryClient";
 
 const rawBaseUrl =
   import.meta.env.VITE_API_BASE_URL ??
@@ -29,10 +30,18 @@ interface RetryableRequest extends InternalAxiosRequestConfig {
 }
 
 let isRefreshing = false;
-let refreshQueue: Array<(token: string) => void> = [];
+let refreshQueue: Array<{ resolve: (token: string) => void; reject: (err: unknown) => void }> = [];
 
 function processQueue(token: string) {
-  refreshQueue.forEach((cb) => cb(token));
+  refreshQueue.forEach(({ resolve }) => resolve(token));
+  refreshQueue = [];
+}
+
+/** Sin esto, un request encolado durante un refresh que termina fallando se
+ *  quedaba esperando para siempre: `refreshQueue = []` lo descartaba sin
+ *  resolver ni rechazar su promesa. */
+function rejectQueue(err: unknown) {
+  refreshQueue.forEach(({ reject }) => reject(err));
   refreshQueue = [];
 }
 
@@ -51,12 +60,13 @@ api.interceptors.response.use(
       if (isRefreshing) {
         // Another request already triggered refresh — queue this one
         return new Promise((resolve, reject) => {
-          refreshQueue.push((newToken) => {
-            original.headers.Authorization = `Bearer ${newToken}`;
-            resolve(api(original));
+          refreshQueue.push({
+            resolve: (newToken) => {
+              original.headers.Authorization = `Bearer ${newToken}`;
+              resolve(api(original));
+            },
+            reject,
           });
-          // On failure the outer catch will call flushFail, handled below
-          void err; reject; // keep lint happy
         });
       }
 
@@ -74,9 +84,9 @@ api.interceptors.response.use(
         processQueue(newToken);
         original.headers.Authorization = `Bearer ${newToken}`;
         return api(original);
-      } catch {
+      } catch (refreshErr) {
         // Refresh failed — force logout
-        refreshQueue = [];
+        rejectQueue(refreshErr);
         clearAuthStorage();
         if (window.location.pathname !== "/login") {
           sessionStorage.setItem("auth_redirect", window.location.pathname + window.location.search);
@@ -95,6 +105,17 @@ api.interceptors.response.use(
         sessionStorage.setItem("auth_redirect", window.location.pathname + window.location.search);
         window.location.href = "/login";
       }
+    }
+
+    // 403: autenticado pero sin ese permiso — típicamente porque un ADMIN/MANAGER
+    // le cambió el rol, un permiso puntual o los depósitos mientras la sesión
+    // seguía abierta. Se invalida `/auth/me` y los depósitos permitidos para que
+    // el próximo render use lo vigente, en vez de arrastrar lo que había al
+    // loguearse. No se reintenta el request: el usuario decide su próximo paso
+    // con el menú/los botones ya al día.
+    if (status === 403) {
+      void queryClient.invalidateQueries({ queryKey: ["auth", "me"] });
+      void queryClient.invalidateQueries({ queryKey: ["warehouses", "allowed"] });
     }
 
     return Promise.reject(err);

@@ -15,6 +15,7 @@ import {
   businessToday,
   endOfBusinessDay,
   parseBusinessDate,
+  rawDateColumnToString,
   shiftBusinessDate,
 } from '../../common/date';
 
@@ -752,10 +753,17 @@ export class ReportsService {
     const from = (query.dateFrom ?? query.date ?? today).slice(0, 10);
     const to   = (query.dateTo   ?? query.date ?? today).slice(0, 10);
     const date = from; // kept for SAP snapshot lookup and response label
-    // La ventana del día es de medianoche a medianoche **en Asunción**: con
-    // límites UTC, todo lo cargado después de las 21:00 caía en el día siguiente.
-    const dayStart = parseBusinessDate(from).toISOString();
-    const dayEnd   = new Date(parseBusinessDate(to).getTime() + 86_400_000 - 1).toISOString();
+    // La ventana del día es de medianoche a medianoche **en Asunción** — mismo
+    // criterio que `toStartDate`/`toEndDate` de acá abajo, reusados en vez de
+    // reimplementados: un `.toISOString()` acá volvía a romperlo. `date`
+    // (`timestamp` sin zona) comparado contra un parámetro STRING con 'Z' se
+    // castea recortando el sufijo de zona, no convirtiéndolo — Postgres lee
+    // "2026-08-22T03:00:00.000Z" como el instante naive 03:00, tres horas
+    // después de la medianoche real que representaba. Pasar el `Date` tal
+    // cual (sin `.toISOString()`) deja que el driver lo serialice en hora
+    // local del proceso, que es la que coincide con lo guardado.
+    const dayStart = this.toStartDate(from);
+    const dayEnd   = this.toEndDate(to);
 
     const movementFilter = this.buildMovementScopeFilter(query, 2, scope);
     const sapFilter = this.buildSapScopeFilter(query, 1, scope);
@@ -1069,13 +1077,17 @@ export class ReportsService {
       // vence "hoy" debía dar 0, no -1 (ya vencido) — new Date(fechaVencimiento)
       // se interpreta como medianoche UTC, y comparado contra un instante real
       // corría el resultado un día. businessDaysUntil compara calendario contra calendario.
-      const diasRestantes = businessDaysUntil(r.fechaVencimiento)!; // fechaVencimiento no es null: la query lo filtra arriba
+      // `getRawMany()` no pasa por los transformers de TypeORM: `r.fechaVencimiento`
+      // llega como `Date` (anclado a medianoche LOCAL, no UTC), no como string —
+      // rawDateColumnToString la normaliza antes de tocarla.
+      const fechaVencimiento = rawDateColumnToString(r.fechaVencimiento);
+      const diasRestantes = businessDaysUntil(fechaVencimiento)!; // fechaVencimiento no es null: la query lo filtra arriba
       return {
         lotId: r.lotId,
         lotCode: r.lotCode,
         sapLot: r.sapLot ?? null,
-        fechaVencimiento: r.fechaVencimiento,
-        fechaFabricacion: r.fechaFabricacion ?? null,
+        fechaVencimiento,
+        fechaFabricacion: rawDateColumnToString(r.fechaFabricacion),
         stockActual: this.parseNumber(r.stockActual),
         proveedor: r.proveedor ?? null,
         diasRestantes,

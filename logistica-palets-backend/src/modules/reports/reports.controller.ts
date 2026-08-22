@@ -16,6 +16,8 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles/roles.guard';
 import { Roles } from '../auth/roles/roles.decorator';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
 
 type AuthedRequest = Request & { user: AccessUser };
 
@@ -29,8 +31,13 @@ const OptionalUuid = new ParseUUIDPipe({ optional: true });
  * frontend), nunca una autorización: `resolveQueryScope` valida el acceso y,
  * si no se manda ninguno, acota igual a los depósitos permitidos. Manipular
  * el parámetro no puede ampliar lo que se ve.
+ *
+ * `reports` es un único permiso de lectura (así lo trata la spec y el
+ * frontend hoy) aunque el `@Roles()` de cada endpoint sea más fino — ese
+ * `@Roles()` sigue siendo el piso real; `@RequirePermission` solo afina por
+ * encima, nunca lo afloja.
  */
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
 @Controller('reports')
 export class ReportsController {
   constructor(
@@ -45,24 +52,28 @@ export class ReportsController {
 
   @Get('stock')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('reports', 'read')
   async stock(@Query() query: StockQueryDto, @Req() req: AuthedRequest) {
     return this.service.stock(query, await this.scopeOf(req, query.warehouseId));
   }
 
   @Get('movements')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('reports', 'read')
   async movements(@Query() query: ReportsMovementsQueryDto, @Req() req: AuthedRequest) {
     return this.service.movements(query, await this.scopeOf(req, query.warehouseId));
   }
 
   @Get('trace')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('reports', 'read')
   async trace(@Query() query: TraceQueryDto, @Req() req: AuthedRequest) {
     return this.service.trace(query.materialId, await this.scopeOf(req, query.warehouseId));
   }
 
   @Get('daily-stock')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('reports', 'read')
   async dailyStock(@Query() query: DailyStockQueryDto, @Req() req: AuthedRequest) {
     return this.service.dailyStock(query, await this.scopeOf(req, query.warehouseId));
   }
@@ -77,18 +88,21 @@ export class ReportsController {
 
   @Get('differences-sap')
   @Roles('ADMIN', 'MANAGER', 'AUDITOR')
+  @RequirePermission('reports', 'read')
   async differencesSap(@Query() query: DifferencesSapQueryDto, @Req() req: AuthedRequest) {
     return this.service.differencesSap(query, await this.scopeOf(req, query.warehouseId));
   }
 
   @Get('kpis')
   @Roles('ADMIN', 'MANAGER', 'AUDITOR', 'OPERATOR')
+  @RequirePermission('reports', 'read')
   async kpis(@Query() query: KpisQueryDto, @Req() req: AuthedRequest) {
     return this.service.kpis(query, await this.scopeOf(req, query.warehouseId));
   }
 
   @Get('freshness')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('reports', 'read')
   async freshness(
     @Req() req: AuthedRequest,
     @Query('productId') productId?: string,
@@ -100,6 +114,7 @@ export class ReportsController {
   /** Salud del inventario: detecta divergencias del invariante Stock=Lote=Pallet por producto. */
   @Get('inventory-health')
   @Roles('ADMIN', 'MANAGER', 'AUDITOR')
+  @RequirePermission('reports', 'read')
   async inventoryHealth(@Req() req: AuthedRequest, @Query('warehouseId') warehouseId?: string) {
     return this.service.inventoryHealth(await this.scopeOf(req, warehouseId));
   }
@@ -107,6 +122,7 @@ export class ReportsController {
   /** Ocupación: ubicaciones ocupadas vs totales y pallets vs capacidad, por depósito. */
   @Get('occupancy')
   @Roles('ADMIN', 'MANAGER', 'AUDITOR')
+  @RequirePermission('reports', 'read')
   async occupancy(@Req() req: AuthedRequest, @Query('warehouseId') warehouseId?: string) {
     return this.service.occupancy(await this.scopeOf(req, warehouseId));
   }
@@ -114,6 +130,7 @@ export class ReportsController {
   /** Rotación por producto en un período: salidas vs stock, top movers y dead stock. */
   @Get('rotation')
   @Roles('ADMIN', 'MANAGER', 'AUDITOR')
+  @RequirePermission('reports', 'read')
   async rotation(
     @Req() req: AuthedRequest,
     @Query('from') from?: string,
@@ -126,6 +143,7 @@ export class ReportsController {
   /** Dwell-time: antigüedad de los pallets en stock (base de facturación de almacenaje). */
   @Get('dwell-time')
   @Roles('ADMIN', 'MANAGER', 'AUDITOR')
+  @RequirePermission('reports', 'read')
   async dwellTime(@Req() req: AuthedRequest, @Query('warehouseId') warehouseId?: string) {
     return this.service.dwellTime(await this.scopeOf(req, warehouseId));
   }

@@ -1,5 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import {
   clearAuthStorage,
@@ -12,72 +13,89 @@ import {
 
 export type Role = "ADMIN" | "MANAGER" | "OPERATOR" | "AUDITOR";
 
+/** módulo → acciones efectivas ("read"/"create"/"update"/"remove"/"approve"). */
+export type EffectivePermissions = Record<string, string[]>;
+
 export type AuthUser = {
   userId: string;
   username: string;
+  fullName: string | null;
   role: Role;
+  active: boolean;
+  mustChangePassword: boolean;
+  /**
+   * `undefined` = todavía no llegó una respuesta real de `/auth/me` (ej. un
+   * `user` cacheado de antes de esta migración). Un objeto — aunque esté
+   * vacío — significa que el backend ya contestó: `can()` en `permissions.ts`
+   * usa esta diferencia para decidir si confía en esto o cae a `rbac.ts`.
+   */
+  permissions?: EffectivePermissions;
 };
 
 type AuthState = {
   user: AuthUser | null;
   isReady: boolean;
-  login: (payload: { access_token: string; user?: Partial<AuthUser> & { id?: string } }) => void;
+  login: (payload: { access_token: string }) => void;
   logout: () => void;
 };
 
-const initialUser = getStoredUser();
-const initialReady = !getToken() || !!initialUser;
+/** Query key de `/auth/me` — el interceptor de axios la invalida ante un 403 (ver api/client.ts). */
+export const AUTH_ME_QUERY_KEY = ["auth", "me"] as const;
+
 const AuthContext = createContext<AuthState | null>(null);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(initialUser);
-  const [isReady, setIsReady] = useState(initialReady);
+async function fetchMe(): Promise<AuthUser> {
+  const { data } = await api.get("/auth/me");
+  const normalized = normalizeAuthUser(data);
+  if (!normalized) {
+    throw new Error("Respuesta de /auth/me inválida");
+  }
+  setStoredUser(normalized);
+  return normalized;
+}
 
-  const logout = () => {
-    // Best-effort: ask the server to clear the HttpOnly refresh cookie.
-    // We don't await this — local state is cleared immediately regardless.
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const queryClient = useQueryClient();
+  const [hasToken, setHasToken] = useState(() => !!getToken());
+
+  const meQuery = useQuery({
+    queryKey: AUTH_ME_QUERY_KEY,
+    queryFn: fetchMe,
+    enabled: hasToken,
+    retry: false,
+    staleTime: 60_000,
+    // Semilla optimista desde localStorage: una recarga de página no muestra
+    // una pantalla en blanco mientras se confirma contra el backend — y si el
+    // rol/los permisos cambiaron mientras tanto, el fetch real los corrige
+    // solo, sin que nadie lo note salvo por un re-render.
+    placeholderData: hasToken ? (getStoredUser() ?? undefined) : undefined,
+  });
+
+  const user = hasToken ? (meQuery.data ?? null) : null;
+  // Listo para pintar: sin token no hay nada que esperar; con token alcanza
+  // con tener ALGÚN usuario (real o el placeholder de localStorage); y si
+  // `/auth/me` terminó en error (token inválido, o cualquier otra falla que el
+  // interceptor de axios no haya resuelto con un hard-redirect antes) también
+  // se considera resuelto — `user` queda `null` y `RequireRole` manda a
+  // `/login`, sin necesitar un efecto que apague `hasToken` por su cuenta.
+  const isReady = !hasToken || !!user || meQuery.isError;
+
+  const login = useCallback((payload: { access_token: string }) => {
+    setToken(payload.access_token);
+    setHasToken(true);
+    void queryClient.invalidateQueries({ queryKey: AUTH_ME_QUERY_KEY });
+  }, [queryClient]);
+
+  const logout = useCallback(() => {
+    // Best-effort: le pedimos al server que invalide la cookie HttpOnly del
+    // refresh token. No se espera — el estado local se limpia igual.
     void api.post("/auth/logout").catch(() => {});
     clearAuthStorage();
-    setUser(null);
-    setIsReady(true);
-  };
+    setHasToken(false);
+    queryClient.removeQueries({ queryKey: AUTH_ME_QUERY_KEY });
+  }, [queryClient]);
 
-  const login = (payload: { access_token: string; user?: Partial<AuthUser> & { id?: string } }) => {
-    setToken(payload.access_token);
-
-    const normalizedUser = normalizeAuthUser(payload.user);
-    if (normalizedUser) {
-      setStoredUser(normalizedUser);
-      setUser(normalizedUser);
-    }
-
-    setIsReady(true);
-  };
-
-  useEffect(() => {
-    const token = getToken();
-    if (!token || user) {
-      return;
-    }
-
-    api
-      .get("/auth/me")
-      .then((response) => {
-        const normalizedUser = normalizeAuthUser(response.data);
-        if (!normalizedUser) {
-          throw new Error("Invalid /auth/me response");
-        }
-        setStoredUser(normalizedUser);
-        setUser(normalizedUser);
-      })
-      .catch(() => {
-        clearAuthStorage();
-        setUser(null);
-      })
-      .finally(() => setIsReady(true));
-  }, [user]);
-
-  const value = useMemo<AuthState>(() => ({ user, isReady, login, logout }), [isReady, user]);
+  const value = useMemo<AuthState>(() => ({ user, isReady, login, logout }), [user, isReady, login, logout]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

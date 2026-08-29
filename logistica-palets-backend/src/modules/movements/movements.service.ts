@@ -539,15 +539,31 @@ export class MovementsService {
         for (const p of referenced) palletLocationById.set(p.id, p.currentLocationId ?? null);
       }
 
+      // Entrada sin sector: los pallets que el operario no ubicó caen en la zona
+      // de RECEPCIÓN del depósito (no en `null`) — así el stock siempre pertenece
+      // a una ubicación y se puede despachar / ver en el localizador. Se resuelve
+      // más abajo, una sola vez, solo si hace falta.
+      let entryFallbackLocationId: string | null = null;
+
       // Ubicación efectiva de cada ítem: la suya propia si el gestor de pallets la
       // definió; si no, pero el ítem apunta a un pallet existente, la de ese pallet;
-      // si no, la de la línea.
+      // si no, la de la línea; y para una Entrada sin nada de eso, RECEPCIÓN.
       const itemLocationId = (item: { locationId?: string; palletId?: string }): string | null => {
         if (item.locationId) return item.locationId;
         const palletLoc = item.palletId ? palletLocationById.get(item.palletId) : undefined;
         if (palletLoc) return palletLoc;
-        return resolved.locationId ?? null;
+        return resolved.locationId ?? entryFallbackLocationId ?? null;
       };
+
+      if (
+        dto.type === 'ENTRY' &&
+        dto.palletItems?.length &&
+        resolved.warehouseId &&
+        !resolved.locationId &&
+        dto.palletItems.some((i) => !i.locationId && !i.palletId)
+      ) {
+        entryFallbackLocationId = await this.findOrCreateReceptionLocation(manager, resolved.warehouseId);
+      }
 
       // El movimiento debe quedar atribuido a un depósito aunque no traiga
       // ubicación propia (una salida por pallets no la pide): se deriva de dónde
@@ -671,6 +687,9 @@ export class MovementsService {
             item.supplierLot, resolved.warehouseId,
           );
           lotByItemIndex.set(idx, lot);
+          // Los pallets que caen en RECEPCIÓN van sueltos (sin pila), como la
+          // carga masiva: el sector definitivo se asigna después.
+          if (locId === entryFallbackLocationId) continue;
           byLocation.set(locId, [
             ...(byLocation.get(locId) ?? []),
             { key: String(idx), productId: dto.productId, lotId: lot.id },
@@ -2932,6 +2951,33 @@ export class MovementsService {
   }
 
   /**
+   * Zona de RECEPCIÓN de un depósito — una por depósito (`uq_location_warehouse_code`
+   * la mantiene única). Ahí caen los pallets de una Entrada sin sector asignado.
+   * Sin capacidad (`capacityBases: null`): es staging, no una estantería.
+   */
+  private async findOrCreateReceptionLocation(manager: EntityManager, warehouseId: string): Promise<string> {
+    const repo = manager.getRepository(Location);
+    const existing = await repo.findOne({
+      where: { code: RECEPCION_LOCATION_CODE, warehouse: { id: warehouseId } },
+    });
+    if (existing) return existing.id;
+
+    const warehouse = await manager.findOne(Warehouse, { where: { id: warehouseId } });
+    if (!warehouse) throw new BadRequestException('Depósito inexistente para la zona de recepción');
+
+    const created = repo.create({
+      code: RECEPCION_LOCATION_CODE,
+      type: 'TEMPORAL',
+      zone: 'RECEPCION',
+      capacityBases: null,
+      allowsStacking: true,
+      warehouse,
+      active: true,
+    });
+    return (await repo.save(created)).id;
+  }
+
+  /**
    * Verifica la invariante del inventario: para cada producto, el stock total
    * debe coincidir con la suma de sus lotes y con la suma de sus palets activos.
    * Se corre después de la carga para que una divergencia salga a la luz en el
@@ -3095,6 +3141,14 @@ export interface StockSnapshotRevertResult {
 
 /** Código de la ubicación temporal donde entra el stock inicial sin ubicar. */
 export const INITIAL_STOCK_LOCATION_CODE = 'STOCK-INICIAL';
+
+/**
+ * Código de la zona de RECEPCIÓN de cada depósito: ahí aterrizan los pallets de
+ * una Entrada que se registró sin asignar sector. Es una ubicación real (con
+ * depósito), así que el stock se ve y se puede despachar; se vacía moviendo la
+ * mercadería a su sector definitivo desde Palets / Localizador.
+ */
+export const RECEPCION_LOCATION_CODE = 'RECEPCION';
 
 export interface StockLotItem {
   /** Lote del proveedor — junto con el material forma la clave única del lote. */

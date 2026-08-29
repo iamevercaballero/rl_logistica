@@ -2104,7 +2104,7 @@ export default function MovementsPage() {
                           <span style={{ color: "var(--muted)" }}>{group.palletLines.length} pallets</span>
                           <span style={{ color: sum > 0 ? "var(--success)" : "var(--muted)", fontWeight: 700 }}>{fmtQty(sum)} unid.</span>
                           {sinSector > 0 && (
-                            <span style={{ color: "var(--warning)" }}>{sinSector} sin sector asignado</span>
+                            <span style={{ color: "var(--muted)" }}>{sinSector} sin sector → van a RECEPCIÓN</span>
                           )}
                         </div>
                       );
@@ -2933,9 +2933,9 @@ export default function MovementsPage() {
                           {/* Plegado, el encabezado tiene que alcanzar para saber si
                               al lote le falta algo. */}
                           {collapsed && (
-                            <span style={{ fontSize: 11, fontWeight: 700, color: pendingLocation > 0 ? "var(--warning)" : "var(--success)" }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: pendingLocation > 0 ? "var(--muted)" : "var(--success)" }}>
                               {pendingLocation > 0
-                                ? `${pendingLocation} pallet(s) sin sector`
+                                ? `${pendingLocation} pallet(s) → RECEPCIÓN`
                                 : "Todos con sector"}
                             </span>
                           )}

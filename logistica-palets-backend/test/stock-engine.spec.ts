@@ -14,6 +14,7 @@ import { MovementsService } from '../src/modules/movements/movements.service';
 import { DocumentSequenceService } from '../src/modules/movements/document-sequence.service';
 import { PilasService } from '../src/modules/pilas/pilas.service';
 import { PalletsService } from '../src/modules/pallets/pallets.service';
+import { LotsService } from '../src/modules/lots/lots.service';
 import { ReportsService } from '../src/modules/reports/reports.service';
 import { Product } from '../src/modules/products/entities/product.entity';
 import { Stock } from '../src/modules/stocks/entities/stock.entity';
@@ -43,6 +44,7 @@ const noopUploads = { log: async () => {} } as unknown as UploadsService;
 let ds: DataSource;
 let service: MovementsService;
 let palletsService: PalletsService;
+let lotsService: LotsService;
 let reports: ReportsService;
 let base: Basics;
 let access: WarehouseAccessService;
@@ -72,6 +74,7 @@ beforeAll(async () => {
     new PilasService(),
     access,
   );
+  lotsService = new LotsService(ds.getRepository(Lot), ds.getRepository(Product), ds.getRepository(Pallet));
   reports = new ReportsService(ds, ds.getRepository(SapStockSnapshot), noopCache);
 }, 60_000);
 
@@ -1126,5 +1129,109 @@ describe('motor de stock — liberación de bases', () => {
       type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: tight.id,
       palletItems: [{ lotCode: 'LV-2', quantity: 10, fechaVencimiento: '2027-01-01' }],
     }, USER_ID)).resolves.toBeDefined();
+  });
+});
+
+describe('motor de stock — Entrada sin sector → zona de RECEPCIÓN', () => {
+  const receptionOf = (warehouseId: string) =>
+    ds.getRepository(Location).findOne({ where: { code: 'RECEPCION', warehouse: { id: warehouseId } } });
+
+  it('una Entrada sin locationId ubica los pallets en RECEPCIÓN del depósito', async () => {
+    await service.createDocument({
+      type: 'ENTRY',
+      encargadoId: USER_ID,
+      warehouseId: base.warehouse.id,
+      lines: [{
+        productId: base.product.id,
+        palletItems: [
+          { lotCode: 'L-SIN-SEC', quantity: 60, fechaVencimiento: '2027-05-01' },
+          { lotCode: 'L-SIN-SEC', quantity: 40, fechaVencimiento: '2027-05-01' },
+        ],
+      }],
+    }, USER_ID);
+
+    const recepcion = await receptionOf(base.warehouse.id);
+    expect(recepcion).toBeTruthy();
+    expect(recepcion!.type).toBe('TEMPORAL');
+    expect(recepcion!.zone).toBe('RECEPCION');
+
+    const lot = await lotByCode(base.product.id, 'L-SIN-SEC');
+    const pallets = await ds.getRepository(Pallet).find({ where: { lotId: lot!.id } });
+    expect(pallets).toHaveLength(2);
+    expect(pallets.every((p) => p.currentLocationId === recepcion!.id)).toBe(true);
+    expect(pallets.every((p) => p.status === 'AVAILABLE')).toBe(true);
+    expect(pallets.every((p) => p.pilaId === null)).toBe(true); // sueltos, sin pila
+
+    // El stock quedó en RECEPCIÓN (no en un balde sin ubicación).
+    const stocks = await ds.getRepository(Stock).find({ where: { productId: base.product.id } });
+    expect(stocks).toHaveLength(1);
+    expect(stocks[0].locationId).toBe(recepcion!.id);
+    expect(stocks[0].currentQuantity).toBe(100);
+  });
+
+  it('ese stock aparece en la Salida (findFefo) y se puede despachar', async () => {
+    await service.createDocument({
+      type: 'ENTRY', encargadoId: USER_ID, warehouseId: base.warehouse.id,
+      lines: [{ productId: base.product.id, palletItems: [{ lotCode: 'L-FEFO-REC', quantity: 80, fechaVencimiento: '2027-05-01' }] }],
+    }, USER_ID);
+
+    const fefo = await lotsService.findFefo(base.product.id, undefined, undefined, [base.warehouse.id]);
+    const lote = fefo.find((l) => l.lotCode === 'L-FEFO-REC');
+    expect(lote).toBeDefined();
+    expect(lote!.pallets).toHaveLength(1);
+    expect(lote!.stockActual).toBe(80);
+
+    const palletId = lote!.pallets[0].id;
+    await service.createDocument({
+      type: 'EXIT', lines: [{ productId: base.product.id, palletItems: [{ palletId, quantity: 80 }] }],
+    }, USER_ID);
+    expect((await ds.getRepository(Pallet).findOneByOrFail({ id: palletId })).status).toBe('EXITED');
+    expect((await stockOf(base.product.id))!.currentQuantity).toBe(0);
+  });
+
+  it('entrada mixta: los ítems con sector van a su sector, los que no a RECEPCIÓN', async () => {
+    await service.createDocument({
+      type: 'ENTRY', encargadoId: USER_ID, warehouseId: base.warehouse.id,
+      lines: [{
+        productId: base.product.id,
+        palletItems: [
+          { lotCode: 'L-MIX', quantity: 30, fechaVencimiento: '2027-05-01', locationId: base.location.id },
+          { lotCode: 'L-MIX', quantity: 20, fechaVencimiento: '2027-05-01' },
+        ],
+      }],
+    }, USER_ID);
+
+    const recepcion = await receptionOf(base.warehouse.id);
+    const lot = await lotByCode(base.product.id, 'L-MIX');
+    const pallets = await ds.getRepository(Pallet).find({ where: { lotId: lot!.id }, order: { code: 'ASC' } });
+    const locs = pallets.map((p) => p.currentLocationId).sort();
+    expect(locs).toEqual([base.location.id, recepcion!.id].sort());
+    expect(lot!.stockActual).toBe(50);
+  });
+
+  it('dos entradas sin sector en el mismo depósito reutilizan la misma RECEPCIÓN', async () => {
+    const entry = (lotCode: string) => service.createDocument({
+      type: 'ENTRY', encargadoId: USER_ID, warehouseId: base.warehouse.id,
+      lines: [{ productId: base.product.id, palletItems: [{ lotCode, quantity: 10, fechaVencimiento: '2027-05-01' }] }],
+    }, USER_ID);
+
+    await entry('L-R1');
+    await entry('L-R2');
+
+    const recepciones = await ds.getRepository(Location).find({ where: { code: 'RECEPCION' } });
+    expect(recepciones).toHaveLength(1);
+  });
+
+  it('regresión: una Entrada CON sector se comporta igual que antes (con pila)', async () => {
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      palletItems: [{ lotCode: 'L-CON-SEC', quantity: 10, fechaVencimiento: '2027-05-01' }],
+    }, USER_ID);
+
+    const lot = await lotByCode(base.product.id, 'L-CON-SEC');
+    const pallet = await ds.getRepository(Pallet).findOneByOrFail({ lotId: lot!.id });
+    expect(pallet.currentLocationId).toBe(base.location.id);
+    expect(pallet.pilaId).not.toBeNull(); // pila armada, como siempre
+    expect(await receptionOf(base.warehouse.id)).toBeNull(); // no se creó RECEPCIÓN
   });
 });

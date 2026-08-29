@@ -8,6 +8,7 @@ import { DailyStockQueryDto } from './dto/daily-stock-query.dto';
 import { DifferencesSapQueryDto } from './dto/differences-sap-query.dto';
 import { UpsertSapStockDto } from './dto/upsert-sap-stock.dto';
 import { SapStockSnapshot } from './entities/sap-stock.entity';
+import { roundQuantity } from '../../common/quantity';
 import { CacheService } from '../cache/cache.service';
 import type { WarehouseScope } from '../warehouses/warehouse-access.service';
 import {
@@ -816,7 +817,7 @@ export class ReportsService {
       const stockInicial = this.parseNumber(row.stockInicial);
       const entradas = this.parseNumber(row.entradas);
       const salidas = this.parseNumber(row.salidas);
-      const stockFinal = stockInicial + entradas - salidas;
+      const stockFinal = roundQuantity(stockInicial + entradas - salidas);
       const stockSAP = sapByProduct.get(row.productId) ?? 0;
 
       return {
@@ -832,7 +833,7 @@ export class ReportsService {
         salidas,
         stockFinal,
         stockSAP,
-        diferencia: stockFinal - stockSAP,
+        diferencia: roundQuantity(stockFinal - stockSAP),
       };
     });
   }

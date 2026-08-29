@@ -6,6 +6,7 @@ import { CHECKLIST_SEE_DETAILS } from '../src/modules/movements/reception-checkl
 import { Product } from '../src/modules/products/entities/product.entity';
 import { Pallet } from '../src/modules/pallets/entities/pallet.entity';
 import { User } from '../src/modules/users/entities/user.entity';
+import { LogisticsDocument } from '../src/modules/movements/entities/logistics-document.entity';
 import type { EventsGateway } from '../src/modules/events/events.gateway';
 import type { CacheService } from '../src/modules/cache/cache.service';
 import type { UploadsService } from '../src/modules/uploads/uploads.service';
@@ -84,6 +85,7 @@ async function createEntry(
     driverDocument?: string;
     vehiclePlate?: string;
     date?: string;
+    encargadoId?: string;
   } = {},
 ) {
   return service.createDocument(
@@ -91,6 +93,7 @@ async function createEntry(
       type: 'ENTRY',
       warehouseId: base.warehouse.id,
       supplier: 'PROVEEDOR DE PRUEBA S.A.',
+      encargadoId: TEST_USER_ID,
       ...header,
       lines: lines.map((line) => ({
         productId: line.productId,
@@ -459,5 +462,101 @@ describe('checklist de recepción — datos operativos', () => {
     expect(checklist.summary.totalPallets).toBe(45);
     expect(checklist.summary.lotDisplay).toBe(CHECKLIST_SEE_DETAILS);
     expect(checklist.consistency.ok).toBe(true);
+  });
+});
+
+describe('encargado de recepción — separado de quién registra la entrada', () => {
+  const JOEL_ID = '0e10e10e-0000-4000-8000-00000000000e';
+  const CYNTHIA_ID = 'c1c1c1c1-0000-4000-8000-00000000000c';
+
+  async function twoPeople() {
+    const repo = ds.getRepository(User);
+    const joel = await repo.save(repo.create({
+      id: JOEL_ID, username: 'jcaballero', fullName: 'Joel Caballero',
+      passwordHash: 'x', role: 'MANAGER', active: true,
+    }));
+    const cynthia = await repo.save(repo.create({
+      id: CYNTHIA_ID, username: 'ccaballero', fullName: 'Cynthia Caballero',
+      passwordHash: 'x', role: 'OPERATOR', active: true,
+    }));
+    return { joel, cynthia };
+  }
+
+  it('Joel registra la entrada y elige a Cynthia: ambos documentos muestran a Cynthia, la auditoría a Joel', async () => {
+    const { joel, cynthia } = await twoPeople();
+
+    const created = await service.createDocument(
+      {
+        type: 'ENTRY',
+        warehouseId: base.warehouse.id,
+        supplier: 'PROVEEDOR S.A.',
+        encargadoId: cynthia.id,
+        lines: [{
+          productId: base.product.id,
+          palletItems: [{
+            lotCode: 'L-RESP', quantity: 500, fechaVencimiento: '2027-12-31', locationId: base.location.id,
+          }],
+        }],
+      },
+      joel.id,
+      'MANAGER',
+    );
+
+    // 1. Se guarda el responsable elegido — id y snapshot — y el creador aparte.
+    const doc = await ds.getRepository(LogisticsDocument).findOneByOrFail({ id: created.documentId });
+    expect(doc.encargadoId).toBe(cynthia.id);
+    expect(doc.encargadoFullNameSnapshot).toBe('Cynthia Caballero');
+    expect(doc.encargadoUsernameSnapshot).toBe('ccaballero');
+    expect(doc.createdById).toBe(joel.id);
+    expect(doc.createdByFullNameSnapshot).toBe('Joel Caballero');
+
+    // 2. La nota de entrada: encargado = Cynthia, creador = Joel, por separado.
+    const print = await service.findDocumentForPrint(created.documentId);
+    expect(print.encargado).toEqual({ id: cynthia.id, username: 'ccaballero', fullName: 'Cynthia Caballero' });
+    expect(print.createdBy).toEqual({ id: joel.id, username: 'jcaballero', fullName: 'Joel Caballero' });
+
+    // 3. El checklist: "Responsable de Recepción" = Cynthia.
+    const checklist = await service.findDocumentChecklist(created.documentId);
+    expect(checklist.receptionResponsible).toBe('Cynthia Caballero');
+    expect(checklist.createdBy.fullName).toBe('Joel Caballero');
+
+    // 4. Reimprimir tras renombrar/desactivar a Cynthia no cambia el documento.
+    cynthia.fullName = 'Otro Nombre';
+    cynthia.active = false;
+    await ds.getRepository(User).save(cynthia);
+    const reprint = await service.findDocumentForPrint(created.documentId);
+    expect(reprint.encargado?.fullName).toBe('Cynthia Caballero');
+    expect((await service.findDocumentChecklist(created.documentId)).receptionResponsible).toBe('Cynthia Caballero');
+  });
+
+  it('una entrada sin encargado se rechaza (no se autocompleta con quien la registra)', async () => {
+    await expect(service.createDocument(
+      {
+        type: 'ENTRY',
+        warehouseId: base.warehouse.id,
+        lines: [{
+          productId: base.product.id,
+          palletItems: [{ lotCode: 'L-NOENC', quantity: 10, fechaVencimiento: '2027-12-31', locationId: base.location.id }],
+        }],
+      },
+      TEST_USER_ID,
+    )).rejects.toThrow(/quién recibió/i);
+  });
+
+  it('un OPERATOR no puede poner el remito a nombre de otra persona', async () => {
+    const { cynthia } = await twoPeople();
+    await expect(service.createDocument(
+      {
+        type: 'ENTRY',
+        warehouseId: base.warehouse.id,
+        encargadoId: cynthia.id,
+        lines: [{
+          productId: base.product.id,
+          palletItems: [{ lotCode: 'L-RBAC', quantity: 10, fechaVencimiento: '2027-12-31', locationId: base.location.id }],
+        }],
+      },
+      TEST_USER_ID,
+      'OPERATOR',
+    )).rejects.toThrow(/ADMIN o MANAGER/i);
   });
 });

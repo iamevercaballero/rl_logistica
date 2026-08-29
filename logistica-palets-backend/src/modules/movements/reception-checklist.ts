@@ -18,7 +18,7 @@
  * frontend (`formatDateOnly`), que ya distingue fecha calendario de instante.
  */
 
-import { quantitiesEqual, roundQuantity } from '../../common/quantity';
+import { quantitiesEqual, quantityMismatch, roundQuantity, sumQuantities } from '../../common/quantity';
 
 export const CHECKLIST_SEE_DETAILS = 'VER DETALLES';
 
@@ -169,7 +169,12 @@ export type ReceptionChecklist = {
   };
   createdBy: UserSnapshot;
   encargado: UserSnapshot | null;
-  /** Punto 26: quien registró la Entrada, no quien reimprime. */
+  /**
+   * Punto 26: el encargado de recepción elegido en la Entrada — no quien la
+   * registró ni quien reimprime. Sale del snapshot del RLNE, así que no cambia
+   * si el usuario después se renombra o se desactiva. "No especificado" solo
+   * para RLNE anteriores a que el campo fuera obligatorio.
+   */
   receptionResponsible: string;
   summary: ChecklistSummary;
   materials: ChecklistMaterialRow[];
@@ -309,12 +314,12 @@ export function buildReceptionChecklist(input: ChecklistInput): ReceptionCheckli
       code: product?.code ?? '—',
       description: product?.description ?? '—',
       unitOfMeasure: normalize(product?.unitOfMeasure),
-      totalQuantity: roundQuantity(rows.reduce((sum, row) => sum + row.quantity, 0)),
+      totalQuantity: sumQuantities(rows.map((row) => row.quantity)),
       totalPallets: rows.reduce((sum, row) => sum + row.pallets, 0),
     };
   });
 
-  const computedTotalQuantity = roundQuantity(lotRows.reduce((sum, row) => sum + row.quantity, 0));
+  const computedTotalQuantity = sumQuantities(lotRows.map((row) => row.quantity));
   const computedTotalPallets = lotRows.reduce((sum, row) => sum + row.pallets, 0);
 
   const summary: ChecklistSummary = {
@@ -340,9 +345,11 @@ export function buildReceptionChecklist(input: ChecklistInput): ReceptionCheckli
 
   const documentTotalQuantity = roundQuantity(document.totalQuantity);
   if (!quantitiesEqual(computedTotalQuantity, documentTotalQuantity)) {
-    warnings.push(
-      `La suma por lote (${computedTotalQuantity}) no coincide con el total del remito (${documentTotalQuantity}).`,
-    );
+    // Diferencia real de stock (no un residuo de coma flotante — `quantitiesEqual`
+    // compara enteros escalados). El desglose recibida/distribuido/diferencia
+    // ayuda a ubicar el lote mal cargado.
+    const { message } = quantityMismatch(documentTotalQuantity, computedTotalQuantity);
+    warnings.push(`La suma por lote no coincide con el total del remito — ${message}.`);
   }
   if (computedTotalPallets !== documentTotalPallets) {
     warnings.push(
@@ -374,7 +381,9 @@ export function buildReceptionChecklist(input: ChecklistInput): ReceptionCheckli
     },
     createdBy: input.createdBy,
     encargado: input.encargado,
-    receptionResponsible: normalize(input.createdBy.fullName) ?? input.createdBy.username,
+    receptionResponsible: input.encargado
+      ? (normalize(input.encargado.fullName) ?? input.encargado.username)
+      : 'No especificado',
     summary,
     materials,
     lots: lotRows,

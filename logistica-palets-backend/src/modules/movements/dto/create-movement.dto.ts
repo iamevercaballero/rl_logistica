@@ -15,16 +15,12 @@ import {
 } from 'class-validator';
 import { adjustmentReasons, movementTypes, MovementType } from '../entities/movement.entity';
 import { IsBusinessDateString } from '../../../common/is-business-date-string.validator';
-
-/**
- * Las cantidades del inventario son decimales (TS, KG, HL admiten fracciones).
- * Se aceptan hasta 3 decimales, alineado con `numeric(14,3)` en la base.
- */
-const QUANTITY_OPTIONS = { maxDecimalPlaces: 3 } as const;
-/** Mínimo positivo representable con 3 decimales — descarta 0 y negativos. */
-const MIN_QUANTITY = 0.001;
-/** Alineado con `pallets.weightKg` numeric(10,2). */
-const WEIGHT_OPTIONS = { maxDecimalPlaces: 2 } as const;
+import { NormalizeDecimal } from '../../../common/normalize-decimal.decorator';
+import {
+  MIN_QUANTITY,
+  QUANTITY_NUMBER_OPTIONS as QUANTITY_OPTIONS,
+  WEIGHT_NUMBER_OPTIONS as WEIGHT_OPTIONS,
+} from '../../../common/quantity';
 
 export class PalletItemDto {
   /** SALIDA: ID de palet físico existente (marca palet como EXITED) */
@@ -37,7 +33,7 @@ export class PalletItemDto {
   @IsString()
   lotCode?: string;
 
-  @Type(() => Number)
+  @NormalizeDecimal()
   @IsNumber(QUANTITY_OPTIONS)
   @Min(MIN_QUANTITY)
   quantity: number;
@@ -69,7 +65,7 @@ export class PalletItemDto {
 
   /** Peso físico del pallet (kg) — informativo, se imprime en la etiqueta. */
   @IsOptional()
-  @Type(() => Number)
+  @NormalizeDecimal()
   @IsNumber(WEIGHT_OPTIONS)
   @Min(0)
   weightKg?: number;
@@ -109,7 +105,7 @@ export class CreateMovementDto {
   productId: string;
 
   @IsOptional()
-  @Type(() => Number)
+  @NormalizeDecimal()
   @IsNumber(QUANTITY_OPTIONS)
   @Min(MIN_QUANTITY)
   quantity?: number;

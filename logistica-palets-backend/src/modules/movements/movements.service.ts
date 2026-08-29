@@ -32,7 +32,16 @@ import { Pallet } from '../pallets/entities/pallet.entity';
 import { DeepPartial } from 'typeorm/common/DeepPartial';
 import { EventsGateway } from '../events/events.gateway';
 import { CacheService } from '../cache/cache.service';
-import { roundQuantity } from '../../common/quantity';
+import {
+  distributeQuantity,
+  formatQuantity,
+  parseQuantity,
+  quantitiesEqual,
+  quantityDelta,
+  quantityMismatch,
+  roundQuantity,
+  sumQuantities,
+} from '../../common/quantity';
 import {
   businessToday,
   endOfBusinessDay,
@@ -43,6 +52,19 @@ import {
 import { PilasService, PlacementItem } from '../pilas/pilas.service';
 import { dropSapLotIfUnused, productUsesSapLot, warehouseUsesSapLot } from '../products/uses-sap-lot';
 import { buildReceptionChecklist, type ReceptionChecklist } from './reception-checklist';
+
+/**
+ * Auditoría de lo que le pasó a un palet en una salida: cantidad antes, lo que
+ * se retiró y lo que quedó. Se guarda en el metadata del evento de bitácora del
+ * remito para que una salida parcial deje trazabilidad de saldo (requisito 9).
+ */
+type PalletExitAudit = {
+  palletCode: string;
+  before: number;
+  withdrawn: number;
+  after: number;
+  status: string;
+};
 
 @Injectable()
 export class MovementsService {
@@ -196,6 +218,7 @@ export class MovementsService {
     }
 
     // ── 5. Crear AdjustmentRequest en una transacción ────────
+    const compensatingTotal = sumQuantities(palletItems.map((i) => i.quantity));
     const result = await this.dataSource.transaction(async (manager) => {
       const code = await this.sequences.nextCode(manager, compensatingType);
 
@@ -210,7 +233,7 @@ export class MovementsService {
         originalMovementId: id,
         createdById: userId,
         totalLines: 1,
-        totalQuantity: palletItems.reduce((s, i) => s + i.quantity, 0),
+        totalQuantity: compensatingTotal,
       });
       await manager.save(request);
 
@@ -218,7 +241,7 @@ export class MovementsService {
         requestId: request.id,
         productId: movement.productId,
         palletItemsJson: JSON.stringify(palletItems),
-        totalQuantity: palletItems.reduce((s, i) => s + i.quantity, 0),
+        totalQuantity: compensatingTotal,
         locationId: movement.locationId ?? null,
       });
       await manager.save(line);
@@ -256,10 +279,12 @@ export class MovementsService {
   }
 
   async create(dto: CreateMovementDto, userId: string, requesterRole?: string) {
-    // El encargado sale del JWT, no del payload (ver resolveEncargado).
+    // El encargado es el que se eligió en el formulario; sin selección queda
+    // sin encargado (no se hereda al usuario logueado — ver resolveEncargado).
     const effectiveDto: CreateMovementDto = {
       ...dto,
-      encargadoRecepcionId: this.resolveEncargado(dto.encargadoRecepcionId, userId, requesterRole),
+      encargadoRecepcionId:
+        this.resolveEncargado(dto.encargadoRecepcionId, userId, requesterRole) ?? undefined,
     };
 
     // El depósito real es el de la ubicación cuando la hay: nunca se confía en
@@ -334,13 +359,21 @@ export class MovementsService {
   }
 
   /**
-   * El encargado del remito es el usuario logueado. El backend lo toma del JWT
-   * y no del payload: si el cliente manda otro, solo se acepta cuando quien
-   * opera es ADMIN o MANAGER (reasignación explícita). Un OPERATOR no puede
-   * registrar un remito a nombre de otra persona.
+   * Responsable de recepción/envío del remito — es un dato operativo elegido en
+   * el formulario, distinto de quién registró la carga (`createdById`).
+   *
+   * - Sin `requestedId` → `null`: NO se hereda al usuario logueado. Quien exige
+   *   el dato es el DTO (obligatorio en una entrada) y el frontend.
+   * - `requestedId === userId` → ese id (cualquiera puede ponerse a sí mismo).
+   * - Otro id → solo ADMIN o MANAGER puede asignarlo a otra persona.
    */
-  private resolveEncargado(requestedId: string | undefined, userId: string, role?: string): string {
-    if (!requestedId || requestedId === userId) return userId;
+  private resolveEncargado(
+    requestedId: string | undefined | null,
+    userId: string,
+    role?: string,
+  ): string | null {
+    if (!requestedId) return null;
+    if (requestedId === userId) return userId;
     if (role === 'ADMIN' || role === 'MANAGER') return requestedId;
     throw new ForbiddenException(
       'Solo un ADMIN o MANAGER puede asignar el remito a otro encargado.',
@@ -406,7 +439,7 @@ export class MovementsService {
           palletItems: line.palletItems,
         }, userId);
         movementIds.push(res.movementId);
-        totalQty += line.palletItems.reduce((s, i) => s + i.quantity, 0);
+        totalQty = sumQuantities([totalQty, ...line.palletItems.map((i) => i.quantity)]);
         totalPallets += line.palletItems.length;
       }
 
@@ -430,7 +463,7 @@ export class MovementsService {
     dto: CreateMovementDto,
     userId: string,
     documentId?: string,
-  ): Promise<{ movementId: string; stockImpact: string; type: MovementType; warehouseId: string | null }> {
+  ): Promise<{ movementId: string; stockImpact: string; type: MovementType; warehouseId: string | null; palletExits: PalletExitAudit[] }> {
     return this.createInTransaction(manager, dto, userId, documentId);
   }
 
@@ -439,7 +472,7 @@ export class MovementsService {
     dto: CreateMovementDto,
     userId: string,
     documentId?: string,
-  ): Promise<{ movementId: string; stockImpact: string; type: MovementType; warehouseId: string | null }> {
+  ): Promise<{ movementId: string; stockImpact: string; type: MovementType; warehouseId: string | null; palletExits: PalletExitAudit[] }> {
       const product = await manager.findOne(Product, { where: { id: dto.productId } });
       if (!product || !product.active) {
         throw new NotFoundException('Material inexistente o inactivo');
@@ -459,9 +492,26 @@ export class MovementsService {
         throw new BadRequestException('Los ajustes requieren un motivo obligatorio');
       }
 
-      const totalQty = dto.palletItems?.length
-        ? dto.palletItems.reduce((s, i) => s + i.quantity, 0)
-        : (dto.quantity ?? 0);
+      let totalQty: number;
+      if (dto.palletItems?.length) {
+        // Suma exacta por enteros escalados — no arrastra el residuo binario de
+        // `number` (0.1 + 0.2 !== 0.3), así que 8 pallets decimales cuya suma
+        // matemática es 4537 dan 4537, no 4537.000000000001.
+        const distributed = sumQuantities(dto.palletItems.map((i) => i.quantity));
+        // Si además llega la cantidad declarada de la línea, la suma de los
+        // pallets tiene que coincidir con ella dentro de la precisión del
+        // negocio. Mismo criterio que el frontend (`quantitiesEqual`): compara
+        // los enteros escalados, no `a - b` en float. Un residuo de coma
+        // flotante no cuenta; una diferencia real de 0,1 kg se rechaza.
+        if (dto.quantity != null && !quantitiesEqual(distributed, dto.quantity)) {
+          throw new BadRequestException(
+            `La suma de los pallets no coincide con la cantidad recibida — ${quantityMismatch(dto.quantity, distributed).message}.`,
+          );
+        }
+        totalQty = distributed;
+      } else {
+        totalQty = roundQuantity(dto.quantity ?? 0);
+      }
 
       if (totalQty <= 0) throw new BadRequestException('La cantidad debe ser mayor a cero');
 
@@ -640,6 +690,10 @@ export class MovementsService {
         }
       }
 
+      // Auditoría de saldo por palet — se llena en la rama EXIT y viaja al
+      // metadata del evento de bitácora del remito (requisito: salida parcial).
+      const palletExits: PalletExitAudit[] = [];
+
       // Loop palet a palet
       if (dto.palletItems?.length) {
         for (let itemIdx = 0; itemIdx < dto.palletItems.length; itemIdx++) {
@@ -687,10 +741,12 @@ export class MovementsService {
 
               // Tope por saldo del palet: sin esto el stock se descuenta por la cantidad
               // pedida mientras el palet solo baja lo que tiene, y las tres contabilidades
-              // (stock / lote / palet) divergen en silencio.
-              if (item.quantity > pallet.quantity) {
+              // (stock / lote / palet) divergen en silencio. Comparación por enteros
+              // escalados — un residuo de coma flotante no cuenta como exceso.
+              if (quantityDelta(item.quantity, pallet.quantity) > 0) {
                 throw new BadRequestException(
-                  `El palet ${pallet.code} tiene ${pallet.quantity} unid. disponibles — no se pueden retirar ${item.quantity}.`,
+                  `El palet ${pallet.code} tiene ${formatQuantity(pallet.quantity)} unid. disponibles — ` +
+                  `no se pueden retirar ${formatQuantity(item.quantity)}.`,
                 );
               }
 
@@ -706,6 +762,7 @@ export class MovementsService {
               // Salida parcial: reducir cantidad del pallet.
               // - llega a 0  → EXITED (despachado completo)
               // - queda saldo → PARTIAL (salida parcial), salvo que esté BLOCKED/DAMAGED
+              const beforeQty = pallet.quantity;
               pallet.quantity = Math.max(0, roundQuantity(pallet.quantity - item.quantity));
               if (pallet.quantity === 0) {
                 pallet.status = 'EXITED';
@@ -713,12 +770,21 @@ export class MovementsService {
               } else if (pallet.status === 'AVAILABLE' || pallet.status === 'PARTIAL') {
                 pallet.status = 'PARTIAL';
               }
+              if (dto.type === 'EXIT') {
+                palletExits.push({
+                  palletCode: pallet.code,
+                  before: beforeQty,
+                  withdrawn: roundQuantity(item.quantity),
+                  after: pallet.quantity,
+                  status: pallet.status,
+                });
+              }
 
             } else if (dto.type === 'TRANSFER') {
               // El palet se mueve entero: si se transfiriera solo una parte, el stock se
               // repartiría entre dos celdas mientras el palet queda en una sola, y la
               // ubicación de origen mostraría stock sin palet que lo respalde.
-              if (item.quantity !== pallet.quantity) {
+              if (!quantitiesEqual(item.quantity, pallet.quantity)) {
                 throw new BadRequestException(
                   `El palet ${pallet.code} tiene ${pallet.quantity} unid. y se transfiere completo. ` +
                   `Para mover una parte, primero dividí el palet.`,
@@ -757,7 +823,7 @@ export class MovementsService {
               // Corrección de salida: devolver cantidad a un palet ya existente (posiblemente
               // EXITED). El stock agregado ya se sumó arriba (isEntry → applyIncrease con el
               // total); acá solo se sincroniza el objeto palet puntual.
-              pallet.quantity += item.quantity;
+              pallet.quantity = roundQuantity(pallet.quantity + item.quantity);
               if (pallet.quantity > 0 && pallet.status === 'EXITED') {
                 pallet.status = 'PARTIAL';
                 pallet.exitedAt = null;
@@ -848,6 +914,7 @@ export class MovementsService {
         stockImpact: this.describeImpact(dto.type),
         type: dto.type,
         warehouseId: resolved.warehouseId ?? null,
+        palletExits,
       };
   }
 
@@ -948,6 +1015,9 @@ export class MovementsService {
       throw new BadRequestException('Documento Material solo corresponde a una Salida');
     }
     const encargadoId = this.resolveEncargado(dto.encargadoId, userId, requesterRole);
+    if (dto.type === 'ENTRY' && !encargadoId) {
+      throw new BadRequestException('Indicá quién recibió la mercadería (encargado de recepción).');
+    }
 
     const result = await this.withUniqueRetry(() => this.dataSource.transaction(async (manager) => {
       const docDate = parseBusinessDate(dto.date);
@@ -960,13 +1030,12 @@ export class MovementsService {
         warehouse.id,
       );
 
-      const users = await manager.getRepository(User).find({
-        where: { id: In([...new Set([userId, encargadoId])]) },
-      });
+      const neededUserIds = [...new Set([userId, ...(encargadoId ? [encargadoId] : [])])];
+      const users = await manager.getRepository(User).find({ where: { id: In(neededUserIds) } });
       const createdBy = users.find((user) => user.id === userId);
-      const encargado = users.find((user) => user.id === encargadoId);
+      const encargado = encargadoId ? users.find((user) => user.id === encargadoId) : null;
       if (!createdBy) throw new NotFoundException('Usuario creador inexistente');
-      if (!encargado) throw new NotFoundException('Usuario encargado inexistente');
+      if (encargadoId && !encargado) throw new NotFoundException('Usuario encargado inexistente');
 
       const code = await this.sequences.nextCode(manager, dto.type, docDate, {
         warehouseId: warehouse.id,
@@ -989,18 +1058,19 @@ export class MovementsService {
         driver: dto.driver?.trim() || null,
         driverDocument: dto.driverDocument?.trim() || null,
         vehiclePlate: dto.vehiclePlate?.trim() || null,
-        encargadoId,
+        encargadoId: encargadoId ?? null,
         notes: dto.notes?.trim() || null,
         createdById: userId,
         createdByUsernameSnapshot: createdBy.username,
         createdByFullNameSnapshot: createdBy.fullName?.trim() || null,
-        encargadoUsernameSnapshot: encargado.username,
-        encargadoFullNameSnapshot: encargado.fullName?.trim() || null,
+        encargadoUsernameSnapshot: encargado?.username ?? null,
+        encargadoFullNameSnapshot: encargado?.fullName?.trim() || null,
       });
       await manager.save(document);
 
       let totalQuantity = 0;
       const movementIds: string[] = [];
+      const palletExits: PalletExitAudit[] = [];
 
       for (const line of dto.lines) {
         // Cada línea es un movimiento mono-producto que hereda la cabecera del documento.
@@ -1021,16 +1091,20 @@ export class MovementsService {
           documentoMaterial: dto.type === 'EXIT' ? dto.documentoMaterial : undefined,
           notes: dto.notes,
           lotId: line.lotId,
-          encargadoRecepcionId: encargadoId,
+          encargadoRecepcionId: encargadoId ?? undefined,
           isProvisional: dto.isProvisional,
           palletItems: line.palletItems,
         };
 
         const res = await this.createInTransaction(manager, lineDto, userId, document.id);
         movementIds.push(res.movementId);
-        totalQuantity += line.palletItems?.length
-          ? line.palletItems.reduce((s, i) => s + i.quantity, 0)
-          : (line.quantity ?? 0);
+        palletExits.push(...res.palletExits);
+        totalQuantity = sumQuantities([
+          totalQuantity,
+          ...(line.palletItems?.length
+            ? line.palletItems.map((i) => i.quantity)
+            : [line.quantity ?? 0]),
+        ]);
       }
 
       document.totalLines = dto.lines.length;
@@ -1043,6 +1117,7 @@ export class MovementsService {
         type: dto.type,
         warehouseId: warehouse.id,
         movementIds,
+        palletExits,
       };
     }));
 
@@ -1050,9 +1125,31 @@ export class MovementsService {
     this.invalidateWarehouseCaches(result.warehouseId);
     this.events.emitStockUpdated({ warehouseId: result.warehouseId });
 
+    // Salida parcial: el desglose por palet (antes / retirado / restante) va al
+    // metadata del evento para que quede auditado sin depender de reconstruir
+    // el historial del palet. Los palets que salieron completos también, para
+    // tener el reparto entero de la salida.
+    const parciales = result.palletExits.filter((p) => p.after > 0);
+    const metadata = result.palletExits.length > 0
+      ? {
+          palletExits: result.palletExits.map((p) => ({
+            palet: p.palletCode,
+            antes: p.before,
+            retirado: p.withdrawn,
+            restante: p.after,
+            estado: p.status,
+          })),
+        }
+      : undefined;
+    const descParciales = parciales.length > 0
+      ? ` · ${parciales.length} salida(s) parcial(es): ${parciales
+          .map((p) => `${p.palletCode} retira ${formatQuantity(p.withdrawn)}, queda ${formatQuantity(p.after)}`)
+          .join('; ')}`
+      : '';
+
     void this.uploads.log('DOCUMENT', result.documentId, 'CREADO',
-      `Remito ${result.code} creado con ${result.movementIds.length} línea(s)`,
-      userId, undefined, undefined, result.code);
+      `Remito ${result.code} creado con ${result.movementIds.length} línea(s)${descParciales}`,
+      userId, undefined, metadata, result.code);
 
     return {
       documentId: result.documentId,
@@ -1427,7 +1524,7 @@ export class MovementsService {
     const breakdown = lots.map((lot) => {
       const lotDetails = details.filter((d) => d.lotId === lot.id);
       const quantity = lotDetails.length
-        ? lotDetails.reduce((s, d) => s + d.quantity, 0)
+        ? sumQuantities(lotDetails.map((d) => d.quantity))
         : movement.quantity; // movimiento bulk con lotId directo, sin detalles
       const lotPallets = lotDetails
         .filter((d) => d.palletId && palletMap[d.palletId])
@@ -1445,9 +1542,9 @@ export class MovementsService {
           };
         });
       // Máximo descontable hoy: lo que queda físicamente en los pallets de este movimiento
-      const availableQty = lotPallets
-        .filter((p) => p.status !== 'EXITED')
-        .reduce((s, p) => s + p.currentQuantity, 0);
+      const availableQty = sumQuantities(
+        lotPallets.filter((p) => p.status !== 'EXITED').map((p) => p.currentQuantity),
+      );
       return {
         lotId: lot.id,
         lotCode: lot.lotCode,
@@ -1593,19 +1690,18 @@ export class MovementsService {
           if (pe.newQuantity < 0) {
             throw new BadRequestException(`Cantidad inválida en el pallet ${pallet.code}.`);
           }
-          if (pe.newQuantity > takenInThisExit) {
+          const exitDelta = roundQuantity(pe.newQuantity - takenInThisExit);
+          if (exitDelta > 0) {
             // Se despachó más de lo registrado: sacar la diferencia del pallet (debe alcanzar el saldo).
-            const extra = pe.newQuantity - takenInThisExit;
-            if (extra > pallet.quantity) {
+            if (roundQuantity(exitDelta - pallet.quantity) > 0) {
               throw new BadRequestException(
-                `El pallet ${pallet.code} solo tiene ${pallet.quantity} unid. disponibles — no se puede sacar ${extra} más.`,
+                `El pallet ${pallet.code} solo tiene ${pallet.quantity} unid. disponibles — no se puede sacar ${exitDelta} más.`,
               );
             }
-            if (extra > 0) decreaseItems.push({ palletId: pallet.id, quantity: extra });
-          } else if (pe.newQuantity < takenInThisExit) {
+            decreaseItems.push({ palletId: pallet.id, quantity: exitDelta });
+          } else if (exitDelta < 0) {
             // Se despachó menos de lo registrado: devolver la diferencia al pallet.
-            const giveBack = takenInThisExit - pe.newQuantity;
-            if (giveBack > 0) restoreItems.push({ palletId: pallet.id, quantity: giveBack });
+            restoreItems.push({ palletId: pallet.id, quantity: -exitDelta });
           }
         } else {
           // ENTRY: solo se puede reducir el saldo actual del pallet.
@@ -1613,13 +1709,13 @@ export class MovementsService {
             warnings.push(`El pallet ${pallet.code} ya fue despachado — no se modifica.`);
             continue;
           }
-          if (pe.newQuantity > pallet.quantity) {
+          if (roundQuantity(pe.newQuantity - pallet.quantity) > 0) {
             throw new BadRequestException(
               `El pallet ${pallet.code} tiene ${pallet.quantity} unid. — solo se puede reducir. ` +
               `Para sumar unidades usá "Agregar pallets nuevos" del lote.`,
             );
           }
-          const take = pallet.quantity - pe.newQuantity;
+          const take = roundQuantity(pallet.quantity - pe.newQuantity);
           if (take > 0) decreaseItems.push({ palletId: pallet.id, quantity: take });
         }
 
@@ -1655,10 +1751,7 @@ export class MovementsService {
       if (!isExit && edit.addQuantity && edit.addQuantity > 0) {
         const effectiveCode = newCode || lot.lotCode;
         const count = Math.max(1, edit.addPalletCount ?? 1);
-        const base = Math.floor(edit.addQuantity / count);
-        const rem = edit.addQuantity % count;
-        for (let i = 0; i < count; i++) {
-          const qty = i < rem ? base + 1 : base;
+        for (const qty of distributeQuantity(edit.addQuantity, count)) {
           if (qty <= 0) continue;
           increaseItems.push({
             lotCode: effectiveCode,
@@ -1762,7 +1855,7 @@ export class MovementsService {
         items: Array<{ quantity: number }>,
       ) => {
         const code = await this.sequences.nextCode(manager, type);
-        const totalQuantity = items.reduce((s, i) => s + i.quantity, 0);
+        const totalQuantity = sumQuantities(items.map((i) => i.quantity));
         const request = manager.create(AdjustmentRequest, {
           code,
           type,
@@ -1808,7 +1901,8 @@ export class MovementsService {
     if (result.weightChanges > 0) parts.push(`${result.weightChanges} peso(s) de pallet actualizado(s)`);
     if (result.dispatchedChanges > 0) parts.push(`${result.dispatchedChanges} palet(s) con paletas físicas actualizadas`);
     for (const r of result.requests) {
-      parts.push(`${r.code} (${r.type === 'ADJUSTMENT_IN' ? '+' : '−'}${r.totalQuantity} unid.) pendiente de aprobación`);
+      const signo = r.type === 'ADJUSTMENT_IN' ? '+' : '−';
+      parts.push(`${r.code} (${signo}${formatQuantity(r.totalQuantity)} unid.) pendiente de aprobación`);
     }
     void this.uploads.log(
       'MOVEMENT', id,
@@ -2541,20 +2635,13 @@ export class MovementsService {
       value.normalize('NFD').replace(new RegExp('[̀-ͯ]', 'g'), '').trim().toLowerCase();
 
     /**
-     * Acepta decimales con coma o punto. Si aparecen ambos separadores, la coma
-     * es de miles ("1,234.56"); si aparece sólo la coma, es decimal ("1234,56").
+     * Cantidad del Excel, a la escala de la base. `parseQuantity` acepta coma o
+     * punto (con ambos, la coma es de miles); acá además se redondea a
+     * `numeric(14,3)` porque el valor entra directo a stock/lote/palet.
      */
     const parseQty = (value: unknown): number | null => {
-      let str = String(value ?? '').replace(/\s/g, '');
-      if (!str) return null;
-      const hasComma = str.includes(',');
-      const hasDot = str.includes('.');
-      if (hasComma && hasDot) str = str.replace(/,/g, '');
-      else if (hasComma) str = str.replace(',', '.');
-      str = str.replace(/[^0-9.\-]/g, '');
-      if (!str) return null;
-      const n = parseFloat(str);
-      return Number.isFinite(n) ? roundQuantity(n) : null;
+      const n = parseQuantity(value);
+      return n === null ? null : roundQuantity(n);
     };
 
     const parseDate = parseExcelDateCell;
@@ -2668,7 +2755,7 @@ export class MovementsService {
       group.lots.push({
         lotCode,
         sapLot: rows.find((r) => r.sapLot)?.sapLot || undefined,
-        quantity: roundQuantity(rows.reduce((s, r) => s + r.qty, 0)),
+        quantity: sumQuantities(rows.map((r) => r.qty)),
         fechaVencimiento: first.fechaVencimiento,
         row: first.rowNumber,
       });
@@ -2702,7 +2789,7 @@ export class MovementsService {
       : null;
 
     for (const [code, group] of groups) {
-      const net = roundQuantity(group.lots.reduce((s, l) => s + l.quantity, 0));
+      const net = sumQuantities(group.lots.map((l) => l.quantity));
       const base: Omit<StockLotSnapshotProductResult, 'status'> = {
         code,
         description: group.description,
@@ -2883,9 +2970,9 @@ export class MovementsService {
         lots: lotsByProduct.get(id) ?? 0,
         pallets: palletsByProduct.get(id) ?? 0,
       }))
-      .filter((r) => r.stock !== r.lots || r.stock !== r.pallets);
+      .filter((r) => !quantitiesEqual(r.stock, r.lots) || !quantitiesEqual(r.stock, r.pallets));
 
-    const total = (m: Map<string, number>) => roundQuantity([...m.values()].reduce((s, v) => s + v, 0));
+    const total = (m: Map<string, number>) => sumQuantities([...m.values()]);
     return {
       stockTotal: total(stockByProduct),
       lotsTotal: total(lotsByProduct),

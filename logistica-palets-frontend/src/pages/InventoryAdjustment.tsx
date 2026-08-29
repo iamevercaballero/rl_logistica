@@ -14,10 +14,12 @@ import type { Product } from "../api/products";
 import { listWarehouses } from "../api/warehouses";
 import { listLocations } from "../api/locations";
 import { useActiveWarehouseId } from "../contexts/WarehouseContext";
-import { sapLotForProduct } from "./movementFormModel";
+import { palletDistributionError, sapLotForProduct } from "./movementFormModel";
 import { generateSapLot, fefoLots } from "../api/lots";
 import type { LotPallet } from "../api/pallets";
 import { formatDateOnly } from "../utils/dateFormat";
+import { distributeQty, fmtQty, parseQtyInput, quantitiesEqual, quantityDelta, quantityMismatch, roundQty, sumQuantities, toQtyPayload } from "../utils/quantity";
+import QuantityInput from "../design-system/QuantityInput";
 import {
   createAdjustmentDraft,
   submitAdjustmentForApproval,
@@ -180,12 +182,12 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
 
   // ── Stock "sistema" según el nivel de conteo elegido ──────────────────────
   const systemQty = !product ? 0
-    : level === "PRODUCT" ? lots.reduce((s, l) => s + l.stockActual, 0)
+    : level === "PRODUCT" ? sumQuantities(lots.map((l) => l.stockActual))
     : level === "LOT" ? (scopeLot?.stockActual ?? 0)
     : (scopePallet?.quantity ?? 0);
 
-  const physicalQty = physicalQtyInput.trim() === "" ? null : Number(physicalQtyInput);
-  const diff = physicalQty === null || Number.isNaN(physicalQty) ? null : physicalQty - systemQty;
+  const physicalQty = parseQtyInput(physicalQtyInput);
+  const diff = physicalQty === null ? null : quantityDelta(physicalQty, systemQty);
 
   // Candidatos para "pallet existente" (sobrante) y para la distribución del faltante.
   const surplusCandidateLots: ScopedLot[] = level === "LOT" ? (scopeLot ? [scopeLot] : []) : lots;
@@ -194,8 +196,8 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
     : lots.flatMap((l) => l.pallets.map((p) => ({ ...p, lotCode: l.lotCode })));
 
   // Faltante a repartir y cuánto pueden absorber los pallets candidatos.
-  const shortageTarget = diff !== null && diff < 0 && level !== "PALLET" ? Math.round(-diff * 1000) / 1000 : 0;
-  const shortageCapacity = shortageCandidates.reduce((s, p) => s + p.quantity, 0);
+  const shortageTarget = diff !== null && diff < 0 && level !== "PALLET" ? roundQty(-diff) : 0;
+  const shortageCapacity = sumQuantities(shortageCandidates.map((p) => p.quantity));
   // `shortageCandidates` es un array nuevo en cada render: no sirve como dependencia
   // del efecto de autodistribución, se usa esta clave estable en su lugar.
   const shortageCandidatesKey = shortageCandidates.map((p) => `${p.id}:${p.quantity}`).join("|");
@@ -291,7 +293,7 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
   useEffect(() => {
     if (level === "PALLET" || surplusDestination === "EXISTING_PALLET") return;
     if (diff !== null && diff > 0 && lotGroups.length === 1 && !lotGroups[0].quantity) {
-      setLotGroups((g) => [{ ...g[0], quantity: String(diff) }]);
+      setLotGroups((g) => [{ ...g[0], quantity: fmtQty(diff) }]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [diff, surplusDestination]);
@@ -313,12 +315,10 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
       if (x.id !== id) return x;
       const updated = { ...x, [field]: val };
       if (field === "quantity" || field === "palletCount") {
-        const qty = Number(field === "quantity" ? val : x.quantity);
-        const cnt = Number(field === "palletCount" ? val : x.palletCount);
+        const qty = parseQtyInput(field === "quantity" ? val : x.quantity) ?? 0;
+        const cnt = Math.floor(Number(field === "palletCount" ? val : x.palletCount)) || 0;
         if (cnt > 0 && qty > 0) {
-          const base = Math.floor(qty / cnt);
-          const rem = qty % cnt;
-          updated.palletLines = Array.from({ length: cnt }, (_, i) => ({ qty: String(i === cnt - 1 ? base + rem : base) }));
+          updated.palletLines = distributeQty(qty, cnt).map((q) => ({ qty: fmtQty(q) }));
         }
       }
       return updated;
@@ -372,25 +372,27 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
         };
       }
       // NEW_PALLET / NO_PALLET: mismo formulario de lote(s) nuevo(s).
-      const validGroups = lotGroups.filter((g) => g.lotCode.trim() && Number(g.quantity) > 0);
+      const validGroups = lotGroups.filter((g) => g.lotCode.trim() && (parseQtyInput(g.quantity) ?? 0) > 0);
       if (validGroups.length === 0) return { error: "Indicá el lote donde vas a registrar el sobrante." };
-      const sumGroups = validGroups.reduce((s, g) => s + Number(g.quantity), 0);
-      if (sumGroups !== diff) {
-        return { error: `La suma asignada (${sumGroups}) no coincide con la diferencia (+${diff}). Ajustá las cantidades.` };
+      const sumGroups = sumQuantities(validGroups.map((g) => parseQtyInput(g.quantity) ?? 0));
+      if (!quantitiesEqual(sumGroups, diff)) {
+        return { error: `La suma asignada no coincide con la diferencia — ${quantityMismatch(diff, sumGroups).message}. Ajustá las cantidades.` };
       }
       for (const g of validGroups) {
         if (g.palletLines.length > 0) {
-          const sum = g.palletLines.reduce((s, l) => s + Number(l.qty || 0), 0);
-          if (sum !== Number(g.quantity)) {
-            return { error: `Lote ${g.lotCode.trim()}: la suma de los pallets (${sum}) no coincide con la cantidad del lote (${g.quantity}).` };
-          }
+          const err = palletDistributionError(
+            g.palletLines.map((l) => l.qty),
+            g.quantity,
+            { label: `Lote ${g.lotCode.trim()}` },
+          );
+          if (err) return { error: err };
         }
       }
       const palletItems = validGroups.flatMap((g) => {
         // Igual que en la Entrada: al material sin Lote SAP no se le manda uno.
         const base = { lotCode: g.lotCode.trim(), fechaVencimiento: g.fechaVencimiento || undefined, fechaFabricacion: g.fechaFabricacion || undefined, sapLot: sapLotForProduct(product, entrySapLot) };
-        if (g.palletLines.length > 0) return g.palletLines.map((l) => ({ ...base, quantity: Number(l.qty) }));
-        return [{ ...base, quantity: Number(g.quantity) }];
+        if (g.palletLines.length > 0) return g.palletLines.map((l) => ({ ...base, quantity: toQtyPayload(l.qty) ?? 0 }));
+        return [{ ...base, quantity: toQtyPayload(g.quantity) ?? 0 }];
       });
       return { direction: "ADJUSTMENT_IN", palletItems, totalQty: diff, summary: `Lotes: ${validGroups.map((g) => g.lotCode.trim()).join(", ")}` };
     }
@@ -399,12 +401,12 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
     const target = shortageTarget;
     const { palletItems, total } = computeShortageAllocation(shortageCandidates, shortagePhysicalByPallet);
     if (palletItems.length === 0) return { error: "Recontá al menos un pallet donde encontraste menos, para cubrir el faltante." };
-    if (total !== target) {
-      const pending = Math.round((target - total) * 1000) / 1000;
+    if (!quantitiesEqual(total, target)) {
+      const pending = quantityDelta(target, total);
       return {
         error: pending > 0
-          ? `Falta asignar ${pending.toLocaleString("es-PY")} unidades — llevás ${total.toLocaleString("es-PY")} de ${target.toLocaleString("es-PY")}.`
-          : `Te pasaste por ${Math.abs(pending).toLocaleString("es-PY")} unidades — asignaste ${total.toLocaleString("es-PY")} y el faltante es ${target.toLocaleString("es-PY")}.`,
+          ? `Falta asignar ${fmtQty(pending)} unidades — llevás ${fmtQty(total)} de ${fmtQty(target)}.`
+          : `Te pasaste por ${fmtQty(Math.abs(pending))} unidades — asignaste ${fmtQty(total)} y el faltante es ${fmtQty(target)}.`,
       };
     }
     const lotsUsed = [...new Set(palletItems.map((i) => shortageCandidates.find((p) => p.id === i.palletId)?.lotCode).filter((v): v is string => !!v))];
@@ -765,11 +767,11 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
                           <div style={{ padding: "8px 10px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                             <div>
                               <div style={{ fontSize: 10, fontWeight: 700, color: "var(--danger)", textTransform: "uppercase", marginBottom: 2 }}>Cantidad *</div>
-                              <input className="input" type="number" min={1} value={group.quantity} onChange={(e) => updateGroup(group.id, "quantity", e.target.value)} style={{ fontSize: 14, fontWeight: 700 }} />
+                              <QuantityInput value={group.quantity} onChange={(v) => updateGroup(group.id, "quantity", v)} showError unitOfMeasure={product?.unitOfMeasure} aria-label={`Cantidad del lote ${group.lotCode || "nuevo"}`} style={{ fontSize: 14, fontWeight: 700 }} />
                             </div>
                             <div>
                               <div style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 2 }}>Cant. pallets</div>
-                              <input className="input" type="number" min={0} placeholder="Distribuye automático" value={group.palletCount} onChange={(e) => updateGroup(group.id, "palletCount", e.target.value)} />
+                              <input className="input" type="number" min={0} step={1} placeholder="Distribuye automático" value={group.palletCount} onChange={(e) => updateGroup(group.id, "palletCount", e.target.value)} />
                             </div>
                           </div>
                           {group.palletLines.length > 0 && (
@@ -779,17 +781,17 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
                                 {group.palletLines.map((line, idx) => (
                                   <div key={idx} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                                     <span style={{ fontSize: 11, color: "var(--muted)", minWidth: 28 }}>P{idx + 1}</span>
-                                    <input className="input" type="number" min={0} value={line.qty} onChange={(e) => updatePalletLine(group.id, idx, e.target.value)} style={{ fontSize: 12, padding: "3px 6px", width: "100%" }} />
+                                    <QuantityInput allowZero value={line.qty} onChange={(v) => updatePalletLine(group.id, idx, v)} style={{ fontSize: 12, padding: "3px 6px", width: "100%" }} aria-label={`Cantidad del pallet ${idx + 1}`} />
                                   </div>
                                 ))}
                               </div>
                               {(() => {
-                                const sum = group.palletLines.reduce((s, l) => s + Number(l.qty || 0), 0);
-                                const total = Number(group.quantity || 0);
-                                const ok = sum === total;
+                                const sum = sumQuantities(group.palletLines.map((l) => parseQtyInput(l.qty) ?? 0));
+                                const total = parseQtyInput(group.quantity) ?? 0;
+                                const ok = quantitiesEqual(sum, total);
                                 return (
                                   <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: ok ? "var(--success)" : "var(--danger)" }}>
-                                    {ok ? "✓" : "✗"} Suma pallets: {sum} / Total: {total}
+                                    {ok ? "✓" : "✗"} Suma pallets: {fmtQty(sum)} / Total: {fmtQty(total)}
                                     {!ok && <span style={{ fontWeight: 400 }}> — deben coincidir</span>}
                                   </div>
                                 );
@@ -802,11 +804,11 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
                         <button type="button" className="btn" onClick={addLotGroup} style={{ alignSelf: "start", fontSize: 13 }}>+ Agregar otro lote</button>
                       )}
                       {(() => {
-                        const sum = lotGroups.reduce((s, g) => s + Number(g.quantity || 0), 0);
-                        const ok = sum === diff;
+                        const sum = sumQuantities(lotGroups.map((g) => parseQtyInput(g.quantity) ?? 0));
+                        const ok = diff !== null && quantitiesEqual(sum, diff);
                         return (
                           <div style={{ fontSize: 13, fontWeight: 700, color: ok ? "var(--success)" : "var(--muted)" }}>
-                            {ok ? "✓" : "—"} Asignado: {sum.toLocaleString("es-PY")} / Diferencia: +{diff.toLocaleString("es-PY")}
+                            {ok ? "✓" : "—"} Asignado: {fmtQty(sum)} / Diferencia: +{fmtQty(diff ?? 0)}
                           </div>
                         );
                       })()}
@@ -835,7 +837,7 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
                     </div>
                   )}
 
-                  {shortageTarget > shortageCapacity && (
+                  {roundQty(shortageTarget - shortageCapacity) > 0 && (
                     <div style={{ background: "var(--panel-hi)", border: "1px solid var(--danger)", borderRadius: 8, padding: "10px 14px", fontSize: 13, color: "var(--danger)" }}>
                       Los pallets disponibles suman {shortageCapacity.toLocaleString("es-PY")} unidades — no alcanzan para cubrir un faltante
                       de {shortageTarget.toLocaleString("es-PY")}. Revisá el conteo físico o ajustá primero los pallets que falten registrar.

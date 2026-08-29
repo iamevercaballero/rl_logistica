@@ -2,7 +2,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsDateString,
-  IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -10,14 +10,17 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { NormalizeDecimal } from '../../../common/normalize-decimal.decorator';
+import { MIN_QUANTITY, QUANTITY_NUMBER_OPTIONS } from '../../../common/quantity';
 
 export class TransferPalletItemDto {
   @IsUUID()
   palletId: string;
 
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
+  /** Cantidad a transferir de este palet — admite decimales (`numeric(14,3)`). */
+  @NormalizeDecimal()
+  @IsNumber(QUANTITY_NUMBER_OPTIONS)
+  @Min(MIN_QUANTITY)
   quantity: number;
 }
 

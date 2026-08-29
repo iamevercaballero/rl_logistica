@@ -12,10 +12,13 @@ import {
   IsUUID,
   MaxLength,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { documentTypes, DocumentType } from '../entities/logistics-document.entity';
 import { PalletItemDto } from './create-movement.dto';
+import { NormalizeDecimal } from '../../../common/normalize-decimal.decorator';
+import { MIN_QUANTITY, QUANTITY_NUMBER_OPTIONS } from '../../../common/quantity';
 
 /**
  * Una línea del documento = un producto (con sus lotes/pallets).
@@ -28,9 +31,9 @@ export class CreateDocumentLineDto {
 
   /** Cantidad total de la línea (si no se usan palletItems). Admite decimales. */
   @IsOptional()
-  @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 3 })
-  @Min(0.001)
+  @NormalizeDecimal()
+  @IsNumber(QUANTITY_NUMBER_OPTIONS)
+  @Min(MIN_QUANTITY)
   quantity?: number;
 
   /** Cantidad de palets físicos — es un conteo, siempre entero. */
@@ -115,7 +118,13 @@ export class CreateDocumentDto {
   @MaxLength(30)
   vehiclePlate?: string;
 
-  @IsOptional()
+  /**
+   * Responsable de la recepción (entrada) / envío (salida). Obligatorio en una
+   * entrada: la nota y el checklist lo imprimen en "RECIBIDO POR" y es un dato
+   * operativo distinto de quién registró el remito. En una salida es opcional
+   * (el "RECIBIDO POR" de la nota de salida lo firma el cliente en destino).
+   */
+  @ValidateIf((o: CreateDocumentDto) => o.type === 'ENTRY' || o.encargadoId !== undefined)
   @IsUUID()
   encargadoId?: string;
 

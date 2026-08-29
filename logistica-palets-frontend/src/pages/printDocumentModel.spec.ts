@@ -16,8 +16,10 @@ function fixture(type: "ENTRY" | "EXIT"): DocumentPrintData {
       createdAt: "2026-08-17T12:00:00-03:00",
     },
     warehouse: { id: "warehouse-1", name: "Depósito Snapshot", documentCode: "01" },
-    createdBy: { id: "user-1", username: "operador", fullName: "María Operadora" },
-    encargado: { id: "user-1", username: "operador", fullName: "María Operadora" },
+    // Creador y encargado son personas distintas a propósito: quien registró el
+    // remito (María) no es quien recibió/envió la mercadería (Cynthia).
+    createdBy: { id: "user-1", username: "moperadora", fullName: "María Operadora" },
+    encargado: { id: "user-2", username: "ccaballero", fullName: "Cynthia Caballero" },
     logistics: {
       carrier: "TRANSPORTADORA EXACTA S.A.",
       driver: "Juan Chofer",
@@ -35,7 +37,7 @@ function fixture(type: "ENTRY" | "EXIT"): DocumentPrintData {
 }
 
 describe("modelo de impresión documental", () => {
-  it("entrada muestra Depósito, CHAPA y solo Transportado/Recibido autocompletados", () => {
+  it("entrada: RECIBIDO POR es el encargado elegido, no quien registró el remito", () => {
     const presentation = buildPrintPresentation(fixture("ENTRY"));
 
     expect(PRINT_PLATE_LABEL).toBe("CHAPA");
@@ -50,19 +52,27 @@ describe("modelo de impresión documental", () => {
         subline: "TRANSPORTADORA EXACTA S.A.",
         document: "1234567",
       },
-      { label: "RECIBIDO POR", prefill: "María Operadora" },
+      // Cynthia (encargado), NO María (createdBy).
+      { label: "RECIBIDO POR", prefill: "Cynthia Caballero" },
     ]);
     expect(presentation.signatures.some((item) => item.label === ("AUTORIZADO POR" as never))).toBe(false);
   });
 
-  it("salida muestra Origen y autocompleta Enviado/Transportado desde snapshots", () => {
+  it("entrada sin encargado (remitos viejos): RECIBIDO POR dice 'No especificado', nunca el creador", () => {
+    const data = fixture("ENTRY");
+    data.encargado = null;
+    const recibido = buildPrintPresentation(data).signatures.find((s) => s.label === "RECIBIDO POR");
+    expect(recibido).toEqual({ label: "RECIBIDO POR", prefill: "No especificado" });
+  });
+
+  it("salida: ENVIADO POR es el encargado de envío, no quien registró el remito", () => {
     const data = fixture("EXIT");
-    data.createdBy.fullName = null;
+    data.encargado = { id: "user-2", username: "ccaballero", fullName: null };
     const presentation = buildPrintPresentation(data);
 
     expect(presentation.warehouseLabel).toBe("Origen");
     expect(presentation.signatures).toEqual([
-      { label: "ENVIADO POR", prefill: "operador" },
+      { label: "ENVIADO POR", prefill: "ccaballero" },
       {
         label: "TRANSPORTADO POR",
         prefill: "Juan Chofer",

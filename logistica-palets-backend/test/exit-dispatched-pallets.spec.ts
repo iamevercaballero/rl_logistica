@@ -21,7 +21,23 @@ import {
 
 const noopEvents = { emitMovementCreated() {}, emitStockUpdated() {} } as unknown as EventsGateway;
 const noopCache = { delPattern: async () => {} } as unknown as CacheService;
-const noopUploads = { log: async () => {} } as unknown as UploadsService;
+
+/** Registra las llamadas a la bitácora para poder inspeccionar description/metadata. */
+type LogCall = { entityType: string; eventType: string; description: string; metadata?: Record<string, unknown> };
+const logCalls: LogCall[] = [];
+const recordingUploads = {
+  log: async (
+    entityType: string,
+    _entityId: string,
+    eventType: string,
+    description: string,
+    _userId?: string,
+    _username?: string,
+    metadata?: Record<string, unknown>,
+  ) => {
+    logCalls.push({ entityType, eventType, description, metadata });
+  },
+} as unknown as UploadsService;
 
 let ds: DataSource;
 let service: MovementsService;
@@ -35,7 +51,7 @@ beforeAll(async () => {
     noopEvents,
     noopCache,
     new DocumentSequenceService(),
-    noopUploads,
+    recordingUploads,
     new PilasService(),
     createAccessService(ds),
   );
@@ -48,6 +64,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await resetDb(ds);
   base = await seedBasics(ds);
+  logCalls.length = 0;
 });
 
 /** Entrada que deja `quantities.length` palets del mismo lote, listos para despachar. */
@@ -55,6 +72,7 @@ async function stockPallets(quantities: number[], lotCode = 'LOTE-SALIDA') {
   await service.createDocument(
     {
       type: 'ENTRY',
+      encargadoId: TEST_USER_ID,
       warehouseId: base.warehouse.id,
       lines: [{
         productId: base.product.id,
@@ -178,6 +196,7 @@ describe('paletas físicas despachadas en la Salida', () => {
     const created = await service.createDocument(
       {
         type: 'ENTRY',
+        encargadoId: TEST_USER_ID,
         warehouseId: base.warehouse.id,
         lines: [{
           productId: base.product.id,
@@ -331,6 +350,7 @@ describe('corregir las paletas físicas despachadas', () => {
     const created = await service.createDocument(
       {
         type: 'ENTRY',
+        encargadoId: TEST_USER_ID,
         warehouseId: base.warehouse.id,
         lines: [{
           productId: base.product.id,
@@ -359,5 +379,112 @@ describe('corregir las paletas físicas despachadas', () => {
     // La corrección de cantidad sí siguió su curso.
     expect(result.requests).toHaveLength(1);
     expect((await detailsOf(movementId))[0].dispatchedPallets).toBeNull();
+  });
+});
+
+describe('salida parcial por pallet', () => {
+  const palletById = (id: string) => ds.getRepository(Pallet).findOneByOrFail({ id });
+
+  it('el ejemplo del pedido: A 300 → retira 200 (queda 100, PARCIAL); B 238 → retira 238 (agotado)', async () => {
+    const [a, b, c] = await stockPallets([300, 238, 150]);
+
+    const exit = await exitPallets([
+      { palletId: a.id, quantity: 200 },
+      { palletId: b.id, quantity: 238 },
+    ]);
+
+    // Descuenta solo lo retirado: 438 en total.
+    expect(await stockTotal()).toBe(150 + (300 - 200) + (238 - 238));
+    expect((await lotByCode('LOTE-SALIDA')).stockActual).toBe(150 + 100);
+
+    const pa = await palletById(a.id);
+    expect(pa.status).toBe('PARTIAL');
+    expect(pa.quantity).toBe(100);
+    expect(pa.exitedAt).toBeNull();
+
+    const pb = await palletById(b.id);
+    expect(pb.status).toBe('EXITED');
+    expect(pb.quantity).toBe(0);
+
+    // Ningún otro pallet fue tocado.
+    const pc = await palletById(c.id);
+    expect(pc.status).toBe('AVAILABLE');
+    expect(pc.quantity).toBe(150);
+
+    // El detalle guarda lo retirado por pallet.
+    const details = await detailsOf(exit.movementIds[0]);
+    expect(details.map((d) => d.quantity).sort((x, y) => x - y)).toEqual([200, 238]);
+  });
+
+  it('cantidades enteras: retirar el pallet completo lo marca EXITED, igual que siempre', async () => {
+    const [a] = await stockPallets([500]);
+    await exitPallets([{ palletId: a.id, quantity: 500 }]);
+    const pa = await palletById(a.id);
+    expect(pa.status).toBe('EXITED');
+    expect(pa.quantity).toBe(0);
+    expect(await stockTotal()).toBe(0);
+  });
+
+  it('decimales: pallet de 275,65 → retira 200,66 → queda 74,99 y PARCIAL', async () => {
+    const [a] = await stockPallets([275.65]);
+    await exitPallets([{ palletId: a.id, quantity: 200.66 }]);
+    const pa = await palletById(a.id);
+    expect(pa.quantity).toBe(74.99);
+    expect(pa.status).toBe('PARTIAL');
+    expect(await stockTotal()).toBe(74.99);
+    expect((await lotByCode('LOTE-SALIDA')).stockActual).toBe(74.99);
+  });
+
+  it('re-salida del mismo pallet PARCIAL: retira el saldo y pasa a EXITED', async () => {
+    const [a] = await stockPallets([100]);
+    await exitPallets([{ palletId: a.id, quantity: 60 }]);
+    expect((await palletById(a.id)).status).toBe('PARTIAL');
+    expect((await palletById(a.id)).quantity).toBe(40);
+
+    await exitPallets([{ palletId: a.id, quantity: 40 }]);
+    expect((await palletById(a.id)).status).toBe('EXITED');
+    expect((await palletById(a.id)).quantity).toBe(0);
+    expect(await stockTotal()).toBe(0);
+  });
+
+  it('no se puede retirar más que el saldo del pallet', async () => {
+    const [a] = await stockPallets([100]);
+    await expect(exitPallets([{ palletId: a.id, quantity: 150 }])).rejects.toThrow(/disponibles/);
+    // Nada se movió.
+    expect((await palletById(a.id)).quantity).toBe(100);
+    expect(await stockTotal()).toBe(100);
+  });
+
+  it('un residuo de coma flotante no bloquea retirar exactamente el saldo', async () => {
+    const [a, b] = await stockPallets([0.1, 0.2]);
+    // El saldo del lote es 0,3 exacto — retirar 0,1 y 0,2 lo vacía sin "stock insuficiente".
+    await exitPallets([
+      { palletId: a.id, quantity: 0.1 },
+      { palletId: b.id, quantity: 0.2 },
+    ]);
+    expect(await stockTotal()).toBe(0);
+    expect((await palletById(a.id)).status).toBe('EXITED');
+    expect((await palletById(b.id)).status).toBe('EXITED');
+  });
+
+  it('la bitácora del remito registra antes / retirado / restante de la salida parcial', async () => {
+    const [a, b] = await stockPallets([300, 238]);
+    logCalls.length = 0;
+
+    await exitPallets([
+      { palletId: a.id, quantity: 200 },
+      { palletId: b.id, quantity: 238 },
+    ]);
+
+    const creado = logCalls.find((c) => c.entityType === 'DOCUMENT' && c.eventType === 'CREADO');
+    expect(creado).toBeDefined();
+    expect(creado!.description).toContain('salida(s) parcial(es)');
+    const exits = (creado!.metadata as { palletExits: Array<Record<string, unknown>> }).palletExits;
+    expect(exits).toEqual(
+      expect.arrayContaining([
+        { palet: a.code, antes: 300, retirado: 200, restante: 100, estado: 'PARTIAL' },
+        { palet: b.code, antes: 238, retirado: 238, restante: 0, estado: 'EXITED' },
+      ]),
+    );
   });
 });

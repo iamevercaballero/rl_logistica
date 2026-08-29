@@ -19,6 +19,7 @@ import {
 import { MovementsService } from '../movements/movements.service';
 import { CreateMovementDto } from '../movements/dto/create-movement.dto';
 import { endOfBusinessDay, parseBusinessDate } from '../../common/date';
+import { sumQuantities } from '../../common/quantity';
 import {
   WarehouseAccessService,
   type AccessUser,
@@ -105,7 +106,7 @@ export class AdjustmentsService {
       const lines = await this.saveLines(manager, request.id, dto.lines, warehouseId ?? undefined, dto.locationId);
 
       request.totalLines = lines.length;
-      request.totalQuantity = lines.reduce((s, l) => s + l.totalQuantity, 0);
+      request.totalQuantity = sumQuantities(lines.map((l) => l.totalQuantity));
       await manager.save(request);
 
       return { requestId: request.id, code: request.code };
@@ -141,7 +142,7 @@ export class AdjustmentsService {
         await manager.delete(AdjustmentRequestLine, { requestId: id });
         const lines = await this.saveLines(manager, id, dto.lines, req.warehouseId ?? undefined, req.locationId ?? undefined);
         req.totalLines = lines.length;
-        req.totalQuantity = lines.reduce((s, l) => s + l.totalQuantity, 0);
+        req.totalQuantity = sumQuantities(lines.map((l) => l.totalQuantity));
       }
 
       req.updatedAt = new Date();
@@ -404,7 +405,7 @@ export class AdjustmentsService {
   ): Promise<AdjustmentRequestLine[]> {
     const saved: AdjustmentRequestLine[] = [];
     for (const line of lines) {
-      const totalQuantity = line.palletItems.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
+      const totalQuantity = sumQuantities(line.palletItems.map((i) => Number(i.quantity) || 0));
       const entity = manager.create(AdjustmentRequestLine, {
         requestId,
         productId: line.productId,

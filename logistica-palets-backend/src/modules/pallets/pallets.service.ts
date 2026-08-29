@@ -15,7 +15,7 @@ import { Stock } from '../stocks/entities/stock.entity';
 import { Movement } from '../movements/entities/movement.entity';
 import { MovementDetail } from '../movements/entities/movement-detail.entity';
 import { PilasService } from '../pilas/pilas.service';
-import { roundQuantity } from '../../common/quantity';
+import { quantitiesEqual, roundQuantity } from '../../common/quantity';
 
 export interface EnrichedPallet {
   id: string;
@@ -282,11 +282,11 @@ export class PalletsService {
     Object.assign(pallet, dto);
     const saved = await this.palletRepo.save(pallet);
 
-    if (dto.quantity !== undefined && dto.quantity !== previousQuantity) {
-      const delta = dto.quantity - previousQuantity;
+    if (dto.quantity !== undefined && !quantitiesEqual(dto.quantity, previousQuantity)) {
+      const delta = roundQuantity(dto.quantity - previousQuantity);
       const lot = await this.lotRepo.findOne({ where: { id: saved.lotId } });
       if (lot) {
-        lot.stockActual = Math.max(0, lot.stockActual + delta);
+        lot.stockActual = Math.max(0, roundQuantity(lot.stockActual + delta));
         await this.lotRepo.save(lot);
       }
     }

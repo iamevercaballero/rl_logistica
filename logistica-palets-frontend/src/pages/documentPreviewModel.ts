@@ -1,4 +1,5 @@
 import type { MovementType } from "../api/movements";
+import { sumQuantities } from "../utils/quantity";
 
 /**
  * Vista previa de la nota — lo que se va a registrar, antes de registrarlo.
@@ -66,7 +67,7 @@ export function previewTotals(preview: DocumentPreview): PreviewTotals {
   }
   return {
     lines: preview.lines.length,
-    quantity: preview.lines.reduce((sum, line) => sum + line.quantity, 0),
+    quantity: sumQuantities(preview.lines.map((line) => line.quantity)),
     pallets: preview.lines.reduce((sum, line) => sum + line.pallets, 0),
     lots: lotCodes.size,
   };

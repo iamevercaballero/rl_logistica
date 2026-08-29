@@ -42,8 +42,20 @@ import ExpandableText from "../design-system/ExpandableText";
 import DocumentPreviewModal from "../components/DocumentPreviewModal";
 import type { DocumentPreview, PreviewLine } from "./documentPreviewModel";
 import HybridSearchInput from "../design-system/HybridSearchInput";
+import QuantityInput from "../design-system/QuantityInput";
 import { daysUntil, formatDateOnly, formatDateTimePY, todayInputValue } from "../utils/dateFormat";
-import { responsibleFieldLabel, sapLotApplies, sapLotForProduct, showsExternalDocumentNumber } from "./movementFormModel";
+import { distributeQty, fmtQty, parseQtyInput, quantityDelta, roundQty, sumQuantities, toQtyPayload } from "../utils/quantity";
+import { entryLotQuantity, responsibleFieldLabel, sapLotApplies, sapLotForProduct, showsExternalDocumentNumber } from "./movementFormModel";
+import {
+  deselectPalletForExit,
+  exitRowError,
+  exitRowIsPartial,
+  exitRowTotal,
+  fefoSuggest,
+  palletExitTake,
+  selectPalletForExit,
+  type ExitSelection,
+} from "./exitFormModel";
 
 /**
  * Un pallet físico de la entrada: su cantidad, su peso y su sector destino.
@@ -99,22 +111,24 @@ type LotGroup = {
   fechaVencimiento: string; fechaFabricacion: string;
 };
 
-// ── Tipo fila FEFO (salida y transferencia)
+// ── Tipo fila FEFO (salida)
+/**
+ * Salida de un lote. `selectedIds` + `qtyByPallet` son la **única fuente de
+ * verdad**: la selección de pallets y cuánto se retira de cada uno. El total a
+ * despachar del lote se **deriva** (`exitRowTotal`) — nunca se guarda ni se usa
+ * para re-seleccionar pallets. Ver `exitFormModel.ts`.
+ */
 type FefoRow = {
   lot: Lot & { pallets: LotPallet[] };
   selectedIds: Set<string>;
   expanded: boolean;
-  exitQtyInput: string;   // EXIT only — cantidad a despachar del lote (auto-selecciona pallets)
   /**
-   * EXIT only — palletId → cuánto se descuenta de **ese** palet.
-   *
-   * Se prellena con el reparto automático (FEFO: se vacía un palet antes de
-   * tocar el siguiente) y queda editable, porque el reparto real no siempre es
-   * ese: en una salida fraccionaria el operador saca 200 de un palet y 300 de
-   * otro según cómo estén armados en el piso. Lo que se escribe acá es lo que
-   * se descuenta del stock y del palet — la suma tiene que dar la cantidad del
-   * lote, y se valida antes de armar el remito.
+   * Campo auxiliar del atajo "Sugerir selección FEFO": una cantidad objetivo que
+   * SOLO se usa al hacer clic en el botón. Nunca se auto-ejecuta ni afecta el
+   * total (que es derivado).
    */
+  fefoTargetInput: string;
+  /** palletId → cuánto se retira de ese palet (string crudo, lo tipeado). Editable. */
   qtyByPallet: Record<string, string>;
   /**
    * EXIT only — palletId → paletas físicas con las que se despachó ese palet.
@@ -124,77 +138,19 @@ type FefoRow = {
   dispatchedByPallet: Record<string, string>;
 };
 
-/**
- * Reparto automático → valores iniciales de los campos por palet.
- * Es el mismo criterio que ya usaba la salida; ahora queda escrito en campos
- * editables en vez de resolverse solo al confirmar.
- */
-function distributeExitQty(
-  pallets: LotPallet[],
-  selectedIds: Set<string>,
-  targetQty: number,
-): Record<string, string> {
-  const amounts = calcDispatchAmounts(pallets, selectedIds, targetQty);
-  const result: Record<string, string> = {};
-  for (const [palletId, info] of amounts) result[palletId] = String(info.dispatch);
-  return result;
+/** Vista `ExitSelection` (modelo puro) de una fila. */
+function rowSelection(row: FefoRow): ExitSelection {
+  return { selectedIds: row.selectedIds, qtyByPallet: row.qtyByPallet };
 }
 
-/** Cuánto se descuenta de un palet según lo cargado. Sin dato, nada. */
+/** Cuánto se retira de un palet, según lo cargado en su campo. */
 function palletExitQty(row: FefoRow, palletId: string): number {
-  const raw = (row.qtyByPallet[palletId] ?? "").trim();
-  if (raw === "") return 0;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  return palletExitTake(row.qtyByPallet, palletId);
 }
 
-/** Suma de lo que efectivamente se despacha del lote: la de los campos por palet. */
+/** Total del lote: la suma exacta de lo cargado en los pallets seleccionados (derivado). */
 function rowExitQty(row: FefoRow): number {
-  return [...row.selectedIds].reduce((sum, palletId) => sum + palletExitQty(row, palletId), 0);
-}
-
-/** Selecciona pallets en orden hasta cubrir targetQty. */
-function autoSelectForQty(pallets: LotPallet[], targetQty: number): Set<string> {
-  const selected = new Set<string>();
-  let covered = 0;
-  for (const p of pallets) {
-    if (covered >= targetQty) break;
-    selected.add(p.id);
-    covered += p.quantity;
-  }
-  return selected;
-}
-
-/**
- * Para cada pallet seleccionado calcula exactamente cuánto se despachará.
- * - Si targetQty > 0: distribuye la cantidad justa (el último pallet puede ser parcial).
- * - Si targetQty = 0: despacha el pallet completo (selección manual).
- */
-function calcDispatchAmounts(
-  pallets: LotPallet[],
-  selectedIds: Set<string>,
-  targetQty: number,
-): Map<string, { dispatch: number; remaining: number; isPartial: boolean }> {
-  const result = new Map<string, { dispatch: number; remaining: number; isPartial: boolean }>();
-  const selected = pallets.filter((p) => selectedIds.has(p.id));
-
-  if (targetQty > 0) {
-    let remaining = targetQty;
-    for (const p of selected) {
-      const dispatch = Math.min(p.quantity, remaining);
-      remaining -= dispatch;
-      result.set(p.id, {
-        dispatch,
-        remaining: p.quantity - dispatch,
-        isPartial: dispatch < p.quantity,
-      });
-    }
-  } else {
-    for (const p of selected) {
-      result.set(p.id, { dispatch: p.quantity, remaining: 0, isPartial: false });
-    }
-  }
-  return result;
+  return exitRowTotal(rowSelection(row));
 }
 
 /**
@@ -245,19 +201,26 @@ const emptyReg = (): RegPayload => ({
 let _gid = 0;
 
 /**
- * Reparte la cantidad total entre N pallets. Conserva el peso y la ubicación
- * ya cargados en cada posición: cambiar la cantidad de pallets no debe borrar
- * lo que el operario configuró en el gestor.
+ * Reparte la cantidad total entre N pallets (con decimales, ver `distributeQty`
+ * en utils). Conserva el peso y la ubicación ya cargados en cada posición:
+ * cambiar la cantidad de pallets no debe borrar lo que el operario configuró.
  */
-function distributeQty(totalQty: number, count: number, previous: PalletLine[] = []): PalletLine[] {
-  if (!count || count <= 0 || !totalQty || totalQty <= 0) return [];
-  const base = Math.floor(totalQty / count);
-  const rem = totalQty % count;
-  return Array.from({ length: count }, (_, i) => ({
-    qty: String(i < rem ? base + 1 : base),
+function distributePalletLines(totalQty: number, count: number, previous: PalletLine[] = []): PalletLine[] {
+  return distributeQty(totalQty, count).map((qty, i) => ({
+    qty: fmtQty(qty),
     weightKg: previous[i]?.weightKg ?? "",
     locationId: previous[i]?.locationId ?? "",
   }));
+}
+
+/** Suma exacta de lo cargado en los pallets de un lote. */
+function palletLinesSum(lines: PalletLine[]): number {
+  return sumQuantities(lines.map((l) => parseQtyInput(l.qty) ?? 0));
+}
+
+/** Cantidad efectiva del lote — ver `entryLotQuantity` en el modelo. */
+function lotGroupQuantity(group: LotGroup): number {
+  return entryLotQuantity(group.palletLines.map((l) => l.qty), group.quantity);
 }
 
 const newLotGroup = (): LotGroup => ({
@@ -405,14 +368,13 @@ export default function MovementsPage() {
   const [destination, setDestination] = useState("");
   const [documentoMaterial, setDocumentoMaterial] = useState("");
   const [notes, setNotes] = useState("");
+  // Responsable de recepción/envío. Se elige a propósito y no se autocompleta
+  // con el usuario logueado: es un dato operativo (quién recibió la mercadería),
+  // distinto de quién registra el remito. Un OPERATOR no puede reasignarlo — su
+  // remito queda a su nombre y el `effectiveEncargadoId` (en buildSubmission) lo
+  // resuelve con `user.userId`. ADMIN/MANAGER lo eligen del selector.
   const [encargadoId, setEncargadoId] = useState("");
   const [date, setDate] = useState(todayISO);
-
-  // El backend también lo fuerza por RBAC, pero precargarlo deja visible quién
-  // quedará como responsable antes de confirmar el remito.
-  useEffect(() => {
-    if (user?.userId && !encargadoId) setEncargadoId(user.userId);
-  }, [encargadoId, user?.userId]);
 
   // ENTRADA
   const [entrySapLot, setEntrySapLot] = useState(() => generateSapLot());
@@ -709,7 +671,7 @@ export default function MovementsPage() {
       lot: l as Lot & { pallets: LotPallet[] },
       selectedIds: new Set<string>(),
       expanded: true,
-      exitQtyInput: "",
+      fefoTargetInput: "",
       qtyByPallet: {},
       dispatchedByPallet: {},
     })));
@@ -761,7 +723,7 @@ export default function MovementsPage() {
     () => originPallets.filter((p) => transferSel.has(p.id)),
     [originPallets, transferSel],
   );
-  const transferTotalQty = selectedTransferPallets.reduce((s, p) => s + p.quantity, 0);
+  const transferTotalQty = sumQuantities(selectedTransferPallets.map((p) => p.quantity));
   const transferProductCount = new Set(selectedTransferPallets.map((p) => p.productId)).size;
 
   function toggleTransferPallet(id: string) {
@@ -788,9 +750,9 @@ export default function MovementsPage() {
       if (x.id !== id) return x;
       const updated = { ...x, [field]: val };
       if (field === "quantity" || field === "palletCount") {
-        const qty = Number(field === "quantity" ? val : x.quantity);
-        const cnt = Number(field === "palletCount" ? val : x.palletCount);
-        updated.palletLines = distributeQty(qty, cnt, x.palletLines);
+        const qty = parseQtyInput(field === "quantity" ? val : x.quantity) ?? 0;
+        const cnt = Math.floor(Number(field === "palletCount" ? val : x.palletCount)) || 0;
+        updated.palletLines = distributePalletLines(qty, cnt, x.palletLines);
       }
       return updated;
     }));
@@ -801,7 +763,12 @@ export default function MovementsPage() {
     setLotGroups((g) => g.map((x) => {
       if (x.id !== groupId) return x;
       const palletLines = x.palletLines.map((l, i) => (i === lineIdx ? { ...l, ...patch } : l));
-      return { ...x, palletLines };
+      const next = { ...x, palletLines };
+      // La cantidad del lote se DERIVA de los pallets (como en Salida): si se
+      // editó una cantidad, el total del lote pasa a ser la suma exacta de sus
+      // pallets — sin bloquear ni pelear con un total tipeado de antemano.
+      if ("qty" in patch) next.quantity = fmtQty(palletLinesSum(palletLines));
+      return next;
     }));
   }
 
@@ -837,50 +804,25 @@ export default function MovementsPage() {
   /**
    * Tilda o destilda un palet del lote.
    *
-   * Tildar un palet **es** la forma de indicar cuánto sale: entra por defecto
-   * completo y se suma al total, tenga o no una cantidad ya cargada — antes
-   * un palet agregado con un total ya escrito entraba en cero ("sin
-   * cantidad"), invisible en el total, y no había forma de tildar y que
-   * "sume" sin además escribirle un número a mano. Destildar resta lo que
-   * ese palet venía aportando (haya quedado en el completo por defecto o el
-   * operador lo haya editado a mano). El operador sigue pudiendo ajustar
-   * cualquier campo "Sale" a un valor parcial después de tildar.
+   * Tildar carga la cantidad completa del palet (editable a menos). Destildar lo
+   * saca de la selección y borra su cantidad. **No toca ningún otro palet ni
+   * ningún total** — el total del lote se deriva de la selección
+   * (`rowExitQty`), nunca al revés. Ver `exitFormModel.ts` (requisitos 5, 6, 7).
    */
   function togglePallet(lotIdx: number, palletId: string) {
     setFefoRows((rows) => rows.map((r, i) => {
       if (i !== lotIdx) return r;
-      const ids = new Set(r.selectedIds);
-      const adding = !ids.has(palletId);
-      if (adding) ids.add(palletId); else ids.delete(palletId);
-
       const pallet = r.lot.pallets.find((p) => p.id === palletId);
-      const palletQty = pallet?.quantity ?? 0;
-      const currentTotal = Number(r.exitQtyInput) || 0;
-
-      if (adding) {
-        const newTotal = currentTotal + palletQty;
-        return {
-          ...r,
-          selectedIds: ids,
-          exitQtyInput: String(newTotal),
-          qtyByPallet: { ...r.qtyByPallet, [palletId]: String(palletQty) },
-        };
-      }
-
-      const removed = palletExitQty(r, palletId);
-      const newTotal = Math.max(0, currentTotal - removed);
-      return {
-        ...r,
-        selectedIds: ids,
-        exitQtyInput: newTotal > 0 ? String(newTotal) : "",
-        qtyByPallet: { ...r.qtyByPallet, [palletId]: "" },
-      };
+      const next = r.selectedIds.has(palletId)
+        ? deselectPalletForExit(rowSelection(r), palletId)
+        : selectPalletForExit(rowSelection(r), palletId, pallet?.quantity ?? 0);
+      return { ...r, selectedIds: next.selectedIds, qtyByPallet: next.qtyByPallet };
     }));
   }
 
   /**
-   * EXIT — cantidad a descontar de un palet puntual. Es el reparto fino de la
-   * cantidad del lote; el total del lote no se toca (se valida que la suma dé).
+   * EXIT — cantidad a retirar de un palet puntual. Solo escribe ese campo; el
+   * total del lote se recalcula solo (es derivado).
    */
   function setPalletExitQty(lotIdx: number, palletId: string, value: string) {
     setFefoRows((rows) => rows.map((r, i) => i === lotIdx
@@ -888,11 +830,24 @@ export default function MovementsPage() {
       : r));
   }
 
-  /** Vuelve a repartir la cantidad del lote entre los palets elegidos, en orden. */
-  function redistributeExitQty(lotIdx: number) {
-    setFefoRows((rows) => rows.map((r, i) => i === lotIdx
-      ? { ...r, qtyByPallet: distributeExitQty(r.lot.pallets, r.selectedIds, Number(r.exitQtyInput) || 0) }
-      : r));
+  /** Campo auxiliar del atajo FEFO — no dispara nada por sí solo. */
+  function setFefoTarget(lotIdx: number, value: string) {
+    setFefoRows((rows) => rows.map((r, i) => i === lotIdx ? { ...r, fefoTargetInput: value } : r));
+  }
+
+  /**
+   * Atajo explícito "Sugerir selección FEFO": con la cantidad objetivo del
+   * campo auxiliar, selecciona pallets en orden hasta cubrirla y reparte. Solo
+   * corre con este clic — nunca mientras el operador edita pallets a mano.
+   */
+  function applyFefoSuggestion(lotIdx: number) {
+    setFefoRows((rows) => rows.map((r, i) => {
+      if (i !== lotIdx) return r;
+      const target = parseQtyInput(r.fefoTargetInput) ?? 0;
+      if (target <= 0) return r;
+      const next = fefoSuggest(r.lot.pallets, target);
+      return { ...r, expanded: true, selectedIds: next.selectedIds, qtyByPallet: next.qtyByPallet };
+    }));
   }
   /** Paletas físicas resultantes de un palet — dato informativo de la nota. */
   function setDispatchedPallets(lotIdx: number, palletId: string, value: string) {
@@ -903,35 +858,10 @@ export default function MovementsPage() {
   function toggleExpanded(lotIdx: number) {
     setFefoRows((rows) => rows.map((r, i) => i === lotIdx ? { ...r, expanded: !r.expanded } : r));
   }
-  /** Abre el desglose (sin alternar): para acciones que hay que ver aplicarse. */
-  function toggleExpandedOpen(lotIdx: number) {
-    setFefoRows((rows) => rows.map((r, i) => i === lotIdx ? { ...r, expanded: true } : r));
-  }
-
-  /**
-   * EXIT: al ingresar una cantidad por lote, auto-selecciona pallets en orden
-   * FEFO y reparte esa cantidad entre ellos. El reparto queda escrito en los
-   * campos por palet, listos para ajustarse a mano.
-   */
-  function handleExitQtyChange(lotIdx: number, qtyStr: string) {
-    setFefoRows((rows) => rows.map((row, i) => {
-      if (i !== lotIdx) return row;
-      const qty = Number(qtyStr);
-      const selectedIds = (!qtyStr || qty <= 0)
-        ? new Set<string>()
-        : autoSelectForQty(row.lot.pallets, qty);
-      return {
-        ...row,
-        exitQtyInput: qtyStr,
-        selectedIds,
-        qtyByPallet: distributeExitQty(row.lot.pallets, selectedIds, qty > 0 ? qty : 0),
-      };
-    }));
-  }
 
   // EXIT: total real de la salida — la suma de lo cargado palet por palet, que
   // es exactamente lo que se va a descontar.
-  const totalExitQty = fefoRows.reduce((sum, row) => sum + rowExitQty(row), 0);
+  const totalExitQty = sumQuantities(fefoRows.map((row) => rowExitQty(row)));
   const totalExitPallets = fefoRows.reduce((sum, row) => sum + row.selectedIds.size, 0);
 
   const expiryBadge = (days: number | null) => {
@@ -957,7 +887,7 @@ export default function MovementsPage() {
     onSuccess: (res) => {
       invalidateAfterMovement();
       toast.success(
-        `Transferencia registrada: ${res.totalPallets} palet${res.totalPallets !== 1 ? "s" : ""} · ${res.totalQty.toLocaleString("es-PY")} unid. → ${locationMap[toLocationId] ?? "destino"}`,
+        `Transferencia registrada: ${res.totalPallets} palet${res.totalPallets !== 1 ? "s" : ""} · ${fmtQty(res.totalQty)} unid. → ${locationMap[toLocationId] ?? "destino"}`,
       );
       // Mantiene origen/destino para encadenar transferencias; limpia la selección
       setTransferSel(new Set());
@@ -1049,17 +979,18 @@ export default function MovementsPage() {
     if (!product) return null;
 
     if (isEntry) {
-      const validGroups = lotGroups.filter((g) => g.lotCode.trim() && Number(g.quantity) > 0);
+      // La cantidad del lote es la suma de sus pallets cuando hay desglose
+      // (`lotGroupQuantity`), o el valor tipeado cuando va sin desglose.
+      const validGroups = lotGroups.filter((g) => g.lotCode.trim() && lotGroupQuantity(g) > 0);
       if (validGroups.length === 0) return { error: "Agregá al menos un lote con código y cantidad." };
       const missingVenc = validGroups.find((g) => !g.fechaVencimiento);
       if (missingVenc) return { error: `Lote ${missingVenc.lotCode.trim()}: falta la fecha de vencimiento.` };
-      // Validación WMS: la suma por pallet debe coincidir con el total del lote.
+      // Cada pallet del desglose tiene que tener una cantidad > 0 — un pallet en
+      // blanco es una fila que sobra.
       for (const g of validGroups) {
-        if (g.palletLines.length > 0) {
-          const sum = g.palletLines.reduce((s, l) => s + Number(l.qty || 0), 0);
-          if (sum !== Number(g.quantity)) {
-            return { error: `Lote ${g.lotCode.trim()}: la suma de los pallets (${sum}) no coincide con la cantidad total (${g.quantity}). Ajustá las cantidades.` };
-          }
+        const vacio = g.palletLines.some((l) => (parseQtyInput(l.qty) ?? 0) <= 0);
+        if (g.palletLines.length > 0 && vacio) {
+          return { error: `Lote ${g.lotCode.trim()}: hay pallets sin cantidad. Cargá cuánto entra en cada uno o bajá la cantidad de pallets.` };
         }
       }
       const palletItems: PalletItem[] = validGroups.flatMap((g) => {
@@ -1075,14 +1006,17 @@ export default function MovementsPage() {
         if (g.palletLines.length > 0) {
           return g.palletLines.map((l) => ({
             ...base,
-            quantity: Number(l.qty),
-            weightKg: l.weightKg ? Number(l.weightKg) : undefined,
+            quantity: toQtyPayload(l.qty) ?? 0,
+            weightKg: l.weightKg ? toQtyPayload(l.weightKg) ?? undefined : undefined,
             locationId: l.locationId || undefined,
           }));
         }
-        return [{ ...base, quantity: Number(g.quantity) }];
+        return [{ ...base, quantity: toQtyPayload(g.quantity) ?? 0 }];
       });
-      const totalQty = palletItems.reduce((s, i) => s + (i.quantity || 0), 0);
+      // Total de la entrada = la suma real por lote (los pallets cuando hay
+      // desglose). Se manda como `line.quantity` y el backend revalida que
+      // coincida con la suma de `palletItems`.
+      const totalQty = sumQuantities(validGroups.map((g) => lotGroupQuantity(g)));
       const productLabel = `${product.code} · ${product.description}`;
       const entryLotSap = sapLotForProduct(product, entrySapLot, activeWarehouse) ?? null;
       return {
@@ -1113,21 +1047,18 @@ export default function MovementsPage() {
       };
     }
 
-    // SALIDA: arma palletItems desde la selección FEFO. Lo que se despacha de
-    // cada palet es lo que quedó cargado en su campo — el reparto automático es
-    // solo el valor inicial de esos campos, no lo que se envía.
+    // SALIDA: arma palletItems desde la selección por palet. Lo que se retira de
+    // cada palet es exactamente lo que quedó cargado en su campo — la selección
+    // manual es la única fuente de verdad (ver exitFormModel.ts). El total es
+    // la suma de esos campos, nunca al revés.
     const palletItems: PalletItem[] = [];
-    // Lotes donde lo pedido supera lo que suman los palets tildados. Despachar de
-    // menos en silencio cambiaría la intención del operador sin que se entere.
-    const faltantes: { lotCode: string; pedido: number; disponible: number }[] = [];
-    // Lotes donde el reparto por palet no cuadra con el total del lote, o donde
-    // a un palet se le pidió más de lo que tiene.
+    // Lotes donde algún palet seleccionado quedó sin cantidad o pide más de lo
+    // que tiene — ver `exitRowError`.
     const repartoInvalido: string[] = [];
     // Lotes que efectivamente aportan cantidad — los que van a salir impresos.
     const lotesDespachados: FefoRow[] = [];
 
     for (const row of fefoRows) {
-      const targetQty = Number(row.exitQtyInput);
       const selectedPallets = row.lot.pallets.filter((p) => row.selectedIds.has(p.id));
       if (selectedPallets.length === 0) continue;
       // Paletas físicas resultantes: informativo, opcional y por palet. Si el
@@ -1139,64 +1070,28 @@ export default function MovementsPage() {
         return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
       };
 
-      const n = (v: number) => v.toLocaleString("es-PY");
-
-      if (targetQty > 0) {
-        const disponible = selectedPallets.reduce((s, p) => s + p.quantity, 0);
-        if (targetQty > disponible) {
-          faltantes.push({ lotCode: row.lot.lotCode, pedido: targetQty, disponible });
-          continue;
-        }
-        // La suma de los campos por palet manda: es lo que se descuenta. Si no
-        // coincide con el total del lote se corta acá — el stock del lote y el
-        // de sus palets tienen que moverse por el mismo número.
-        const repartido = rowExitQty(row);
-        if (repartido !== targetQty) {
-          repartoInvalido.push(
-            `Lote ${row.lot.lotCode}: las cantidades por palet suman ${n(repartido)} y el lote despacha ${n(targetQty)}. ` +
-            `Ajustá el reparto o usá "Repartir automático".`,
-          );
-          continue;
-        }
-      }
-
-      const excedidos = selectedPallets.filter((p) => palletExitQty(row, p.id) > p.quantity);
-      if (excedidos.length > 0) {
-        repartoInvalido.push(
-          `Lote ${row.lot.lotCode}: ${excedidos.map((p) => p.code).join(", ")} no tiene(n) esa cantidad disponible.`,
-        );
+      const rowError = exitRowError(rowSelection(row), row.lot.pallets);
+      if (rowError) {
+        repartoInvalido.push(`Lote ${row.lot.lotCode}: ${rowError}`);
         continue;
       }
 
       let aportaAlgo = false;
       for (const p of selectedPallets) {
         const take = palletExitQty(row, p.id);
-        // Un palet tildado pero en cero no sale: es una selección que el
-        // operador terminó dejando sin cantidad.
         if (take <= 0) continue;
-        palletItems.push({ palletId: p.id, quantity: take, dispatchedPallets: dispatchedOf(p.id) });
+        palletItems.push({ palletId: p.id, quantity: roundQty(take), dispatchedPallets: dispatchedOf(p.id) });
         aportaAlgo = true;
       }
       if (aportaAlgo) lotesDespachados.push(row);
-    }
-
-    if (faltantes.length > 0) {
-      const n = (v: number) => v.toLocaleString("es-PY");
-      const detalle = faltantes
-        .map((f) =>
-          `Lote ${f.lotCode}: solicitaste ${n(f.pedido)} unidades, pero los palets seleccionados contienen ${n(f.disponible)}. ` +
-          `Faltan seleccionar ${n(f.pedido - f.disponible)} unidades.`,
-        )
-        .join(" ");
-      return { error: `Cantidad seleccionada insuficiente. ${detalle}` };
     }
 
     if (repartoInvalido.length > 0) {
       return { error: repartoInvalido.join(" ") };
     }
 
-    if (palletItems.length === 0) return { error: "Ingresá una cantidad en al menos un lote para despachar." };
-    const totalQty = palletItems.reduce((s, i) => s + (i.quantity || 0), 0);
+    if (palletItems.length === 0) return { error: "Tildá al menos un palet e ingresá cuánto retirar." };
+    const totalQty = sumQuantities(palletItems.map((i) => i.quantity || 0));
     const lotsUsed = lotesDespachados.map((r) => r.lot.lotCode);
     const productLabel = `${product.code} · ${product.description}`;
     return {
@@ -1305,6 +1200,15 @@ export default function MovementsPage() {
       }
     }
     if (lines.length === 0) { setFormError("Agregá al menos un producto al remito."); return null; }
+
+    // Responsable de recepción/envío: el que se eligió en el selector; un
+    // OPERATOR no puede reasignar, así que su remito queda a su propio nombre.
+    // No se hereda del usuario logueado por defecto — hay que resolverlo.
+    const effectiveEncargadoId = canReassignEncargado ? encargadoId : user?.userId ?? "";
+    if (isEntry && !effectiveEncargadoId) {
+      setFormError("Elegí quién recibió la mercadería (encargado de recepción).");
+      return null;
+    }
     setFormError("");
 
     const payload: CreateDocumentPayload = {
@@ -1320,15 +1224,18 @@ export default function MovementsPage() {
       driverDocument: driverDocument || undefined,
       vehiclePlate: vehiclePlate || undefined,
       notes: notes || undefined,
-      encargadoId: encargadoId || undefined,
+      encargadoId: effectiveEncargadoId || undefined,
       lines: lines.map((l) => ({
         productId: l.productId,
+        // Total declarado del producto en el remito. El backend revalida que la
+        // suma de `palletItems` coincida (mismo criterio que el frontend).
+        quantity: l.totalQty,
         palletItems: l.palletItems,
       })),
     };
 
-    // Encargado tal como va a quedar: el elegido si se reasignó, si no el propio.
-    const responsible = users.find((u) => u.id === (encargadoId || user?.userId));
+    // Responsable tal como va a quedar en el remito (no el creador).
+    const responsible = users.find((u) => u.id === effectiveEncargadoId);
     const preview: DocumentPreview = {
       type: isEntry ? "ENTRY" : "EXIT",
       date: date || todayISO(),
@@ -1341,7 +1248,7 @@ export default function MovementsPage() {
       vehiclePlate,
       driver,
       driverDocument,
-      responsibleName: responsible?.fullName || responsible?.username || user?.username || "",
+      responsibleName: responsible?.fullName || responsible?.username || "",
       notes,
       attachments: pendingFiles.map((f) => f.name),
       lines: lines.map((l) => l.preview),
@@ -1471,7 +1378,7 @@ export default function MovementsPage() {
                   <tr key={m.id}>
                     <td style={{ fontSize: 12, whiteSpace: "nowrap", color: "var(--muted)" }}>{formatDateTimePY(m.createdAt ?? m.date)}</td>
                     <td><strong>{m.material.code}</strong><span style={{ color: "var(--muted)", fontSize: 12 }}> · {m.material.description}</span></td>
-                    <td style={{ fontWeight: 700 }}>{m.quantity.toLocaleString("es-PY")}</td>
+                    <td style={{ fontWeight: 700 }}>{fmtQty(m.quantity)}</td>
                     <td style={{ fontSize: 12, color: "var(--muted)", maxWidth: 220, minWidth: 140 }}>
                       <ExpandableText value={m.notes} label="la nota" />
                     </td>
@@ -1498,7 +1405,7 @@ export default function MovementsPage() {
             </div>
             <div style={{ background: "var(--bg)", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13 }}>
               <strong>{regMovement.material.code}</strong> · {regMovement.material.description}
-              <span style={{ marginLeft: 12, color: "var(--muted)" }}>{regMovement.quantity.toLocaleString("es-PY")} unid.</span>
+              <span style={{ marginLeft: 12, color: "var(--muted)" }}>{fmtQty(regMovement.quantity)} unid.</span>
               <span style={{ marginLeft: 12, color: "var(--muted)" }}>{formatDateOnly(regMovement.date)}</span>
             </div>
             <form onSubmit={handleRegularize} style={{ display: "grid", gap: 10 }}>
@@ -1708,7 +1615,7 @@ export default function MovementsPage() {
                       <td style={{ fontSize: 13 }}>{(movType === "ENTRY" ? doc.supplier : doc.destination) ?? "—"}</td>
                       <td style={{ fontSize: 12, color: "var(--muted)", fontFamily: "monospace" }}>{doc.documentNumber ?? "—"}</td>
                       <td style={{ textAlign: "right", fontWeight: 700 }}>{doc.totalLines}</td>
-                      <td style={{ textAlign: "right", fontWeight: 700 }}>{doc.totalQuantity.toLocaleString("es-PY")}</td>
+                      <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtQty(doc.totalQuantity)}</td>
                       <td style={{ textAlign: "center" }}>
                         <span style={{
                           display: "inline-block", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 700,
@@ -1913,7 +1820,7 @@ export default function MovementsPage() {
                             style={{ fontSize: 12, fontWeight: 700,
                               background: fromLocationId === loc.locationId ? "var(--primary)" : undefined,
                               color: fromLocationId === loc.locationId ? "#fff" : undefined }}>
-                            {loc.code} · {loc.pallets} pal. · {loc.qty.toLocaleString("es-PY")} unid.
+                            {loc.code} · {loc.pallets} pal. · {fmtQty(loc.qty)} unid.
                           </button>
                         ))}
                       </div>
@@ -1954,7 +1861,7 @@ export default function MovementsPage() {
                   <div className="form-section-title">
                     Contenido de {locationMap[fromLocationId] ?? "la ubicación"}
                     <span style={{ color: "var(--muted)", marginLeft: 10, fontWeight: 400, fontSize: 12 }}>
-                      {originPallets.length} palet{originPallets.length !== 1 ? "s" : ""} · {transferGroups.length} producto{transferGroups.length !== 1 ? "s" : ""} · {originPallets.reduce((s, p) => s + p.quantity, 0).toLocaleString("es-PY")} unid.
+                      {originPallets.length} palet{originPallets.length !== 1 ? "s" : ""} · {transferGroups.length} producto{transferGroups.length !== 1 ? "s" : ""} · {fmtQty(sumQuantities(originPallets.map((p) => p.quantity)))} unid.
                     </span>
                   </div>
 
@@ -2014,7 +1921,7 @@ export default function MovementsPage() {
                     {transferGroups.map((g) => {
                       const selCount = g.pallets.filter((p) => transferSel.has(p.id)).length;
                       const allSelected = selCount === g.pallets.length && g.pallets.length > 0;
-                      const groupQty = g.pallets.reduce((s, p) => s + p.quantity, 0);
+                      const groupQty = sumQuantities(g.pallets.map((p) => p.quantity));
                       return (
                         <div key={g.productId} style={{ border: `1.5px solid ${selCount > 0 ? "var(--primary)" : "var(--border)"}`, borderRadius: 10, overflow: "hidden" }}>
                           {/* Encabezado del producto */}
@@ -2031,7 +1938,7 @@ export default function MovementsPage() {
                               <span style={{ fontSize: 13, color: "var(--muted)", marginLeft: 8 }}>{g.productDescription}</span>
                             </div>
                             <span style={{ fontSize: 12, color: "var(--muted)", flexShrink: 0 }}>
-                              {g.pallets.length} palet{g.pallets.length !== 1 ? "s" : ""} · {groupQty.toLocaleString("es-PY")} unid.
+                              {g.pallets.length} palet{g.pallets.length !== 1 ? "s" : ""} · {fmtQty(groupQty)} unid.
                             </span>
                             {selCount > 0 && (
                               <span style={{ fontSize: 12, color: "var(--primary)", fontWeight: 700, flexShrink: 0 }}>✓ {selCount} sel.</span>
@@ -2063,7 +1970,7 @@ export default function MovementsPage() {
                                       {p.lotCode}
                                     </span>
                                   )}
-                                  <span style={{ fontSize: 13, fontWeight: 700 }}>{p.quantity.toLocaleString("es-PY")} unid.</span>
+                                  <span style={{ fontSize: 13, fontWeight: 700 }}>{fmtQty(p.quantity)} unid.</span>
                                   {p.fechaVencimiento && (
                                     <span style={{ fontSize: 11, color: "var(--muted)" }}>
                                       Vence {formatDateOnly(p.fechaVencimiento)}
@@ -2088,7 +1995,7 @@ export default function MovementsPage() {
                   {selectedTransferPallets.length > 0 && (
                     <div style={{ background: "var(--primary-light)", border: "1.5px solid var(--primary)", borderRadius: 8, padding: "8px 12px", fontSize: 13, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
                       <strong style={{ color: "var(--primary)" }}>
-                        ✓ {selectedTransferPallets.length} palet{selectedTransferPallets.length !== 1 ? "s" : ""} · {transferTotalQty.toLocaleString("es-PY")} unid. · {transferProductCount} producto{transferProductCount !== 1 ? "s" : ""}
+                        ✓ {selectedTransferPallets.length} palet{selectedTransferPallets.length !== 1 ? "s" : ""} · {fmtQty(transferTotalQty)} unid. · {transferProductCount} producto{transferProductCount !== 1 ? "s" : ""}
                       </strong>
                       <span style={{ color: "var(--muted)" }}>
                         {locationMap[fromLocationId] ?? "origen"} → {toLocationId ? (locationMap[toLocationId] ?? "destino") : "elegí destino"}
@@ -2160,9 +2067,27 @@ export default function MovementsPage() {
                     <div style={{ padding: "8px 10px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, alignItems: "end" }}>
                       <div>
                         <div style={{ fontSize: 10, fontWeight: 700, color: "var(--danger)", textTransform: "uppercase", marginBottom: 2 }}>Cantidad *</div>
-                        <input className="input" type="number" min={1} placeholder="Unidades recibidas"
-                          value={group.quantity} onChange={(e) => updateGroup(group.id, "quantity", e.target.value)}
-                          style={{ fontSize: 14, fontWeight: 700 }} />
+                        {group.palletLines.length > 0 ? (
+                          // Con desglose, la cantidad del lote se DERIVA de los pallets:
+                          // se edita cada pallet en "Gestionar pallets", no acá.
+                          <>
+                            <QuantityInput readOnly allowZero
+                              value={fmtQty(palletLinesSum(group.palletLines))}
+                              onChange={() => {}}
+                              unitOfMeasure={product?.unitOfMeasure}
+                              aria-label={`Cantidad del lote ${group.lotCode || "nuevo"} (suma de los pallets)`}
+                              style={{ fontSize: 14, fontWeight: 700 }} />
+                            <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
+                              suma de los {group.palletLines.length} pallets — editá cada uno en "Gestionar pallets"
+                            </div>
+                          </>
+                        ) : (
+                          <QuantityInput placeholder="Unidades recibidas"
+                            value={group.quantity} onChange={(v) => updateGroup(group.id, "quantity", v)}
+                            unitOfMeasure={product?.unitOfMeasure} showError
+                            aria-label={`Cantidad del lote ${group.lotCode || "nuevo"}`}
+                            style={{ fontSize: 14, fontWeight: 700 }} />
+                        )}
                       </div>
                       <div>
                         <div style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 2 }}>Cant. pallets</div>
@@ -2172,15 +2097,12 @@ export default function MovementsPage() {
                       </div>
                     </div>
                     {group.palletLines.length > 0 && (() => {
-                      const sum = group.palletLines.reduce((s, l) => s + (Number(l.qty) || 0), 0);
-                      const total = Number(group.quantity);
+                      const sum = palletLinesSum(group.palletLines);
                       const sinSector = group.palletLines.filter((l) => !l.locationId).length;
                       return (
                         <div style={{ padding: "6px 10px", borderTop: "1px solid var(--border)", background: "var(--bg-base)", fontSize: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
                           <span style={{ color: "var(--muted)" }}>{group.palletLines.length} pallets</span>
-                          {sum === total
-                            ? <span style={{ color: "var(--success)", fontWeight: 700 }}>{sum.toLocaleString("es-PY")} unid.</span>
-                            : <span style={{ color: "var(--danger)", fontWeight: 700 }}>Suma {sum.toLocaleString("es-PY")} ≠ {total.toLocaleString("es-PY")}</span>}
+                          <span style={{ color: sum > 0 ? "var(--success)" : "var(--muted)", fontWeight: 700 }}>{fmtQty(sum)} unid.</span>
                           {sinSector > 0 && (
                             <span style={{ color: "var(--warning)" }}>{sinSector} sin sector asignado</span>
                           )}
@@ -2193,19 +2115,19 @@ export default function MovementsPage() {
               </div>
 
               {/* Resumen inline */}
-              {lotGroups.some((g) => g.lotCode.trim() && Number(g.quantity) > 0) && (
+              {lotGroups.some((g) => g.lotCode.trim() && lotGroupQuantity(g) > 0) && (
                 <div style={{ background: "var(--bg)", border: "1px solid var(--border-dim)", borderRadius: 8, padding: "8px 12px", fontSize: 13 }}>
                   <span style={{ color: "var(--muted)" }}>Total entrada: </span>
                   <strong style={{ color: "var(--success)" }}>
-                    {lotGroups.reduce((s, g) => s + (Number(g.quantity) || 0), 0).toLocaleString("es-PY")} unidades
+                    {fmtQty(sumQuantities(lotGroups.map((g) => lotGroupQuantity(g))))} unidades
                   </strong>
-                  {(lotGroups.some((g) => g.palletLines.length > 0) || lotGroups.some((g) => Number(g.palletCount) > 0)) && (
+                  {(lotGroups.some((g) => g.palletLines.length > 0) || lotGroups.some((g) => (Number(g.palletCount) || 0) > 0)) && (
                     <span style={{ color: "var(--muted)", marginLeft: 10 }}>
                       en {lotGroups.reduce((s, g) => s + (g.palletLines.length > 0 ? g.palletLines.length : (Number(g.palletCount) || 0)), 0)} pallets
                     </span>
                   )}
                   <span style={{ color: "var(--muted)", marginLeft: 10 }}>
-                    · {lotGroups.filter((g) => g.lotCode.trim() && Number(g.quantity) > 0).length} lote(s)
+                    · {lotGroups.filter((g) => g.lotCode.trim() && lotGroupQuantity(g) > 0).length} lote(s)
                   </span>
                 </div>
               )}
@@ -2232,7 +2154,7 @@ export default function MovementsPage() {
                 Lotes a despachar
                 {totalExitQty > 0 && (
                   <span style={{ color: "var(--primary)", marginLeft: 10, fontWeight: 700 }}>
-                    {totalExitPallets} palet{totalExitPallets !== 1 ? "s" : ""} · {totalExitQty.toLocaleString("es-PY")} unid.
+                    {totalExitPallets} palet{totalExitPallets !== 1 ? "s" : ""} · {fmtQty(totalExitQty)} unid.
                   </span>
                 )}
               </div>
@@ -2252,16 +2174,13 @@ export default function MovementsPage() {
                   {fefoRows.map((row, lotIdx) => {
                     const blocked = row.lot.status === "PENDING_REGULARIZATION";
                     const availPallets = row.lot.pallets;
-                    const availQty = availPallets.reduce((s, p) => s + p.quantity, 0);
+                    const availQty = sumQuantities(availPallets.map((p) => p.quantity));
                     const selPallets = availPallets.filter((p) => row.selectedIds.has(p.id));
-                    const selQty = selPallets.reduce((s, p) => s + p.quantity, 0);
-                    const enteredQty = Number(row.exitQtyInput);
-                    const qtyMismatch = !!row.exitQtyInput && enteredQty > 0 && selQty !== enteredQty;
-                    // Lo que realmente se va a descontar: la suma de los campos
-                    // por palet. Si no coincide con el total del lote, el remito
-                    // no se arma.
-                    const repartido = rowExitQty(row);
-                    const repartoDesbalanceado = enteredQty > 0 && selPallets.length > 0 && repartido !== enteredQty;
+                    // Total del lote: la suma de lo cargado en los palets tildados.
+                    // Es un valor derivado — se recalcula solo al editar un palet.
+                    const despacha = rowExitQty(row);
+                    const rowError = selPallets.length > 0 ? exitRowError(rowSelection(row), row.lot.pallets) : null;
+                    const rowParcial = exitRowIsPartial(rowSelection(row), row.lot.pallets);
                     const days = daysUntil(row.lot.fechaVencimiento);
 
                     const borderColor = blocked
@@ -2291,75 +2210,67 @@ export default function MovementsPage() {
                                 {expiryBadge(days)}
                               </span>
                             )}
-                            <span style={{ fontWeight: 700 }}>{availQty.toLocaleString("es-PY")} unid.</span>
+                            <span style={{ fontWeight: 700 }}>{fmtQty(availQty)} unid.</span>
                             <span style={{ color: "var(--muted)" }}>{availPallets.length} palet{availPallets.length !== 1 ? "s" : ""}</span>
                           </div>
                         </div>
 
-                        {/* ── Cantidad a despachar ── */}
-                        <div style={{ padding: "10px 12px", background: "var(--panel)", display: "grid", gridTemplateColumns: "180px 1fr", gap: 12, alignItems: "center" }}>
+                        {/* ── Cantidad a despachar (CALCULADA, solo lectura) + atajo FEFO ── */}
+                        <div style={{ padding: "10px 12px", background: "var(--panel)", display: "grid", gridTemplateColumns: "200px 1fr", gap: 12, alignItems: "center" }}>
                           <div>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: blocked ? "var(--muted)" : "var(--danger)", textTransform: "uppercase", marginBottom: 3 }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: 3 }}>
                               Cantidad a despachar
                             </div>
-                            {/* Sin `max`: la validación nativa del navegador se adelantaba al
-                                submit y mostraba su propio texto ("El valor debe ser menor de o
-                                igual a N"), tapando el mensaje de la aplicación. El tope se
-                                valida acá abajo y otra vez al armar el remito. */}
-                            <input
-                              className="input"
-                              type="number"
-                              min={0}
-                              placeholder="0"
-                              value={row.exitQtyInput}
-                              onChange={(e) => handleExitQtyChange(lotIdx, e.target.value)}
-                              disabled={blocked}
-                              style={{ fontSize: 15, fontWeight: 700, width: "100%", borderColor: !blocked && row.exitQtyInput && enteredQty > availQty ? "var(--danger)" : undefined }}
-                              aria-label={`Cantidad a despachar del lote ${row.lot.lotCode}`}
-                            />
-                            {row.exitQtyInput && enteredQty > availQty && (
-                              <p style={{ color: "var(--danger)", fontSize: 11, margin: "3px 0 0" }}>
-                                Cantidad seleccionada insuficiente: solicitaste{" "}
-                                {enteredQty.toLocaleString("es-PY")} unidades y el lote tiene{" "}
-                                {availQty.toLocaleString("es-PY")}. Faltan{" "}
-                                {(enteredQty - availQty).toLocaleString("es-PY")} unidades.
-                              </p>
+                            {/* Valor CALCULADO: la suma de lo cargado en los palets
+                                tildados. No es editable — se ajusta editando cada palet. */}
+                            <div style={{ fontSize: 18, fontWeight: 800, color: selPallets.length > 0 ? "var(--text)" : "var(--muted)" }}>
+                              {fmtQty(despacha)} <span style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)" }}>unid.</span>
+                            </div>
+                            {selPallets.length > 0 && (
+                              <div style={{ fontSize: 11, color: rowError ? "var(--danger)" : "var(--muted)", fontWeight: rowError ? 700 : 400 }}>
+                                {selPallets.length}/{availPallets.length} palet{availPallets.length !== 1 ? "s" : ""}
+                                {" · "}
+                                {rowParcial ? "salida parcial" : "palets completos"}
+                              </div>
                             )}
                           </div>
 
-                          {/* Resumen de selección */}
+                          {/* Atajo FEFO — acción explícita: solo actúa al hacer clic. */}
                           <div>
-                            {selPallets.length > 0 ? (
-                              <div style={{ fontSize: 12, display: "grid", gap: 3 }}>
-                                <span style={{ color: repartoDesbalanceado ? "var(--danger)" : "var(--success)", fontWeight: 700 }}>
-                                  {repartoDesbalanceado ? "⚠" : "✓"} {selPallets.length} palet{selPallets.length !== 1 ? "s" : ""}
-                                  {" · "}
-                                  {repartido.toLocaleString("es-PY")} unid. repartidas
-                                </span>
-                                {/* La suma por palet es lo que se descuenta: si no da el total
-                                    del lote, se dice acá y no recién al confirmar. */}
-                                {repartoDesbalanceado && (
-                                  <span style={{ color: "var(--danger)" }}>
-                                    El lote despacha {enteredQty.toLocaleString("es-PY")}: {" "}
-                                    {repartido > enteredQty
-                                      ? `sobran ${(repartido - enteredQty).toLocaleString("es-PY")}`
-                                      : `faltan ${(enteredQty - repartido).toLocaleString("es-PY")}`}
-                                    {" "}en el desglose.
-                                  </span>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() => { toggleExpandedOpen(lotIdx); redistributeExitQty(lotIdx); }}
-                                  disabled={blocked}
-                                  style={{ justifySelf: "start", background: "none", border: "none", padding: 0, font: "inherit", fontSize: 11, fontWeight: 700, color: "var(--primary-text)", cursor: "pointer", textDecoration: "underline" }}
-                                >
-                                  Repartir automático entre los palets
-                                </button>
-                              </div>
-                            ) : blocked ? (
+                            {blocked ? (
                               <span style={{ fontSize: 12, color: "var(--muted)" }}>Pendiente de regularización — no se puede despachar</span>
                             ) : (
-                              <span style={{ fontSize: 12, color: "var(--muted)" }}>Ingresá una cantidad para auto-seleccionar palets</span>
+                              <div style={{ display: "grid", gap: 4 }}>
+                                <span style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>
+                                  Sugerir selección (orden FEFO)
+                                </span>
+                                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                                  <QuantityInput
+                                    allowZero
+                                    placeholder="cantidad"
+                                    value={row.fefoTargetInput}
+                                    onChange={(v) => setFefoTarget(lotIdx, v)}
+                                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); applyFefoSuggestion(lotIdx); } }}
+                                    style={{ fontSize: 13, width: 110 }}
+                                    aria-label={`Cantidad objetivo para sugerir palets del lote ${row.lot.lotCode}`}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => applyFefoSuggestion(lotIdx)}
+                                    disabled={(parseQtyInput(row.fefoTargetInput) ?? 0) <= 0}
+                                    className="btn btn--sm"
+                                    style={{ fontSize: 12, fontWeight: 700 }}
+                                  >
+                                    Sugerir
+                                  </button>
+                                  <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                                    reemplaza la selección; después editá a mano
+                                  </span>
+                                </div>
+                                {rowError && (
+                                  <span style={{ fontSize: 11, color: "var(--danger)", fontWeight: 700 }}>{rowError}</span>
+                                )}
+                              </div>
                             )}
                           </div>
                         </div>
@@ -2379,7 +2290,7 @@ export default function MovementsPage() {
                                   {selPallets.length} de {availPallets.length} seleccionados
                                 </span>
                               )}
-                              {qtyMismatch && (
+                              {rowParcial && (
                                 <span style={{ color: "var(--warning)", fontWeight: 600, marginLeft: 4 }}>
                                   · parcial
                                 </span>
@@ -2392,8 +2303,8 @@ export default function MovementsPage() {
                                     const isSelected = row.selectedIds.has(p.id);
                                     // Lo cargado para este palet: es lo que se descuenta.
                                     const take = palletExitQty(row, p.id);
-                                    const excede = take > p.quantity;
-                                    const isPartial = take > 0 && take < p.quantity;
+                                    const excede = quantityDelta(take, p.quantity) > 0;
+                                    const isPartial = take > 0 && quantityDelta(p.quantity, take) > 0;
                                     return (
                                       <label
                                         key={p.id}
@@ -2426,7 +2337,7 @@ export default function MovementsPage() {
                                         </span>
                                         {/* Cantidad stock actual */}
                                         <span style={{ fontSize: 13, color: "var(--muted)" }}>
-                                          {p.quantity.toLocaleString("es-PY")} unid. stock
+                                          {fmtQty(p.quantity)} unid. stock
                                         </span>
                                         {/* Cuánto sale de ESTE palet. Editable: en una salida
                                             fraccionaria el reparto real lo decide el operador, y
@@ -2496,30 +2407,26 @@ export default function MovementsPage() {
                                                 );
                                               })()}
                                             </span>
-                                            <input
-                                              className="input"
-                                              type="number"
-                                              min={0}
+                                            <QuantityInput
+                                              allowZero
+                                              align="right"
                                               value={row.qtyByPallet[p.id] ?? ""}
                                               disabled={blocked}
-                                              onChange={(e) => setPalletExitQty(lotIdx, p.id, e.target.value)}
-                                              style={{
-                                                width: 92, fontSize: 12, padding: "3px 6px", textAlign: "right",
-                                                fontWeight: 700,
-                                                borderColor: excede ? "var(--danger)" : undefined,
-                                              }}
+                                              invalid={excede}
+                                              onChange={(v) => setPalletExitQty(lotIdx, p.id, v)}
+                                              style={{ width: 92, fontSize: 12, padding: "3px 6px", fontWeight: 700 }}
                                               aria-label={`Cantidad a despachar del palet ${p.code}`}
                                             />
                                             {excede ? (
                                               <span style={{ fontSize: 11, fontWeight: 700, color: "var(--danger)" }}>
-                                                solo tiene {p.quantity.toLocaleString("es-PY")}
+                                                solo tiene {fmtQty(p.quantity)}
                                               </span>
                                             ) : isPartial ? (
-                                              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--success)" }}>
-                                                quedan {(p.quantity - take).toLocaleString("es-PY")}
+                                              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--warning)" }}>
+                                                parcial — quedan {fmtQty(quantityDelta(p.quantity, take))}
                                               </span>
                                             ) : take > 0 ? (
-                                              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--danger)" }}>
+                                              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--success)" }}>
                                                 palet completo
                                               </span>
                                             ) : (
@@ -2688,14 +2595,7 @@ export default function MovementsPage() {
                   </Field>
                 )}
                 {movType === "EXIT" && (
-                  <Field
-                    label="Destino"
-                    hint={
-                      <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                        Escribí un destino nuevo y elegí "Agregar" para guardarlo en el listado.
-                      </span>
-                    }
-                  >
+                  <Field label="Destino">
                     <HybridSearchInput
                       options={destinations}
                       value={destination}
@@ -2724,10 +2624,11 @@ export default function MovementsPage() {
                     />
                   </Field>
                 )}
-                {/* Encargado: siempre el usuario logueado. Solo ADMIN/MANAGER
-                    pueden reasignarlo; el backend rechaza lo demás. */}
+                {/* Responsable de la operación (quién recibió/envió). Obligatorio
+                    en una entrada. Solo ADMIN/MANAGER pueden elegir a otra
+                    persona; el OPERATOR ve su propio nombre y no lo cambia. */}
                 {!isTransfer && (
-                  <Field label={responsibleFieldLabel(movType)}>
+                  <Field label={`${responsibleFieldLabel(movType)}${isEntry ? " *" : ""}`}>
                     {canReassignEncargado ? (
                       <SearchableSelect
                         options={users}
@@ -2783,7 +2684,7 @@ export default function MovementsPage() {
                       <tr key={l.key}>
                         <td style={{ fontWeight: 600 }}>{l.productLabel}</td>
                         <td style={{ color: "var(--muted)", fontSize: 12 }}>{l.summary}</td>
-                        <td style={{ textAlign: "right" }}>{l.totalQty.toLocaleString("es-PY")}</td>
+                        <td style={{ textAlign: "right" }}>{fmtQty(l.totalQty)}</td>
                         <td style={{ textAlign: "right" }}>{l.palletsCount}</td>
                         <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                           <button
@@ -2822,7 +2723,7 @@ export default function MovementsPage() {
                 {saving
                   ? "Transfiriendo..."
                   : selectedTransferPallets.length > 0
-                  ? `⇄ Transferir ${selectedTransferPallets.length} palet${selectedTransferPallets.length !== 1 ? "s" : ""} (${transferTotalQty.toLocaleString("es-PY")} unid.)`
+                  ? `⇄ Transferir ${selectedTransferPallets.length} palet${selectedTransferPallets.length !== 1 ? "s" : ""} (${fmtQty(transferTotalQty)} unid.)`
                   : "⇄ Transferir"}
               </button>
               <button type="button" className="btn" onClick={resetForm}>Limpiar</button>
@@ -3040,7 +2941,7 @@ export default function MovementsPage() {
                           )}
                           <div style={{ padding: "5px 9px", border: "1px solid var(--border-dim)", borderRadius: 6, background: "var(--bg-base)" }}>
                             <div style={{ fontSize: 9, color: "var(--muted)", fontWeight: 700, textTransform: "uppercase" }}>Cantidad total</div>
-                            <strong style={{ fontSize: 13 }}>{(Number(group.quantity) || 0).toLocaleString("es-PY")} unid.</strong>
+                            <strong style={{ fontSize: 13 }}>{fmtQty(lotGroupQuantity(group))} unid.</strong>
                           </div>
                           <div style={{ padding: "5px 9px", border: "1px solid var(--border-dim)", borderRadius: 6, background: "var(--bg-base)" }}>
                             <div style={{ fontSize: 9, color: "var(--muted)", fontWeight: 700, textTransform: "uppercase" }}>Cantidad de pallets</div>
@@ -3075,20 +2976,17 @@ export default function MovementsPage() {
 
                         <div style={{ display: "grid", gap: 5, alignContent: "start" }}>
                           <label htmlFor={`lot-weight-${group.id}`} style={{ fontSize: 10, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase" }}>Peso general del lote (kg por pallet)</label>
-                          <input
+                          <QuantityInput
                             id={`lot-weight-${group.id}`}
-                            className="input"
-                            type="number"
-                            min={0}
-                            step="0.01"
+                            allowZero
                             placeholder="Ej: 850"
                             value={group.bulkWeightKg}
-                            onChange={(e) => updateGroup(group.id, "bulkWeightKg", e.target.value)}
+                            onChange={(v) => updateGroup(group.id, "bulkWeightKg", v)}
                           />
                           <button
                             type="button"
                             className="btn"
-                            disabled={group.bulkWeightKg === "" || !Number.isFinite(Number(group.bulkWeightKg)) || Number(group.bulkWeightKg) < 0}
+                            disabled={group.bulkWeightKg === "" || (parseQtyInput(group.bulkWeightKg) ?? -1) < 0}
                             onClick={() => applyWeightToLot(group.id)}
                             style={{ justifySelf: "start", fontSize: 12, fontWeight: 700, borderColor: "var(--primary)", color: "var(--primary)" }}
                           >
@@ -3154,19 +3052,18 @@ export default function MovementsPage() {
                                 <tr key={`${group.id}-${lineIdx}`}>
                                   <td style={{ fontWeight: 700, fontFamily: "monospace" }}>P{lineIdx + 1}</td>
                                   <td style={{ textAlign: "right" }}>
-                                    <input
-                                      className="input" type="number" min={0} value={line.qty}
-                                      onChange={(e) => updatePalletLine(group.id, lineIdx, { qty: e.target.value })}
-                                      style={{ fontSize: 12, padding: "3px 6px", width: 90, textAlign: "right" }}
+                                    <QuantityInput
+                                      allowZero align="right" value={line.qty}
+                                      onChange={(v) => updatePalletLine(group.id, lineIdx, { qty: v })}
+                                      style={{ fontSize: 12, padding: "3px 6px", width: 90 }}
                                       aria-label={`Cantidad del pallet ${lineIdx + 1} del lote ${group.lotCode}`}
                                     />
                                   </td>
                                   <td style={{ textAlign: "right" }}>
-                                    <input
-                                      className="input" type="number" min={0} step="0.01" placeholder="—"
-                                      value={line.weightKg}
-                                      onChange={(e) => updatePalletLine(group.id, lineIdx, { weightKg: e.target.value })}
-                                      style={{ fontSize: 12, padding: "3px 6px", width: 90, textAlign: "right" }}
+                                    <QuantityInput
+                                      allowZero align="right" placeholder="—" value={line.weightKg}
+                                      onChange={(v) => updatePalletLine(group.id, lineIdx, { weightKg: v })}
+                                      style={{ fontSize: 12, padding: "3px 6px", width: 90 }}
                                       aria-label={`Peso del pallet ${lineIdx + 1} del lote ${group.lotCode}`}
                                     />
                                   </td>

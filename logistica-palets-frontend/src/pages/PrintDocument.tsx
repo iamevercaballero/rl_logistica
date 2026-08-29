@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { getDocumentForPrint, type DocumentPrintData, type PrintProduct, type PrintLot, type PrintPallet, type RawMovement } from "../api/movements";
 import { formatDateOnly } from "../utils/dateFormat";
-import { buildPrintPresentation, dispatchedPalletsOf, effectivePalletCount, PRINT_PLATE_LABEL } from "./printDocumentModel";
+import { buildPrintPresentation, dispatchedPalletsOf, effectivePalletCount, printUserName, PRINT_PLATE_LABEL } from "./printDocumentModel";
 
 function buildMaps(data: DocumentPrintData) {
   const productMap: Record<string, PrintProduct> = Object.fromEntries(data.products.map((p) => [p.id, p]));
@@ -363,6 +363,7 @@ export default function PrintDocumentPage() {
         <div className="doc-footer">
           Impreso el {formatDateOnly(new Date())} · RL Logística WMS · {document.code}
           {document.status && <> · Estado: {document.status.replace("_", " ")}</>}
+          {" · "}Registrado por {printUserName(data.createdBy)}
         </div>
 
       </div>

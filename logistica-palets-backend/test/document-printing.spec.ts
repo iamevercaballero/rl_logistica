@@ -82,6 +82,7 @@ describe('numeración documental por depósito', () => {
 
     const entry01 = await service.createDocument({
       type: 'ENTRY',
+      encargadoId: TEST_USER_ID,
       warehouseId: base.warehouse.id,
       lines: [{
         productId: base.product.id,
@@ -90,6 +91,7 @@ describe('numeración documental por depósito', () => {
     }, TEST_USER_ID);
     const entry02 = await service.createDocument({
       type: 'ENTRY',
+      encargadoId: TEST_USER_ID,
       warehouseId: second.warehouse.id,
       lines: [{
         productId: base.product.id,
@@ -170,6 +172,7 @@ describe('depósito único y snapshots de impresión', () => {
   it('entrada imprime depósito, transportista y usuario creador desde snapshots históricos', async () => {
     const created = await service.createDocument({
       type: 'ENTRY',
+      encargadoId: TEST_USER_ID,
       warehouseId: base.warehouse.id,
       carrier: 'TRANSPORTADORA SNAPSHOT S.A.',
       driver: 'Chofer Original',
@@ -199,6 +202,8 @@ describe('depósito único y snapshots de impresión', () => {
       username: 'operador.test',
       fullName: 'Operador de Prueba',
     });
+    // El encargado se eligió = al creador en esta entrada, pero es su propio
+    // snapshot (no un alias de createdBy).
     expect(print.encargado).toEqual(print.createdBy);
     expect(print.logistics).toEqual({
       carrier: 'TRANSPORTADORA SNAPSHOT S.A.',
@@ -291,6 +296,7 @@ describe('depósito único y snapshots de impresión', () => {
   it('rechaza Documento Material fuera del flujo de Salida', async () => {
     await expect(service.createDocument({
       type: 'ENTRY',
+      encargadoId: TEST_USER_ID,
       warehouseId: base.warehouse.id,
       documentoMaterial: '4900123456',
       lines: [{

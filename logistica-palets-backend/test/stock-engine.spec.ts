@@ -29,6 +29,7 @@ import { SapStockSnapshot } from '../src/modules/reports/entities/sap-stock.enti
 import type { EventsGateway } from '../src/modules/events/events.gateway';
 import type { CacheService } from '../src/modules/cache/cache.service';
 import type { UploadsService } from '../src/modules/uploads/uploads.service';
+import { sumQuantities } from '../src/common/quantity';
 import { createAccessService, createTestDataSource, resetDb, seedBasics, type Basics } from './test-datasource';
 import type { WarehouseAccessService } from '../src/modules/warehouses/warehouse-access.service';
 
@@ -431,6 +432,160 @@ describe('motor de stock — cantidades decimales', () => {
     const codes = (await ds.getRepository(Pallet).find()).map((p) => p.code);
     expect(new Set(codes).size).toBe(2);
   });
+
+  it('una TRANSFERENCIA mueve la cantidad decimal exacta del palet', async () => {
+    await service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      palletItems: [{ lotCode: 'L-TDEC', quantity: 1.5, fechaVencimiento: '2027-01-01' }],
+    }, USER_ID);
+    const otra = await ds.getRepository(Location).save(
+      ds.getRepository(Location).create({ code: 'T-DST', type: 'PISO', warehouse: base.warehouse, active: true, capacityBases: 10 }),
+    );
+    const pallet = await ds.getRepository(Pallet).findOneOrFail({ where: { lotId: (await lotByCode(base.product.id, 'L-TDEC'))!.id } });
+
+    await service.createTransferBatch({
+      fromLocationId: base.location.id,
+      toLocationId: otra.id,
+      lines: [{ productId: base.product.id, palletItems: [{ palletId: pallet.id, quantity: pallet.quantity }] }],
+    }, USER_ID);
+
+    const stocks = await ds.getRepository(Stock).find({ where: { productId: base.product.id } });
+    const byLoc = new Map(stocks.map((s) => [s.locationId, s.currentQuantity]));
+    expect(byLoc.get(base.location.id) ?? 0).toBe(0);
+    expect(byLoc.get(otra.id)).toBe(1.5);
+  });
+
+  it('un AJUSTE de inventario con 999999,999 no pierde ni redondea decimales', async () => {
+    await service.create({
+      type: 'ADJUSTMENT_IN',
+      productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      adjustmentReason: 'DIFERENCIA_INVENTARIO',
+      palletItems: [{ lotCode: 'L-BIG', quantity: 999999.999, fechaVencimiento: '2027-01-01' }],
+    }, USER_ID);
+
+    expect((await stockOf(base.product.id))!.currentQuantity).toBe(999999.999);
+    expect((await lotByCode(base.product.id, 'L-BIG'))!.stockActual).toBe(999999.999);
+  });
+
+  it('operaciones acumuladas (entrada + salida + entrada) conservan el decimal exacto', async () => {
+    const entry = (lotCode: string, quantity: number, fecha: string) => service.create({
+      type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+      palletItems: [{ lotCode, quantity, fechaVencimiento: fecha }],
+    }, USER_ID);
+
+    await entry('L-A1', 0.25, '2027-01-01');
+    await entry('L-A2', 1.5, '2027-02-01');
+    await entry('L-A3', 3537.37, '2027-03-01');
+    expect((await stockOf(base.product.id))!.currentQuantity).toBe(3539.12);
+
+    await service.create({
+      type: 'EXIT', productId: base.product.id, warehouseId: base.warehouse.id, quantity: 0.25,
+    }, USER_ID);
+    await service.create({
+      type: 'EXIT', productId: base.product.id, warehouseId: base.warehouse.id, quantity: 1.5,
+    }, USER_ID);
+
+    expect((await stockOf(base.product.id))!.currentQuantity).toBe(3537.37);
+  });
+
+  // El caso de la foto del usuario: 4537 kg repartidos en 8 pallets con decimales
+  // distintos cuya suma matemática es 4537. El formulario mandaba la cantidad
+  // declarada (4537) + los palletItems; la suma float cruda daba 4537.000000000001
+  // y la operación se rechazaba. El backend revalida con `quantitiesEqual` (enteros
+  // escalados), así que el residuo no cuenta pero una diferencia real sí.
+  const FOTO_PALLETS = [429.786, 977.143, 806.407, 214.519, 122.329, 631.159, 728.38, 627.277];
+
+  it('ENTRADA de 4537 kg en 8 pallets decimales que suman 4537: se registra sin el residuo …0000001', async () => {
+    expect(FOTO_PALLETS.reduce((s, n) => s + n, 0)).not.toBe(4537); // la suma cruda derrapa
+
+    await service.createDocument({
+      type: 'ENTRY',
+      encargadoId: USER_ID,
+      warehouseId: base.warehouse.id,
+      lines: [{
+        productId: base.product.id,
+        quantity: 4537, // total declarado del lote (lo que manda el formulario)
+        palletItems: FOTO_PALLETS.map((q) => ({
+          lotCode: 'L4537',
+          quantity: q,
+          fechaVencimiento: '2027-01-01',
+          locationId: base.location.id,
+        })),
+      }],
+    }, USER_ID);
+
+    expect((await stockOf(base.product.id))!.currentQuantity).toBe(4537);
+    expect((await lotByCode(base.product.id, 'L4537'))!.stockActual).toBe(4537);
+    const lot = await lotByCode(base.product.id, 'L4537');
+    const pallets = await ds.getRepository(Pallet).find({ where: { lotId: lot!.id } });
+    expect(pallets).toHaveLength(8);
+    expect(sumQuantities(pallets.map((p) => p.quantity))).toBe(4537);
+  });
+
+  it('ENTRADA de 4537 kg cuyos pallets suman 4536,9: se rechaza indicando lo que falta', async () => {
+    const faltante = [...FOTO_PALLETS.slice(0, 7), 627.177]; // -0,1 en el último
+
+    await expect(service.createDocument({
+      type: 'ENTRY',
+      encargadoId: USER_ID,
+      warehouseId: base.warehouse.id,
+      lines: [{
+        productId: base.product.id,
+        quantity: 4537,
+        palletItems: faltante.map((q) => ({
+          lotCode: 'L4537-BAD',
+          quantity: q,
+          fechaVencimiento: '2027-01-01',
+          locationId: base.location.id,
+        })),
+      }],
+    }, USER_ID)).rejects.toThrow(/faltan 0,1/);
+
+    // nada quedó a medio registrar
+    expect(await stockOf(base.product.id)).toBeNull();
+    expect(await lotByCode(base.product.id, 'L4537-BAD')).toBeNull();
+  });
+
+  it('ENTRADA cuyos pallets suman de más (4537,5 de 4537): se rechaza indicando el excedente', async () => {
+    const excedente = [...FOTO_PALLETS.slice(0, 7), 627.777]; // +0,5 en el último
+
+    await expect(service.createDocument({
+      type: 'ENTRY',
+      encargadoId: USER_ID,
+      warehouseId: base.warehouse.id,
+      lines: [{
+        productId: base.product.id,
+        quantity: 4537,
+        palletItems: excedente.map((q) => ({
+          lotCode: 'L4537-OVER',
+          quantity: q,
+          fechaVencimiento: '2027-01-01',
+          locationId: base.location.id,
+        })),
+      }],
+    }, USER_ID)).rejects.toThrow(/sobran 0,5/);
+  });
+
+  it('1000 kg repartido en pallets decimales que suman 1000: se registra exacto', async () => {
+    await service.createDocument({
+      type: 'ENTRY',
+      encargadoId: USER_ID,
+      warehouseId: base.warehouse.id,
+      lines: [{
+        productId: base.product.id,
+        quantity: 1000,
+        palletItems: [275.65, 285.35, 200.55, 238.45].map((q) => ({
+          lotCode: 'L1000',
+          quantity: q,
+          fechaVencimiento: '2027-01-01',
+          locationId: base.location.id,
+        })),
+      }],
+    }, USER_ID);
+
+    expect((await stockOf(base.product.id))!.currentQuantity).toBe(1000);
+    expect((await lotByCode(base.product.id, 'L1000'))!.stockActual).toBe(1000);
+  });
 });
 
 describe('motor de stock — colocación en pilas', () => {
@@ -759,7 +914,7 @@ describe('corregir movimiento — peso por pallet y sin cambios', () => {
   });
 });
 
-describe('movimientos — encargado desde el JWT', () => {
+describe('movimientos — encargado de recepción (separado del creador)', () => {
   const OTRO_USER = '00000000-0000-0000-0000-0000000000bb';
 
   const entrada = (encargadoRecepcionId: string | undefined, role?: string) =>
@@ -769,10 +924,11 @@ describe('movimientos — encargado desde el JWT', () => {
       palletItems: [{ lotCode: `LE-${Math.random().toString(36).slice(2, 7)}`, quantity: 10, fechaVencimiento: '2027-01-01' }],
     }, USER_ID, role);
 
-  it('sin encargado explícito, queda el usuario logueado', async () => {
+  it('sin encargado explícito, el movimiento queda sin encargado (NO se hereda al usuario logueado)', async () => {
     const res = await entrada(undefined, 'OPERATOR');
     const mov = await ds.getRepository(Movement).findOne({ where: { id: res.movementId } });
-    expect(mov!.encargadoRecepcionId).toBe(USER_ID);
+    expect(mov!.encargadoRecepcionId ?? null).toBeNull();
+    expect(mov!.createdById).toBe(USER_ID);
   });
 
   it('un OPERATOR no puede registrar el remito a nombre de otro', async () => {
@@ -785,13 +941,14 @@ describe('movimientos — encargado desde el JWT', () => {
     expect(mov!.encargadoRecepcionId).toBe(USER_ID);
   });
 
-  it('un MANAGER puede reasignar el encargado', async () => {
+  it('un MANAGER puede asignar el encargado a otra persona', async () => {
     const res = await entrada(OTRO_USER, 'MANAGER');
     const mov = await ds.getRepository(Movement).findOne({ where: { id: res.movementId } });
     expect(mov!.encargadoRecepcionId).toBe(OTRO_USER);
+    expect(mov!.createdById).toBe(USER_ID);
   });
 
-  it('un ADMIN puede reasignar el encargado', async () => {
+  it('un ADMIN puede asignar el encargado a otra persona', async () => {
     const res = await entrada(OTRO_USER, 'ADMIN');
     const mov = await ds.getRepository(Movement).findOne({ where: { id: res.movementId } });
     expect(mov!.encargadoRecepcionId).toBe(OTRO_USER);

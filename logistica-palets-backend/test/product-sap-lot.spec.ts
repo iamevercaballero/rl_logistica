@@ -86,6 +86,7 @@ async function entryWithSapLot(lines: { productId: string; lotCode: string; quan
   return service.createDocument(
     {
       type: 'ENTRY',
+      encargadoId: TEST_USER_ID,
       warehouseId: base.warehouse.id,
       lines: lines.map((line) => ({
         productId: line.productId,

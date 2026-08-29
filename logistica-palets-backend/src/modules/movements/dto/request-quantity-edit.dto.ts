@@ -13,6 +13,8 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { IsBusinessDateString } from '../../../common/is-business-date-string.validator';
+import { NormalizeDecimal } from '../../../common/normalize-decimal.decorator';
+import { MIN_QUANTITY, QUANTITY_NUMBER_OPTIONS, WEIGHT_NUMBER_OPTIONS } from '../../../common/quantity';
 
 /**
  * Nueva cantidad de un pallet existente del movimiento.
@@ -24,8 +26,8 @@ export class PalletQuantityEditDto {
   @IsUUID()
   palletId: string;
 
-  @Type(() => Number)
-  @IsInt()
+  @NormalizeDecimal()
+  @IsNumber(QUANTITY_NUMBER_OPTIONS)
   @Min(0)
   newQuantity: number;
 
@@ -34,8 +36,8 @@ export class PalletQuantityEditDto {
    * aplica directo y queda auditado, sin pasar por aprobación.
    */
   @IsOptional()
-  @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 2 })
+  @NormalizeDecimal()
+  @IsNumber(WEIGHT_NUMBER_OPTIONS)
   @Min(0)
   weightKg?: number;
 
@@ -90,9 +92,9 @@ export class QuantityEditLotDto {
 
   /** Unidades a agregar al lote → se crean pallets nuevos al aprobar. */
   @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
+  @NormalizeDecimal()
+  @IsNumber(QUANTITY_NUMBER_OPTIONS)
+  @Min(MIN_QUANTITY)
   addQuantity?: number;
 
   /** En cuántos pallets nuevos repartir el agregado (default 1). */

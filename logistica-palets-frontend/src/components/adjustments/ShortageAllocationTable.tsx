@@ -1,15 +1,18 @@
 import type { LotPallet } from "../../api/pallets";
+import QuantityInput from "../../design-system/QuantityInput";
+import { fmtQty, parseQtyInput, quantityDelta, roundQty, sumQuantities } from "../../utils/quantity";
 
 export type CandidatePallet = LotPallet & { lotCode: string };
 
 /**
- * Las cantidades viven con 3 decimales (columna `numeric(14,3)`). Redondear a esa
- * misma escala evita que 7.058 − 6.000,1 dé 1.057,9999999999 y que la suma
- * asignada "no coincida" con el faltante por un error de punto flotante.
+ * Las cantidades viven con 3 decimales (columna `numeric(14,3)`). Toda resta y
+ * suma se hace por enteros escalados (`quantityDelta` / `sumQuantities`) para
+ * que un residuo de coma flotante no haga "no coincidir" la asignación con el
+ * faltante.
  */
-const round3 = (n: number) => Math.round(n * 1000) / 1000;
+const round3 = roundQty;
 
-const fmt = (n: number) => n.toLocaleString("es-PY");
+const fmt = fmtQty;
 
 /**
  * Misma lógica que usará el envío: por cada pallet con un físico válido y menor al
@@ -22,13 +25,13 @@ export function computeShortageAllocation(
 ): { palletItems: { palletId: string; quantity: number }[]; total: number } {
   const palletItems: { palletId: string; quantity: number }[] = [];
   for (const p of pallets) {
-    const raw = physicalByPallet[p.id] ?? String(p.quantity);
-    const phys = Number(raw);
-    if (raw.trim() === "" || !Number.isFinite(phys) || phys < 0) continue;
-    const take = round3(p.quantity - phys);
+    const raw = physicalByPallet[p.id] ?? fmtQty(p.quantity);
+    const phys = parseQtyInput(raw);
+    if (phys === null || phys < 0) continue;
+    const take = quantityDelta(p.quantity, phys);
     if (take > 0) palletItems.push({ palletId: p.id, quantity: take });
   }
-  return { palletItems, total: round3(palletItems.reduce((s, i) => s + i.quantity, 0)) };
+  return { palletItems, total: sumQuantities(palletItems.map((i) => i.quantity)) };
 }
 
 /**
@@ -50,10 +53,10 @@ export function autoDistributeShortage(
   let remaining = round3(target);
   for (const p of pallets) {
     const take = Math.min(p.quantity, Math.max(0, remaining));
-    remaining = round3(remaining - take);
-    physicalByPallet[p.id] = String(round3(p.quantity - take));
+    remaining = quantityDelta(remaining, take);
+    physicalByPallet[p.id] = fmtQty(quantityDelta(p.quantity, take));
   }
-  return { physicalByPallet, covered: round3(target - remaining) };
+  return { physicalByPallet, covered: quantityDelta(target, remaining) };
 }
 
 type Props = {
@@ -81,7 +84,7 @@ export default function ShortageAllocationTable({
   }
 
   const { total: assigned } = computeShortageAllocation(pallets, physicalByPallet);
-  const pending = round3(target - assigned);
+  const pending = quantityDelta(target, assigned);
 
   return (
     <div style={{ display: "grid", gap: 6 }}>
@@ -100,14 +103,14 @@ export default function ShortageAllocationTable({
           <span style={{ textAlign: "right" }}>Diferencia</span>
         </div>
         {pallets.map((p, idx) => {
-          const raw = physicalByPallet[p.id] ?? String(p.quantity);
-          const phys = Number(raw);
-          const valid = raw.trim() !== "" && Number.isFinite(phys) && phys >= 0;
-          const take = valid ? round3(p.quantity - phys) : 0;
+          const raw = physicalByPallet[p.id] ?? fmtQty(p.quantity);
+          const phys = parseQtyInput(raw);
+          const valid = phys !== null && phys >= 0;
+          const take = phys !== null && valid ? quantityDelta(p.quantity, phys) : 0;
           const isSurplusHere = valid && take < 0;
           // Valor que, puesto en esta fila, deja el faltante exacto en cero. Solo se
           // ofrece si cabe en el pallet (no puede quedar negativo ni superar el stock).
-          const closeValue = valid ? round3(phys - pending) : null;
+          const closeValue = phys !== null && valid ? quantityDelta(phys, pending) : null;
           const canClose = !readOnly && pending !== 0 && closeValue !== null && closeValue >= 0 && closeValue <= p.quantity;
           return (
             <div key={p.id} style={{ borderBottom: idx < pallets.length - 1 ? "1px solid var(--border)" : undefined }}>
@@ -117,25 +120,24 @@ export default function ShortageAllocationTable({
                 <span style={{ fontSize: 12, color: "var(--muted)", paddingTop: 5 }}>{p.currentLocationId ? locationMap[p.currentLocationId] ?? p.currentLocationId.slice(0, 8) : "—"}</span>
                 <span style={{ textAlign: "right", fontSize: 13, paddingTop: 5 }}>{fmt(p.quantity)}</span>
                 <div style={{ display: "grid", gap: 2, minWidth: 0 }}>
-                  <input
-                    className="input"
-                    type="number"
-                    min={0}
+                  <QuantityInput
+                    allowZero
+                    align="right"
                     value={raw}
                     readOnly={readOnly}
-                    tabIndex={readOnly ? -1 : undefined}
-                    onChange={(e) => onPhysicalChange(p.id, e.target.value)}
-                    style={{ width: "100%", fontSize: 13, padding: "3px 6px", borderColor: !valid ? "var(--danger)" : undefined, opacity: readOnly ? 0.75 : undefined, cursor: readOnly ? "default" : undefined }}
+                    invalid={!valid}
+                    onChange={(v) => onPhysicalChange(p.id, v)}
+                    style={{ width: "100%", fontSize: 13, padding: "3px 6px", opacity: readOnly ? 0.75 : undefined, cursor: readOnly ? "default" : undefined }}
                     aria-label={`Conteo físico del pallet ${p.code}`}
                   />
                   {canClose && (
                     <button
                       type="button"
-                      onClick={() => onPhysicalChange(p.id, String(closeValue))}
+                      onClick={() => onPhysicalChange(p.id, fmtQty(closeValue!))}
                       title={`Dejar ${fmt(closeValue!)} en este pallet cierra el faltante exacto`}
                       style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--primary)", fontSize: 11, fontWeight: 700, textAlign: "left" }}
                     >
-                      {closeValue! < phys ? "↓" : "↑"} {fmt(closeValue!)}
+                      {closeValue! < (phys ?? 0) ? "↓" : "↑"} {fmt(closeValue!)}
                     </button>
                   )}
                 </div>

@@ -9,6 +9,7 @@ import { Lot } from '../lots/entities/lot.entity';
 import { Warehouse } from '../warehouses/entities/warehouse.entity';
 import { Location } from '../locations/entities/location.entity';
 import { businessToday } from '../../common/date';
+import { parseQuantity, roundQuantity } from '../../common/quantity';
 
 @Injectable()
 export class SeedService {
@@ -110,7 +111,7 @@ export class SeedService {
       .map(r => ({
         fecha: dateToISO(r[2]), codigo: String(r[3]),
         desc: String(r[4]).trim(), paletas: Number(r[5]) || 0,
-        cantidad: Math.max(1, Math.round(Number(r[6]))), um: String(r[7] || 'UN').trim(),
+        cantidad: roundQuantity(parseQuantity(r[6]) ?? 0), um: String(r[7] || 'UN').trim(),
         remito: r[9] ? String(r[9]) : '', proveedor: String(r[11] || '').trim(),
         transport: String(r[12] || '').trim(), conductor: String(r[13] || '').trim(),
       }))
@@ -125,7 +126,7 @@ export class SeedService {
       .map(r => ({
         fecha: dateToISO(r[1]), codigo: String(r[2]),
         desc: String(r[3]).trim(), paletas: Number(r[5]) || 0,
-        cantidad: Math.max(1, Math.round(Number(r[6]))), um: String(r[7] || 'UN').trim(),
+        cantidad: roundQuantity(parseQuantity(r[6]) ?? 0), um: String(r[7] || 'UN').trim(),
         remito: r[10] ? String(r[10]) : '', transport: String(r[11] || '').trim(),
         destino: String(r[12] || '').trim(), conductor: String(r[13] || '').trim(),
       }))
@@ -139,7 +140,7 @@ export class SeedService {
       .filter((r, i) => i >= 2 && r[0] && typeof r[0] === 'number' && r[3])
       .map(r => ({
         codigo: String(r[0]), desc: String(r[1]).trim(),
-        lote: String(r[2]).trim(), cantidad: Math.max(1, Math.round(Number(r[3]))),
+        lote: String(r[2]).trim(), cantidad: roundQuantity(parseQuantity(r[3]) ?? 0),
         paletas: Number(r[4]) || 0,
       }));
 
@@ -325,7 +326,7 @@ export class SeedService {
     const repo = this.dataSource.getRepository(Stock);
     const existing = await repo.findOne({ where: { productId, warehouseId, locationId } });
     if (existing) {
-      existing.currentQuantity = Math.max(0, Number(existing.currentQuantity) + delta);
+      existing.currentQuantity = Math.max(0, roundQuantity(Number(existing.currentQuantity) + delta));
       await repo.save(existing);
     } else if (delta > 0) {
       await repo.save(repo.create({ productId, warehouseId, locationId, currentQuantity: delta }));

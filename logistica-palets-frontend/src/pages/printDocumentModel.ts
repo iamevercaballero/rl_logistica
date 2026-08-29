@@ -22,6 +22,18 @@ export function printUserName(user: PrintUserSnapshot): string {
 }
 
 /**
+ * Nombre del responsable (encargado de recepción/envío) para prellenar la firma.
+ *
+ * Es el que se eligió en la entrada, NO quien la registró: son datos distintos y
+ * el remito los separa (`data.encargado` vs `data.createdBy`). Un remito sin
+ * encargado (documentos anteriores a que el campo fuera obligatorio) sale con
+ * "No especificado" — nunca se cae al creador para llenar este renglón.
+ */
+export function printResponsibleName(user: PrintUserSnapshot | null): string {
+  return user ? printUserName(user) : "No especificado";
+}
+
+/**
  * Bloque "TRANSPORTADO POR": lo firma **el conductor**, no la transportadora.
  * Quien recibe o entrega la carga es una persona con nombre y cédula, y es esa
  * persona la que firma el remito; la transportadora es la empresa detrás y baja
@@ -55,7 +67,9 @@ export function buildPrintPresentation(data: DocumentPrintData): {
   signatures: PrintSignatureBlock[];
 } {
   const isEntry = data.document.type === "ENTRY";
-  const creatorName = printUserName(data.createdBy);
+  // Firma el responsable elegido en la operación (encargado de recepción en la
+  // entrada, encargado de envío en la salida), no quien registró el remito.
+  const responsibleName = printResponsibleName(data.encargado);
 
   return {
     warehouseLabel: isEntry ? "Depósito" : "Origen",
@@ -63,10 +77,10 @@ export function buildPrintPresentation(data: DocumentPrintData): {
     signatures: isEntry
       ? [
           transportedBy(data),
-          { label: "RECIBIDO POR", prefill: creatorName },
+          { label: "RECIBIDO POR", prefill: responsibleName },
         ]
       : [
-          { label: "ENVIADO POR", prefill: creatorName },
+          { label: "ENVIADO POR", prefill: responsibleName },
           transportedBy(data),
           { label: "RECIBIDO POR", prefill: "" },
         ],

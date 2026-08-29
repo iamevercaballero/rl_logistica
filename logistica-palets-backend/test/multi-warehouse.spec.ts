@@ -278,6 +278,7 @@ describe('multi-depósito — seguridad contra manipulación del request', () =>
   it('mentir el warehouseId de una entrada cuya ubicación es de otro depósito se rechaza', async () => {
     await expect(movements.createDocument({
       type: 'ENTRY',
+      encargadoId: ADMIN.userId,
       warehouseId: base.warehouse.id, // dice 01...
       lines: [{
         productId: base.product.id,

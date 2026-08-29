@@ -8,8 +8,10 @@ import {
   type MovementLotBreakdown,
 } from "../api/movements";
 import { useToast } from "../design-system/toast";
+import QuantityInput from "../design-system/QuantityInput";
 import { getFriendlyApiError } from "../utils/apiError";
 import { formatDateTimePY } from "../utils/dateFormat";
+import { fmtQty, parseQtyInput, quantitiesEqual, quantityDelta, roundQty, sumQuantities, toQtyPayload } from "../utils/quantity";
 
 interface Props {
   movement: Movement;
@@ -80,8 +82,8 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
     fechaFabricacion: l.fechaFabricacion ?? "",
     // ENTRY: se edita el saldo actual del pallet. EXIT: se edita cuánto salió de ese pallet
     // en ESTE movimiento (quantityInMovement) — son ejes distintos, ver comentario del backend.
-    pallets: Object.fromEntries(l.pallets.map((p) => [p.id, String(isExit ? p.quantityInMovement : p.currentQuantity)])),
-    weights: Object.fromEntries(l.pallets.map((p) => [p.id, p.weightKg != null ? String(p.weightKg) : ""])),
+    pallets: Object.fromEntries(l.pallets.map((p) => [p.id, fmtQty(isExit ? p.quantityInMovement : p.currentQuantity)])),
+    weights: Object.fromEntries(l.pallets.map((p) => [p.id, p.weightKg != null ? fmtQty(p.weightKg) : ""])),
     dispatched: Object.fromEntries(l.pallets.map((p) => [p.id, p.dispatchedPallets != null ? String(p.dispatchedPallets) : ""])),
     addQuantity: "",
     addPalletCount: "1",
@@ -135,7 +137,7 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
         if (qty.lotFieldChanges > 0) toast.success(`${qty.lotFieldChanges} dato${qty.lotFieldChanges !== 1 ? "s" : ""} de lote actualizado${qty.lotFieldChanges !== 1 ? "s" : ""}`);
         for (const r of qty.requests) {
           toast.success(
-            `Solicitud ${r.code} (${r.type === "ADJUSTMENT_IN" ? "+" : "−"}${r.totalQuantity.toLocaleString("es-PY")} unid.) enviada al MANAGER para aprobación`,
+            `Solicitud ${r.code} (${r.type === "ADJUSTMENT_IN" ? "+" : "−"}${fmtQty(r.totalQuantity)} unid.) enviada al MANAGER para aprobación`,
           );
         }
         for (const w of qty.warnings) toast.warning(w);
@@ -192,23 +194,23 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
         if (!isExit && p.status === "EXITED") continue;
         const raw = edit.pallets[p.id];
         if (raw === undefined) continue;
-        const newQty = Number(raw);
-        if (raw.trim() === "" || !Number.isInteger(newQty) || newQty < 0) {
+        const newQty = toQtyPayload(raw);
+        if (raw.trim() === "" || newQty === null || newQty < 0) {
           setFormError(`Cantidad inválida en el pallet ${p.code}.`);
           return;
         }
 
         // El peso es descriptivo: cambia solo si el operario lo tocó.
         const rawWeight = edit.weights[p.id] ?? "";
-        const originalWeight = p.weightKg != null ? String(p.weightKg) : "";
+        const originalWeight = p.weightKg != null ? fmtQty(p.weightKg) : "";
         let weightKg: number | undefined;
         if (rawWeight.trim() !== originalWeight.trim()) {
           if (rawWeight.trim() === "") {
             setFormError(`Indicá el peso del pallet ${p.code} o dejá el valor anterior.`);
             return;
           }
-          const w = Number(rawWeight);
-          if (!Number.isFinite(w) || w < 0) {
+          const w = toQtyPayload(rawWeight);
+          if (w === null || w < 0) {
             setFormError(`Peso inválido en el pallet ${p.code}.`);
             return;
           }
@@ -235,17 +237,17 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
           }
         }
 
-        const qtyChanged = isExit ? newQty !== p.quantityInMovement : newQty !== p.currentQuantity;
+        const qtyChanged = isExit ? !quantitiesEqual(newQty, p.quantityInMovement) : !quantitiesEqual(newQty, p.currentQuantity);
 
         if (isExit) {
-          const ceiling = p.quantityInMovement + p.currentQuantity;
-          if (newQty > ceiling) {
-            setFormError(`El pallet ${p.code}: como máximo se le puede sacar ${ceiling.toLocaleString("es-PY")} unid. en total.`);
+          const ceiling = roundQty(p.quantityInMovement + p.currentQuantity);
+          if (roundQty(newQty - ceiling) > 0) {
+            setFormError(`El pallet ${p.code}: como máximo se le puede sacar ${fmtQty(ceiling)} unid. en total.`);
             return;
           }
-        } else if (newQty > p.currentQuantity) {
+        } else if (roundQty(newQty - p.currentQuantity) > 0) {
           setFormError(
-            `El pallet ${p.code} tiene ${p.currentQuantity.toLocaleString("es-PY")} unid. — solo se puede reducir. Para sumar unidades usá "Agregar unidades" del lote.`,
+            `El pallet ${p.code} tiene ${fmtQty(p.currentQuantity)} unid. — solo se puede reducir. Para sumar unidades usá "Agregar unidades" del lote.`,
           );
           return;
         }
@@ -256,9 +258,9 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
       }
 
       // Agregado de unidades → pallets nuevos al aprobar (solo ENTRY)
-      const addQty = Number(edit.addQuantity);
-      const hasAdd = !isExit && edit.addQuantity.trim() !== "" && Number.isInteger(addQty) && addQty > 0;
-      if (!isExit && edit.addQuantity.trim() !== "" && (!Number.isInteger(addQty) || addQty < 0)) {
+      const addQty = toQtyPayload(edit.addQuantity);
+      const hasAdd = !isExit && edit.addQuantity.trim() !== "" && addQty !== null && addQty > 0;
+      if (!isExit && edit.addQuantity.trim() !== "" && (addQty === null || addQty < 0)) {
         setFormError(`Cantidad a agregar inválida en el lote ${l.lotCode}.`);
         return;
       }
@@ -272,8 +274,8 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
         fechaVencimiento: vencChanged ? edit.fechaVencimiento : undefined,
         fechaFabricacion: fabChanged ? edit.fechaFabricacion : undefined,
         palletEdits: palletEdits.length > 0 ? palletEdits : undefined,
-        addQuantity: hasAdd ? addQty : undefined,
-        addPalletCount: hasAdd ? Math.max(1, Number(edit.addPalletCount) || 1) : undefined,
+        addQuantity: hasAdd ? addQty ?? undefined : undefined,
+        addPalletCount: hasAdd ? Math.max(1, Math.floor(Number(edit.addPalletCount)) || 1) : undefined,
       });
     }
 
@@ -371,7 +373,7 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
           </div>
           <div style={{ textAlign: "right" }}>
             <div style={{ fontWeight: 800 }}>
-              {movement.quantity.toLocaleString("es-PY")} unid.
+              {fmtQty(movement.quantity)} unid.
             </div>
             <div style={{ fontSize: 11, color: "var(--muted)" }}>
               {formatDateTimePY(movement.createdAt ?? movement.date)}
@@ -534,17 +536,17 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                     const exitedPallets = isExit ? [] : l.pallets.filter((p) => p.status === "EXITED");
                     const baseline = (p: MovementLotBreakdown["pallets"][number]) => isExit ? p.quantityInMovement : p.currentQuantity;
                     const ceiling = (p: MovementLotBreakdown["pallets"][number]) => isExit ? p.quantityInMovement + p.currentQuantity : p.currentQuantity;
-                    const currentTotal = activePallets.reduce((s, p) => s + baseline(p), 0);
-                    const newTotal = activePallets.reduce((s, p) => {
+                    const currentTotal = sumQuantities(activePallets.map((p) => baseline(p)));
+                    const newTotal = sumQuantities(activePallets.map((p) => {
                       const raw = edit.pallets[p.id];
-                      const n = Number(raw);
-                      if (raw === undefined || raw.trim() === "" || !Number.isInteger(n) || n < 0) return s + baseline(p);
-                      return s + Math.min(n, ceiling(p));
-                    }, 0);
-                    const addQtyNum = Number(edit.addQuantity);
-                    const addQty = !isExit && edit.addQuantity.trim() !== "" && Number.isInteger(addQtyNum) && addQtyNum > 0 ? addQtyNum : 0;
-                    const addCount = Math.max(1, Number(edit.addPalletCount) || 1);
-                    const delta = newTotal + addQty - currentTotal;
+                      const n = parseQtyInput(raw ?? "");
+                      if (raw === undefined || n === null || n < 0) return baseline(p);
+                      return Math.min(n, ceiling(p));
+                    }));
+                    const addQtyNum = parseQtyInput(edit.addQuantity);
+                    const addQty = !isExit && addQtyNum !== null && addQtyNum > 0 ? addQtyNum : 0;
+                    const addCount = Math.max(1, Math.floor(Number(edit.addPalletCount)) || 1);
+                    const delta = quantityDelta(sumQuantities([newTotal, addQty]), currentTotal);
                     const codeChanged = edit.lotCode.trim() !== "" && edit.lotCode.trim() !== l.lotCode;
 
                     const tinyLabel: React.CSSProperties = {
@@ -636,9 +638,9 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                             {activePallets.map((p) => {
                               const base = baseline(p);
                               const max = ceiling(p);
-                              const raw = edit.pallets[p.id] ?? String(base);
-                              const n = Number(raw);
-                              const valid = raw.trim() !== "" && Number.isInteger(n) && n >= 0 && n <= max;
+                              const raw = edit.pallets[p.id] ?? fmtQty(base);
+                              const n = parseQtyInput(raw);
+                              const valid = n !== null && n >= 0 && roundQty(n - max) <= 0;
                               const reduced = valid && n < base;
                               return (
                                 <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1fr 100px 110px 110px", gap: 8, alignItems: "center" }}>
@@ -649,21 +651,17 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                                   </span>
                                   <span
                                     style={{ textAlign: "right", fontSize: 12, color: "var(--muted)" }}
-                                    title={isExit ? `Queda disponible en el pallet: ${p.currentQuantity.toLocaleString("es-PY")} unid.` : (p.quantityInMovement !== p.currentQuantity ? `Ingresó con ${p.quantityInMovement.toLocaleString("es-PY")} unid.` : undefined)}
+                                    title={isExit ? `Queda disponible en el pallet: ${fmtQty(p.currentQuantity)} unid.` : (p.quantityInMovement !== p.currentQuantity ? `Ingresó con ${fmtQty(p.quantityInMovement)} unid.` : undefined)}
                                   >
-                                    {base.toLocaleString("es-PY")}
+                                    {fmtQty(base)}
                                   </span>
-                                  <input
-                                    className="input"
-                                    type="number"
-                                    min={0}
-                                    max={max}
+                                  <QuantityInput
+                                    allowZero
+                                    align="right"
                                     value={raw}
-                                    onChange={(e) => updateLotPallet(l, p.id, e.target.value)}
-                                    style={{
-                                      fontWeight: 700, fontSize: 13, padding: "4px 8px",
-                                      borderColor: !valid ? "var(--danger)" : reduced ? "var(--warning)" : undefined,
-                                    }}
+                                    invalid={!valid}
+                                    onChange={(v) => updateLotPallet(l, p.id, v)}
+                                    style={{ fontWeight: 700, fontSize: 13, padding: "4px 8px", borderColor: valid && reduced ? "var(--warning)" : undefined }}
                                     aria-label={`${isExit ? "Cantidad correcta" : "Nueva cantidad"} del pallet ${p.code}`}
                                   />
                                   {/* Dato descriptivo del palet: se aplica directo y queda
@@ -674,6 +672,7 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                                       type="number"
                                       min={0}
                                       max={999}
+                                      step={1}
                                       placeholder="—"
                                       value={edit.dispatched[p.id] ?? ""}
                                       onChange={(e) => updateLotDispatched(l, p.id, e.target.value)}
@@ -681,14 +680,11 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                                       aria-label={`Paletas físicas despachadas del pallet ${p.code}`}
                                     />
                                   ) : (
-                                    <input
-                                      className="input"
-                                      type="number"
-                                      min={0}
-                                      step="0.01"
+                                    <QuantityInput
+                                      allowZero
                                       placeholder="—"
                                       value={edit.weights[p.id] ?? ""}
-                                      onChange={(e) => updateLotWeight(l, p.id, e.target.value)}
+                                      onChange={(v) => updateLotWeight(l, p.id, v)}
                                       style={{ fontSize: 13, padding: "4px 8px" }}
                                       aria-label={`Peso del pallet ${p.code}`}
                                     />
@@ -702,12 +698,12 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                                   {p.code}
                                   <span className="badge" style={{ fontSize: 9, marginLeft: 6, background: "var(--muted)", color: "#fff" }}>DESPACHADO</span>
                                 </span>
-                                <span style={{ textAlign: "right", fontSize: 12, color: "var(--muted)" }} title={`Ingresó con ${p.quantityInMovement.toLocaleString("es-PY")} unid.`}>—</span>
+                                <span style={{ textAlign: "right", fontSize: 12, color: "var(--muted)" }} title={`Ingresó con ${fmtQty(p.quantityInMovement)} unid.`}>—</span>
                                 <span style={{ fontSize: 11, color: "var(--muted)" }}>No editable</span>
                                 <span style={{ fontSize: 11, color: "var(--muted)", textAlign: isExit ? "center" : undefined }}>
                                   {isExit
                                     ? (p.dispatchedPallets != null ? String(p.dispatchedPallets) : "—")
-                                    : (p.weightKg != null ? `${p.weightKg} kg` : "—")}
+                                    : (p.weightKg != null ? `${fmtQty(p.weightKg)} kg` : "—")}
                                 </span>
                               </div>
                             ))}
@@ -722,13 +718,11 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                         <div style={{ borderTop: "1px dashed var(--border)", padding: "8px 12px", display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
                           <div>
                             <label style={{ ...tinyLabel, color: "var(--success)" }}> Agregar unidades</label>
-                            <input
-                              className="input"
-                              type="number"
-                              min={0}
+                            <QuantityInput
+                              allowZero
                               placeholder="0"
                               value={edit.addQuantity}
-                              onChange={(e) => updateLotEdit(l, "addQuantity", e.target.value)}
+                              onChange={(v) => updateLotEdit(l, "addQuantity", v)}
                               style={{ width: 130, fontWeight: 700 }}
                               aria-label={`Unidades a agregar al lote ${l.lotCode}`}
                             />
@@ -739,6 +733,7 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                               className="input"
                               type="number"
                               min={1}
+                              step={1}
                               value={edit.addPalletCount}
                               onChange={(e) => updateLotEdit(l, "addPalletCount", e.target.value)}
                               style={{ width: 100 }}
@@ -747,7 +742,7 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                           </div>
                           {addQty > 0 && (
                             <span style={{ fontSize: 12, color: "var(--success)", fontWeight: 700, paddingBottom: 6 }}>
-                              +{addQty.toLocaleString("es-PY")} unid. en {addCount} pallet{addCount !== 1 ? "s" : ""} nuevo{addCount !== 1 ? "s" : ""}
+                              +{fmtQty(addQty)} unid. en {addCount} pallet{addCount !== 1 ? "s" : ""} nuevo{addCount !== 1 ? "s" : ""}
                             </span>
                           )}
                         </div>
@@ -756,15 +751,15 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                         {/* Resumen del lote */}
                         <div style={{ background: "var(--bg)", borderTop: "1px solid var(--border)", padding: "7px 12px", fontSize: 12, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
                           <span style={{ color: "var(--muted)" }}>
-                            Total actual: <strong style={{ color: "var(--text)" }}>{currentTotal.toLocaleString("es-PY")} unid.</strong>
+                            Total actual: <strong style={{ color: "var(--text)" }}>{fmtQty(currentTotal)} unid.</strong>
                           </span>
                           <span style={{ color: "var(--muted)" }}>→</span>
                           <span style={{ color: "var(--muted)" }}>
-                            Nuevo total: <strong style={{ color: "var(--text)" }}>{(newTotal + addQty).toLocaleString("es-PY")} unid.</strong>
+                            Nuevo total: <strong style={{ color: "var(--text)" }}>{fmtQty(sumQuantities([newTotal, addQty]))} unid.</strong>
                           </span>
                           {delta !== 0 ? (
                             <span style={{ fontWeight: 800, color: delta > 0 ? "var(--success)" : "var(--warning)" }}>
-                              {delta > 0 ? "+" : "−"}{Math.abs(delta).toLocaleString("es-PY")} unid. · requiere aprobación
+                              {delta > 0 ? "+" : "−"}{fmtQty(Math.abs(delta))} unid. · requiere aprobación
                             </span>
                           ) : codeChanged ? (
                             <span style={{ fontWeight: 700, color: "var(--primary)" }}>Renombra el lote (directo, auditado)</span>

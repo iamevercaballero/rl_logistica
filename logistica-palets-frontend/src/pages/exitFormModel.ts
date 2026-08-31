@@ -23,6 +23,37 @@ export type ExitSelection = {
   qtyByPallet: Record<string, string>;
 };
 
+/** Última respuesta FEFO con la que se hidrataron las filas de la pantalla. */
+export type FefoHydrationMarker = {
+  productId: string;
+  dataUpdatedAt: number;
+};
+
+/**
+ * Decide si una respuesta de React Query debe volver a construir las filas
+ * FEFO visibles.
+ *
+ * Una consulta puede conservar temporalmente el valor anterior mientras hace
+ * el refetch. Si ese valor era `[]` y se lo marca como definitivo, la respuesta
+ * nueva con stock queda ignorada para siempre. Esperamos a que termine el
+ * request y refrescamos cuando cambió `dataUpdatedAt`, salvo que el operador ya
+ * tenga una selección armada que no se debe pisar.
+ */
+export function shouldHydrateFefoRows(input: {
+  enabled: boolean;
+  productId: string | null;
+  hasData: boolean;
+  isFetching: boolean;
+  dataUpdatedAt: number;
+  marker: FefoHydrationMarker | null;
+  hasDraft: boolean;
+}): boolean {
+  if (!input.enabled || !input.productId || !input.hasData || input.isFetching) return false;
+  if (!input.marker || input.marker.productId !== input.productId) return true;
+  if (input.marker.dataUpdatedAt === input.dataUpdatedAt) return false;
+  return !input.hasDraft;
+}
+
 /** Cuánto se retira de un pallet según lo cargado. Sin dato o <= 0 → 0. */
 export function palletExitTake(qtyByPallet: Record<string, string>, palletId: string): number {
   const parsed = parseQtyInput(qtyByPallet[palletId] ?? "");

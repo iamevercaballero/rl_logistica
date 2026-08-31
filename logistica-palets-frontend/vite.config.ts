@@ -12,9 +12,15 @@ export default defineConfig({
 
     VitePWA({
       registerType: 'autoUpdate',
+      // El registro se hace en `main.tsx` con URL versionada y
+      // `updateViaCache: none`; no inyectar un segundo registro a `/sw.js`.
+      injectRegister: false,
 
       // Cache the app shell and static assets
       workbox: {
+        cleanupOutdatedCaches: true,
+        clientsClaim: true,
+        skipWaiting: true,
         // Cache JS/CSS/HTML/images
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024, // 4 MiB

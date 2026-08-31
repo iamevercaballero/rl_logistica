@@ -7,6 +7,8 @@ import {
   fefoSuggest,
   palletExitTake,
   selectPalletForExit,
+  shouldHydrateFefoRows,
+  type FefoHydrationMarker,
   type ExitPallet,
   type ExitSelection,
 } from "./exitFormModel";
@@ -161,5 +163,69 @@ describe("fefoSuggest — atajo explícito (solo con clic)", () => {
   it("target <= 0 → selección vacía", () => {
     expect(fefoSuggest(pallets, 0).selectedIds.size).toBe(0);
     expect(fefoSuggest(pallets, -5).selectedIds.size).toBe(0);
+  });
+});
+
+describe("shouldHydrateFefoRows — refetch de stock sin pisar el trabajo del operador", () => {
+  const marker: FefoHydrationMarker = { productId: "material-1", dataUpdatedAt: 100 };
+
+  it("no fija como definitiva la respuesta vacía anterior mientras hay un refetch", () => {
+    expect(shouldHydrateFefoRows({
+      enabled: true,
+      productId: "material-1",
+      hasData: true,
+      isFetching: true,
+      dataUpdatedAt: 100,
+      marker: null,
+      hasDraft: false,
+    })).toBe(false);
+  });
+
+  it("hidrata la respuesta nueva cuando termina el refetch", () => {
+    expect(shouldHydrateFefoRows({
+      enabled: true,
+      productId: "material-1",
+      hasData: true,
+      isFetching: false,
+      dataUpdatedAt: 200,
+      marker,
+      hasDraft: false,
+    })).toBe(true);
+  });
+
+  it("no reconstruye dos veces la misma respuesta", () => {
+    expect(shouldHydrateFefoRows({
+      enabled: true,
+      productId: "material-1",
+      hasData: true,
+      isFetching: false,
+      dataUpdatedAt: 100,
+      marker,
+      hasDraft: false,
+    })).toBe(false);
+  });
+
+  it("preserva una selección ya armada aunque llegue stock actualizado", () => {
+    expect(shouldHydrateFefoRows({
+      enabled: true,
+      productId: "material-1",
+      hasData: true,
+      isFetching: false,
+      dataUpdatedAt: 200,
+      marker,
+      hasDraft: true,
+    })).toBe(false);
+  });
+
+  it("un cambio real de material siempre permite hidratar sus filas", () => {
+    expect(shouldHydrateFefoRows({
+      enabled: true,
+      productId: "material-2",
+      hasData: true,
+      isFetching: false,
+      dataUpdatedAt: 100,
+      marker,
+      hasDraft: true,
+    })).toBe(true);
   });
 });

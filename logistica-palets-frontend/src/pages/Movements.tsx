@@ -54,6 +54,8 @@ import {
   fefoSuggest,
   palletExitTake,
   selectPalletForExit,
+  shouldHydrateFefoRows,
+  type FefoHydrationMarker,
   type ExitSelection,
 } from "./exitFormModel";
 
@@ -521,20 +523,8 @@ export default function MovementsPage() {
   });
   const fefoLoading = fefoQ.isFetching;
 
-  /**
-   * Para qué producto ya se inicializó `fefoRows` (a mano o restaurado por
-   * "Editar"). Evita que un refetch en segundo plano de `fefoQ` — stock que
-   * cambió en otra pestaña, un `invalidateQueries(["lots"])` disparado por
-   * otra operación — pise en silencio la selección que el operador ya venía
-   * armando para ese mismo producto. Solo se vuelve a inicializar cuando el
-   * producto cambia de verdad.
-   *
-   * "Editar" (más abajo) marca este ref *antes* de que el efecto llegue a
-   * correr: así el efecto nunca compite con la restauración, la respeta
-   * siempre, sin depender de si `fefoQ` ya tenía los datos en caché o todavía
-   * los estaba pidiendo.
-   */
-  const fefoRowsBuiltForProduct = useRef<string | null>(null);
+  /** Respuesta FEFO con la que se hidrataron las filas visibles. */
+  const fefoHydration = useRef<FefoHydrationMarker | null>(null);
 
   // ── Gestor de pallets (Entrada) ──
   const [showPalletManager, setShowPalletManager] = useState(false);
@@ -655,19 +645,26 @@ export default function MovementsPage() {
 
   useEffect(() => {
     if (!fefoEnabled) {
-      fefoRowsBuiltForProduct.current = null;
-      setFefoRows([]);
+      fefoHydration.current = null;
+      setFefoRows((rows) => rows.length === 0 ? rows : []);
       return;
     }
     const pid = product?.id ?? null;
-    // Ya se inicializó para este producto (a mano, o restaurado por "Editar"):
-    // un refetch de fondo con datos nuevos no debe pisar lo que el operador ya
-    // tiene armado.
-    if (fefoRowsBuiltForProduct.current === pid) return;
-    if (!fefoQ.data) return;
+    const hasDraft = fefoRows.some((row) => row.selectedIds.size > 0);
+    if (!shouldHydrateFefoRows({
+      enabled: fefoEnabled,
+      productId: pid,
+      hasData: fefoQ.data !== undefined,
+      isFetching: fefoQ.isFetching,
+      dataUpdatedAt: fefoQ.dataUpdatedAt,
+      marker: fefoHydration.current,
+      hasDraft,
+    })) return;
+    const lots = fefoQ.data;
+    if (!lots) return;
 
-    fefoRowsBuiltForProduct.current = pid;
-    setFefoRows(fefoQ.data.map((l) => ({
+    fefoHydration.current = { productId: pid!, dataUpdatedAt: fefoQ.dataUpdatedAt };
+    setFefoRows(lots.map((l) => ({
       lot: l as Lot & { pallets: LotPallet[] },
       selectedIds: new Set<string>(),
       expanded: true,
@@ -675,7 +672,7 @@ export default function MovementsPage() {
       qtyByPallet: {},
       dispatchedByPallet: {},
     })));
-  }, [fefoQ.data, fefoEnabled, product?.id]);
+  }, [fefoQ.data, fefoQ.dataUpdatedAt, fefoQ.isFetching, fefoEnabled, fefoRows, product?.id]);
 
   function resetForm() {
     // El depósito NO se limpia: es el contexto de la sesión, no un campo del
@@ -1174,10 +1171,12 @@ export default function MovementsPage() {
       // vencimientos y pallets que vinieron a corregir.
       setWizardStep(2);
     } else {
-      // Se marca ANTES de que el efecto de fefoQ llegue a correr: así, tenga o
-      // no ya los datos en caché, nunca reconstruye filas vacías por encima de
-      // esta selección restaurada.
-      fefoRowsBuiltForProduct.current = line.editState.product.id;
+      // Se marca ANTES de restaurar: la respuesta de fondo no pisa una salida
+      // que el operador vuelve a editar y que ya tiene pallets seleccionados.
+      fefoHydration.current = {
+        productId: line.editState.product.id,
+        dataUpdatedAt: fefoQ.dataUpdatedAt,
+      };
       setFefoRows(line.editState.fefoRows);
     }
   }
@@ -2167,7 +2166,8 @@ export default function MovementsPage() {
                 <p style={{ color: "var(--muted)", fontSize: 13, margin: 0 }}>Cargando lotes...</p>
               ) : fefoRows.length === 0 ? (
                 <div style={{ background: "var(--badge-adjout-bg)", border: "1px solid var(--badge-adjout-border)", color: "var(--badge-adjout-text)", borderRadius: 8, padding: "10px 14px", fontSize: 13 }}>
-                  Sin stock disponible para este material.
+                  No hay pallets disponibles y ubicados en el depósito activo para este material.
+                  El stock sin ubicación puede figurar en el catálogo, pero no se puede despachar.
                 </div>
               ) : (
                 <div style={{ display: "grid", gap: 8 }}>

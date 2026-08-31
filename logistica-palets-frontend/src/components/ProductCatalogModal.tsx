@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { listProducts, type Product } from "../api/products";
 import { getStockReport } from "../api/reports";
 import { useActiveWarehouseId } from "../contexts/WarehouseContext";
+import { fmtQty, roundQty } from "../utils/quantity";
 
 type Props = {
   onSelect: (product: Product) => void;
@@ -34,6 +35,17 @@ export default function ProductCatalogModal({ onSelect, onClose, onlyActive }: P
   const stockByProduct = useMemo(() => {
     const map = new Map<string, number>();
     for (const row of stockQ.data?.byMaterial ?? []) map.set(row.productId, row.quantity);
+    return map;
+  }, [stockQ.data]);
+
+  /** Stock registrado sin sector físico: existe, pero una Salida no lo ofrece. */
+  const unlocatedByProduct = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const row of stockQ.data?.items ?? []) {
+      if (row.location || row.currentQuantity <= 0) continue;
+      const productId = row.material.id;
+      map.set(productId, roundQty((map.get(productId) ?? 0) + row.currentQuantity));
+    }
     return map;
   }, [stockQ.data]);
 
@@ -93,13 +105,25 @@ export default function ProductCatalogModal({ onSelect, onClose, onlyActive }: P
                 </tr>
               </thead>
               <tbody>
-                {items.map((p) => (
-                  <tr key={p.id}>
+                {items.map((p) => {
+                  const stock = stockByProduct.get(p.id) ?? 0;
+                  const unlocated = unlocatedByProduct.get(p.id) ?? 0;
+                  return <tr key={p.id}>
                     <td><strong>{p.code}</strong></td>
                     <td>{p.description}</td>
                     <td><span className="badge">{p.unitOfMeasure ?? "-"}</span></td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                      {stockQ.isLoading ? "…" : (stockByProduct.get(p.id) ?? 0)}
+                      {stockQ.isLoading ? "…" : (
+                        <>
+                          <div>{fmtQty(stock)}</div>
+                          {unlocated > 0 && (
+                            <div style={{ color: "var(--warning, #b45309)", fontSize: 10, whiteSpace: "nowrap" }}
+                              title="Este stock no tiene sector asignado y no puede seleccionarse en una Salida">
+                              {fmtQty(unlocated)} sin ubicación
+                            </div>
+                          )}
+                        </>
+                      )}
                     </td>
                     <td style={{ textAlign: "center" }}>
                       <span className={`badge ${p.stackable === false ? "" : "badge--entry"}`}>
@@ -127,8 +151,8 @@ export default function ProductCatalogModal({ onSelect, onClose, onlyActive }: P
                         Seleccionar
                       </button>
                     </td>
-                  </tr>
-                ))}
+                  </tr>;
+                })}
               </tbody>
             </table>
           )}

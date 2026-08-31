@@ -1,6 +1,5 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { registerSW } from "virtual:pwa-register";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
@@ -161,10 +160,31 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   </React.StrictMode>,
 );
 
-registerSW({
-  immediate: true,
-  onRegisteredSW(_url, registration) {
-    if (!registration) return;
-    setInterval(() => registration.update(), 60 * 60 * 1000);
-  },
-});
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  let reloadingForServiceWorker = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (reloadingForServiceWorker) return;
+    reloadingForServiceWorker = true;
+    window.location.reload();
+  });
+
+  // El hash del bundle convierte esta primera instalación en un cache miss
+  // aunque Cloudflare todavía tenga una copia antigua de `/sw.js`. Como nginx
+  // responde `no-store`, las comprobaciones posteriores del mismo registro ya
+  // llegan siempre al worker vigente.
+  const mainScript = document.querySelector<HTMLScriptElement>('script[type="module"][src]')?.src;
+  const buildVersion = mainScript ? new URL(mainScript).pathname.split("/").pop() : "current";
+  const workerUrl = new URL("/sw.js", window.location.origin);
+  workerUrl.searchParams.set("v", buildVersion || "current");
+
+  void navigator.serviceWorker.register(workerUrl, { scope: "/", updateViaCache: "none" })
+    .then((registration) => {
+      const checkForUpdate = () => { void registration.update().catch(() => undefined); };
+      checkForUpdate();
+      setInterval(checkForUpdate, 5 * 60 * 1000);
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") checkForUpdate();
+      });
+    })
+    .catch(() => undefined);
+}

@@ -270,9 +270,16 @@ export default function LotsPage() {
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => deleteLot(id),
-    onSuccess: () => {
+    onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ["lots"] });
-      toast.success("Lote eliminado");
+      // El backend archiva en vez de borrar cuando el lote tiene pallets o
+      // movimientos: sin este aviso, el lote sigue en la lista y parece que
+      // la eliminación falló.
+      toast.success(
+        res.deactivated
+          ? "Lote archivado. Se conserva porque tiene movimientos registrados."
+          : "Lote eliminado",
+      );
     },
     onError: (err) => toast.error(getFriendlyApiError(err)),
   });
@@ -488,6 +495,14 @@ export default function LotsPage() {
                             {item.status === "PENDING_REGULARIZATION" && (
                               <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: "rgba(245,158,11,0.10)", color: "var(--warning)", border: "1px solid rgba(245,158,11,0.28)", whiteSpace: "nowrap" }}>
                                 Pend. regularizar
+                              </span>
+                            )}
+                            {/* Un lote archivado sigue en la lista —su historia se
+                                conserva—, así que necesita distinguirse a simple
+                                vista de uno operativo. */}
+                            {item.status === "ARCHIVED" && (
+                              <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: "var(--surface-2, rgba(120,120,120,0.10))", color: "var(--muted)", border: "1px solid rgba(120,120,120,0.28)", whiteSpace: "nowrap" }}>
+                                Archivado
                               </span>
                             )}
                           </div>

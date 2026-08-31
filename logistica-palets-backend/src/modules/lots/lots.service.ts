@@ -1,9 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Lot } from './entities/lot.entity';
+import { Lot, LOT_STATUS_ARCHIVED } from './entities/lot.entity';
 import { Product } from '../products/entities/product.entity';
 import { Pallet } from '../pallets/entities/pallet.entity';
+import { formatQuantity, quantitiesEqual } from '../../common/quantity';
 import { CreateLotDto } from './dto/create-lot.dto';
 import { UpdateLotDto } from './dto/update-lot.dto';
 import type { WarehouseScope } from '../warehouses/warehouse-access.service';
@@ -268,10 +269,75 @@ export class LotsService {
     return this.lotRepo.save(lot);
   }
 
+  /**
+   * Baja de un lote.
+   *
+   * El DELETE físico sin control rompía la trazabilidad. Ni `movements.lotId` ni
+   * `pallets.lotId` ni `movement_details.lotId` tienen clave foránea, así que la
+   * base no impedía nada: borrar el lote dejaba esas filas apuntando al vacío y
+   * el material despachado perdía el vínculo con el lote de proveedor que lo
+   * originó — justo el dato que hace falta para responder un reclamo o un
+   * retiro de mercadería.
+   *
+   * Mismo criterio que Materiales y Depósitos, y coherente con Pallets, donde la
+   * eliminación directamente se deshabilitó:
+   *
+   *   1. Con stock vivo → se rechaza. Primero hay que despachar o ajustar.
+   *   2. Con historia (pallets, movimientos o detalles) → se archiva, no se borra.
+   *   3. Sólo un lote recién creado y sin usar se elimina de verdad.
+   *
+   * El stock se mira por dos vías —el contador `stockActual` del lote y la suma
+   * real de sus pallets— porque pueden diverger (ver la reconciliación de más
+   * abajo). Si cualquiera de las dos dice que hay mercadería, no se toca.
+   */
   async remove(id: string) {
     const lot = await this.findOne(id);
+
+    const [uso] = (await this.lotRepo.query(
+      `SELECT
+         (SELECT COUNT(*) FROM pallets WHERE "lotId" = $1)::int                AS "totalPallets",
+         (SELECT COUNT(*) FROM pallets WHERE "lotId" = $1
+            AND status NOT IN ('EXITED', 'EMPTY') AND quantity > 0)::int       AS "livePallets",
+         (SELECT COALESCE(SUM(quantity), 0) FROM pallets WHERE "lotId" = $1
+            AND status NOT IN ('EXITED', 'EMPTY'))::float8                     AS "liveQuantity",
+         (SELECT COUNT(*) FROM movements WHERE "lotId" = $1)::int              AS "movements",
+         (SELECT COUNT(*) FROM movement_details WHERE "lotId" = $1)::int       AS "details"`,
+      [id],
+    )) as Array<{
+      totalPallets: number;
+      livePallets: number;
+      liveQuantity: number;
+      movements: number;
+      details: number;
+    }>;
+
+    const stockActual = Number(lot.stockActual) || 0;
+    const enPallets = Number(uso.liveQuantity) || 0;
+
+    if (!quantitiesEqual(stockActual, 0) || !quantitiesEqual(enPallets, 0) || uso.livePallets > 0) {
+      const cantidad = quantitiesEqual(stockActual, 0) ? enPallets : stockActual;
+      throw new BadRequestException(
+        `No se puede eliminar el lote ${lot.lotCode}: tiene ${formatQuantity(cantidad)} en stock ` +
+          `repartidas en ${uso.livePallets} palet(s). Despachá o ajustá el stock antes de darlo de baja.`,
+      );
+    }
+
+    const conHistoria = uso.totalPallets > 0 || uso.movements > 0 || uso.details > 0;
+    if (conHistoria) {
+      lot.status = LOT_STATUS_ARCHIVED;
+      await this.lotRepo.save(lot);
+      return {
+        deleted: true,
+        deactivated: true,
+        id: lot.id,
+        reason:
+          `El lote tiene ${uso.totalPallets} palet(s) y ${uso.movements + uso.details} registro(s) de movimiento: ` +
+          `se archivó en lugar de eliminarse para preservar la trazabilidad.`,
+      };
+    }
+
     await this.lotRepo.remove(lot);
-    return { deleted: true };
+    return { deleted: true, deactivated: false, id };
   }
 
   /**

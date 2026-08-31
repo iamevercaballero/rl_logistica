@@ -45,6 +45,23 @@ export class Lot {
   @Column({ type: 'numeric', precision: 14, scale: 3, default: 0, transformer: numericTransformer })
   stockActual: number;
 
+  /**
+   * Estado del lote:
+   *   NORMAL                  → operativo
+   *   BLOQUEADO               → retenido por el supervisor (calidad, revisión)
+   *   PENDING_REGULARIZATION  → vino de una entrada provisoria, falta completarlo
+   *   ARCHIVED                → dado de baja conservando su historia (ver
+   *                             `LotsService.remove`). No se borra: `movements.lotId`
+   *                             y `pallets.lotId` no tienen FK, así que eliminarlo
+   *                             dejaría esas filas apuntando al vacío.
+   *
+   * Un lote ARCHIVED nunca entra en FEFO, pero no porque se lo excluya por estado:
+   * archivar exige stock cero y sin pallets vivos, y las dos consultas FEFO
+   * (`LotsService.findFefo` y `MovementsService.autoFefoExit`) filtran por stock.
+   */
   @Column({ type: 'varchar', default: 'NORMAL' })
   status: string;
 }
+
+/** Lote dado de baja conservando su historia. Lo fija `LotsService.remove`. */
+export const LOT_STATUS_ARCHIVED = 'ARCHIVED';

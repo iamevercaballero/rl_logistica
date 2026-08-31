@@ -79,6 +79,18 @@ export async function updateLot(
   return data;
 }
 
-export async function deleteLot(id: string): Promise<void> {
-  await api.delete(`/lots/${id}`);
+/**
+ * Un lote con pallets o movimientos no se borra: el backend lo archiva y devuelve
+ * `deactivated: true` con el motivo. Es la misma forma que usa Materiales.
+ */
+export type DeleteLotResult = {
+  deleted: boolean;
+  deactivated: boolean;
+  id: string;
+  reason?: string;
+};
+
+export async function deleteLot(id: string): Promise<DeleteLotResult> {
+  const { data } = await api.delete<DeleteLotResult>(`/lots/${id}`);
+  return data;
 }

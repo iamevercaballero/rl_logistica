@@ -301,7 +301,11 @@
       "Bash(powershell -Command \"Stop-Process -Id 16368 -Force\")",
       "Bash(curl -sS -X POST http://localhost:3000/api/auth/login -H \"Content-Type: application/json\" -d '{\"username\":\"admin\",\"password\":\"changeme-on-first-login\"}')",
       "Bash(powershell -Command 'Get-CimInstance Win32_Process -Filter \"Name='\\\\''node.exe'\\\\''\" | Where-Object { $_.CommandLine -like '\\\\''*dist\\\\main*'\\\\'' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }')",
-      "Bash(node --enable-source-maps dist/main)"
+      "Bash(node --enable-source-maps dist/main)",
+      "Bash(npx eslint *)",
+      "Read(//tmp/**)",
+      "Bash(npx vitest *)",
+      "Bash(echo \"exit: $?\")"
     ]
   }
 }

@@ -4,8 +4,10 @@ import { Logger } from '@nestjs/common';
  * Validación fail-fast de variables de entorno.
  *
  * En NODE_ENV=production la app NO debe arrancar con secretos ausentes, débiles
- * o iguales entre sí. En desarrollo/test se permiten fallbacks (los módulos de
- * auth usan 'dev_secret_fallback' sólo si esta validación no corta antes).
+ * o iguales entre sí, ni con una configuración que pueda destruir datos
+ * (`DB_SYNCHRONIZE=true`) o abrir la API a cualquier origen (`CORS_ORIGIN`
+ * vacío). En desarrollo/test se permiten fallbacks (los módulos de auth usan
+ * 'dev_secret_fallback' sólo si esta validación no corta antes).
  *
  * Se ejecuta en main.ts ANTES de crear la app, de modo que cuando los módulos
  * (jwt.strategy, auth.module, auth.service) leen process.env, en producción ya
@@ -48,6 +50,14 @@ export function validateEnv(): void {
     }
   };
 
+  /** Variable que debe existir y no estar vacía (no es secreta: puede loguearse su nombre). */
+  const requirePresent = (name: string, hint: string): void => {
+    const value = process.env[name];
+    if (!value || value.trim() === '') {
+      errors.push(`${name} es requerido en producción. ${hint}`);
+    }
+  };
+
   requireSecret('JWT_SECRET');
   requireSecret('JWT_REFRESH_SECRET');
 
@@ -57,6 +67,27 @@ export function validateEnv(): void {
     process.env.JWT_SECRET === process.env.JWT_REFRESH_SECRET
   ) {
     errors.push('JWT_REFRESH_SECRET debe ser distinto de JWT_SECRET.');
+  }
+
+  requirePresent('DB_PASSWORD', 'Sin contraseña, la conexión depende de la config del servidor.');
+
+  // Sin CORS_ORIGIN, main.ts cae en `{ origin: true, credentials: true }`: refleja
+  // cualquier origen y permite credenciales. Es una lista separada por comas.
+  requirePresent(
+    'CORS_ORIGIN',
+    'Poné el/los dominios del frontend separados por coma (ej: https://app.tudominio.com).',
+  );
+
+  // El candado de RL-C-02. `synchronize` deja que TypeORM altere el esquema para
+  // que coincida con las entidades: renombra, cambia tipos y descarta columnas sin
+  // aviso. En una base con historial de inventario eso es pérdida de datos, no un
+  // error recuperable. docker-compose.prod.yml ya lo fuerza a "false", pero el
+  // compose base propaga el valor del .env — y ese .env puede decir cualquier cosa.
+  if (process.env.DB_SYNCHRONIZE === 'true') {
+    errors.push(
+      'DB_SYNCHRONIZE no puede ser "true" en producción: TypeORM alteraría el esquema ' +
+        'y puede descartar columnas con datos. Usá migraciones (DB_MIGRATIONS_RUN=true).',
+    );
   }
 
   if (errors.length > 0) {

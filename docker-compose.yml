@@ -67,10 +67,19 @@ services:
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+      # NODE_ENV=production es un requisito de la imagen, no una preferencia: el
+      # Dockerfile instala con `npm ci --omit=dev` y pino-pretty es devDependency,
+      # así que con cualquier otro valor el LoggerModule intenta cargar un transport
+      # que no está en la imagen y el contenedor no arranca. Como acá siempre es
+      # producción, env.validation.ts exige JWT_SECRET, DB_PASSWORD y CORS_ORIGIN
+      # también para este stack.
       NODE_ENV: production
-      # TypeORM — en dev .env pone DB_SYNCHRONIZE=true para crear tablas al vuelo.
-      # docker-compose.prod.yml sobreescribe esto a false (belt & suspenders).
-      DB_SYNCHRONIZE: "${DB_SYNCHRONIZE:-false}"
+      # TypeORM — fijo en "false", ya no tomado del .env. Con NODE_ENV=production
+      # un DB_SYNCHRONIZE=true dejaría que TypeORM altere el esquema para hacerlo
+      # coincidir con las entidades: renombra, cambia tipos y descarta columnas sin
+      # aviso. El esquema se mantiene sólo con migraciones. env.validation.ts aborta
+      # el arranque si el valor llegara a colarse por otra vía.
+      DB_SYNCHRONIZE: "false"
       DB_MIGRATIONS_RUN: "${DB_MIGRATIONS_RUN:-true}"
       DB_LOGGING: "${DB_LOGGING:-false}"
       ALLOW_SEED: "${ALLOW_SEED:-false}"

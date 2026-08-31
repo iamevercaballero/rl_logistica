@@ -13,14 +13,32 @@ export class SeedController {
 
   constructor(private readonly seedService: SeedService) {}
 
+  /**
+   * El seed y el reset borran o reescriben datos de inventario, así que exigen
+   * `ALLOW_SEED=true` en **todos** los entornos, no sólo en producción.
+   *
+   * Antes la condición era `NODE_ENV === 'production' && ALLOW_SEED !== 'true'`,
+   * que tenía dos agujeros: fuera de producción el endpoint quedaba abierto pasara
+   * lo que pasara —poner `ALLOW_SEED=false` no servía de nada—, y bastaba con que
+   * `NODE_ENV` no fuera exactamente "production" para habilitarlo en cualquier
+   * lado. Ahora la única llave es la variable, y hay que ponerla a propósito.
+   *
+   * OJO: comparar contra 'true' explícito. `!process.env.ALLOW_SEED` sería false
+   * cuando ALLOW_SEED="false" (string truthy), dejando el seed abierto.
+   */
+  private assertSeedAllowed(accion: string): void {
+    if (process.env.ALLOW_SEED !== 'true') {
+      throw new BadRequestException(
+        `${accion} deshabilitado: requiere ALLOW_SEED=true. ` +
+          'Es una operación destructiva sobre el inventario; habilitala sólo de forma deliberada.',
+      );
+    }
+  }
+
   @Post('from-excel')
   @Roles('ADMIN')
   async seedFromExcel(@Body() body: { maxMovimientos?: number; soloProductos?: boolean }) {
-    // OJO: comparar contra 'true' explícito. `!process.env.ALLOW_SEED` sería
-    // false cuando ALLOW_SEED="false" (string truthy), dejando el seed abierto.
-    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_SEED !== 'true') {
-      throw new BadRequestException('Seed deshabilitado en producción. Setear ALLOW_SEED=true para habilitar.');
-    }
+    this.assertSeedAllowed('Seed');
     this.logger.log('Iniciando seed desde Excel...');
     return this.seedService.seedFromExcel(body.maxMovimientos ?? 300, body.soloProductos ?? false);
   }
@@ -28,9 +46,8 @@ export class SeedController {
   @Post('reset')
   @Roles('ADMIN')
   async reset() {
-    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_SEED !== 'true') {
-      throw new BadRequestException('Reset deshabilitado en producción. Setear ALLOW_SEED=true para habilitar.');
-    }
+    this.assertSeedAllowed('Reset');
+    this.logger.warn('Reset de datos solicitado (ALLOW_SEED=true).');
     return this.seedService.resetData();
   }
 }

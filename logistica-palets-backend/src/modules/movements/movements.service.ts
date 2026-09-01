@@ -1227,15 +1227,26 @@ export class MovementsService {
   }
 
   /** Lista documentos logísticos (remitos) con filtros básicos, acotada al alcance. */
+  /**
+   * Remitos, paginados (RL-M-16).
+   *
+   * Antes traía los 200 más recientes y devolvía el array pelado. El corte era
+   * invisible: quien buscara un remito de hace ocho meses simplemente no lo
+   * encontraba, sin ninguna señal de que había más. Ahora devuelve `{ data,
+   * meta }` como el resto de los listados, así que la pantalla sabe cuántos hay
+   * y puede pedir la página siguiente.
+   */
   async findDocuments(
-    query: { type?: string; from?: string; to?: string; search?: string },
+    query: { type?: string; from?: string; to?: string; search?: string; page?: number; limit?: number },
     scope: WarehouseScope = null,
   ) {
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(Math.max(1, Number(query.limit) || 50), 200);
+
     const qb = this.dataSource
       .getRepository(LogisticsDocument)
       .createQueryBuilder('d')
-      .orderBy('d.createdAt', 'DESC')
-      .take(200);
+      .orderBy('d.createdAt', 'DESC');
 
     if (scope) qb.andWhere('d.warehouseId IN (:...scopeIds)', { scopeIds: scope });
     if (query.type) qb.andWhere('d.type = :type', { type: query.type });
@@ -1246,8 +1257,10 @@ export class MovementsService {
         s: `%${query.search}%`,
       });
     }
-    const documents = await qb.getMany();
-    if (documents.length === 0) return documents.map((d) => ({ ...d, voidedLines: 0 }));
+    const total = await qb.getCount();
+    const documents = await qb.skip((page - 1) * limit).take(limit).getMany();
+    const meta = { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) };
+    if (documents.length === 0) return { data: [], meta };
 
     // El status del documento (APROBADO, etc.) no cambia si una de sus líneas se
     // anula después — sigue siendo un remito válido como instancia. `voidedLines`
@@ -1263,7 +1276,7 @@ export class MovementsService {
       .getRawMany<{ documentId: string; voided: string }>();
     const voidedByDoc = new Map(voidCounts.map((c) => [c.documentId, Number(c.voided)]));
 
-    return documents.map((d) => ({ ...d, voidedLines: voidedByDoc.get(d.id) ?? 0 }));
+    return { data: documents.map((d) => ({ ...d, voidedLines: voidedByDoc.get(d.id) ?? 0 })), meta };
   }
 
   /** Detalle de un documento: cabecera + sus movimientos (líneas) + detalles por palet. */

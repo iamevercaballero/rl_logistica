@@ -48,6 +48,17 @@ export type KpisReport = {
   stockByWarehouse: { warehouseId: string | null; warehouseName: string | null; quantity: number }[];
 };
 
+/**
+ * Techo de filas del historial de trazabilidad de un material (RL-M-16).
+ *
+ * La consulta no tenía ninguno: devolvía el historial completo, que con diez
+ * años de operación son decenas de miles de filas en una sola respuesta. 2.000
+ * cubre de sobra cualquier consulta real —el historial de un material en un año
+ * son cientos— y el flag `truncated` avisa cuando se llegó al tope, en vez de
+ * dejar creer que eso es todo lo que hay.
+ */
+const TRACE_MAX_FILAS = 2000;
+
 @Injectable()
 export class ReportsService {
   constructor(
@@ -724,7 +735,13 @@ export class ReportsService {
       );
     }
 
-    const history = await historyQb.getRawMany();
+    // Tope explícito (RL-M-16): esta consulta devolvía el historial COMPLETO de
+    // un material, sin límite. Con diez años de operación son decenas de miles
+    // de filas en una sola respuesta. Se corta y se avisa que se cortó, en vez
+    // de devolver una trazabilidad recortada que parece completa.
+    const historyRows = await historyQb.take(TRACE_MAX_FILAS + 1).getRawMany();
+    const truncated = historyRows.length > TRACE_MAX_FILAS;
+    const history = truncated ? historyRows.slice(0, TRACE_MAX_FILAS) : historyRows;
 
     return {
       material,
@@ -746,6 +763,11 @@ export class ReportsService {
         toWarehouseName: row.toWarehouseName,
         toLocationCode: row.toLocationCode,
       })),
+      // `true` significa que hay más historial del que se devolvió. Va explícito
+      // para que la pantalla pueda decirlo: una trazabilidad recortada que se
+      // presenta como completa es peor que no tenerla.
+      truncated,
+      limit: TRACE_MAX_FILAS,
     };
   }
 

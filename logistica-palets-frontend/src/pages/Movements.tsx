@@ -318,7 +318,7 @@ export default function MovementsPage() {
     enabled: isDocType && showDocHistory && !!activeWarehouseId,
     staleTime: 30_000,
   });
-  const documents: LogisticsDocument[] = docsQ.data ?? [];
+  const documents: LogisticsDocument[] = docsQ.data?.data ?? [];
   const [product, setProduct] = useState<Product | null>(null);
   // El depósito de la operación es el activo: no hay estado local que pueda
   // divergir de lo que muestra el header.

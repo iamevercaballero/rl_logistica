@@ -212,10 +212,23 @@ export async function createDocument(
   return data;
 }
 
+/** Paginación de un listado. Misma forma que la del listado de movimientos. */
+export type PageMeta = { page: number; limit: number; total: number; totalPages: number };
+
+/**
+ * Remitos, paginados.
+ *
+ * El backend devolvía los 200 más recientes en un array pelado y el corte era
+ * invisible: un remito de hace ocho meses no aparecía y nada lo decía. Ahora
+ * viene con `meta`, así que la pantalla sabe cuántos hay en total.
+ */
 export async function getDocuments(params: {
   type?: DocumentType; from?: string; to?: string; search?: string; warehouseId?: string;
-} = {}): Promise<LogisticsDocument[]> {
-  const { data } = await api.get<LogisticsDocument[]>("/movements/documents", { params });
+  page?: number; limit?: number;
+} = {}): Promise<{ data: LogisticsDocument[]; meta: PageMeta }> {
+  const { data } = await api.get<{ data: LogisticsDocument[]; meta: PageMeta }>(
+    "/movements/documents", { params },
+  );
   return data;
 }
 

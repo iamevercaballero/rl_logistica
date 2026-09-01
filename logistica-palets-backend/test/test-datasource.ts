@@ -27,6 +27,7 @@ import { WarehouseAccessService } from '../src/modules/warehouses/warehouse-acce
 import { RolePermission } from '../src/modules/permissions/entities/role-permission.entity';
 import { UserPermission } from '../src/modules/permissions/entities/user-permission.entity';
 import { PermissionsService } from '../src/modules/permissions/permissions.service';
+import type { CacheService } from '../src/modules/cache/cache.service';
 import { ROLE_PERMISSIONS_SEED } from '../src/modules/permissions/role-permissions.seed';
 import { IdempotencyKey } from '../src/common/idempotency/idempotency-key.entity';
 import { AuthEvent } from '../src/modules/auth/entities/auth-event.entity';
@@ -207,11 +208,35 @@ export function createAccessService(ds: DataSource): WarehouseAccessService {
 }
 
 /** `PermissionsService` real conectado al DataSource de test — mismo criterio que `createAccessService`. */
-export function createPermissionsService(ds: DataSource): PermissionsService {
+export function createPermissionsService(ds: DataSource, cache = createMemoryCache()): PermissionsService {
   return new PermissionsService(
     ds.getRepository(RolePermission),
     ds.getRepository(UserPermission),
+    cache,
   );
+}
+
+/**
+ * Caché en memoria con la misma interfaz que la de Redis.
+ *
+ * No es un no-op a propósito: si los tests corrieran sin caché, el camino que
+ * de verdad se ejecuta en producción —el de acierto de caché y el de la
+ * invalidación al cambiar permisos— no quedaría probado nunca.
+ */
+export function createMemoryCache(): CacheService {
+  const store = new Map<string, unknown>();
+  return {
+    get: async <T>(k: string) => (store.has(k) ? (store.get(k) as T) : null),
+    set: async (k: string, v: unknown) => { store.set(k, JSON.parse(JSON.stringify(v))); },
+    del: async (...ks: string[]) => { ks.forEach((k) => store.delete(k)); },
+    // Los patrones que usa la aplicación son siempre `prefijo*`, así que
+    // alcanza con comparar el prefijo — una expresión regular acá sólo agregaría
+    // escapes que salen mal y no se parecería más a Redis.
+    delPattern: async (patron: string) => {
+      const prefijo = patron.endsWith('*') ? patron.slice(0, -1) : patron;
+      [...store.keys()].filter((k) => k.startsWith(prefijo)).forEach((k) => store.delete(k));
+    },
+  } as unknown as CacheService;
 }
 
 /**

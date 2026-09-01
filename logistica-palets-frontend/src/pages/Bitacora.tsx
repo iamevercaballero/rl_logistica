@@ -490,7 +490,8 @@ export default function BitacoraPage() {
     staleTime: 30_000,
   });
 
-  const documents: LogisticsDocument[] = docsQ.data ?? [];
+  const documents: LogisticsDocument[] = docsQ.data?.data ?? [];
+  const documentsTotal = docsQ.data?.meta.total ?? 0;
   // Orden descendente por fecha de creación
   const sorted = [...documents].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
@@ -613,7 +614,12 @@ export default function BitacoraPage() {
             Registros{" "}
             {docsQ.data !== undefined && (
               <span style={{ fontWeight: 400, color: "var(--muted)", fontSize: 13 }}>
-                — {sorted.length} total
+                {/* El total viene del backend, no del largo de la página: antes
+                    se mostraban 200 como si fueran todos y no había forma de
+                    saber que faltaban. */}
+                — {sorted.length === documentsTotal
+                    ? `${documentsTotal} total`
+                    : `${sorted.length} de ${documentsTotal}`}
               </span>
             )}
           </h3>

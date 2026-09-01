@@ -1,5 +1,6 @@
 import type { Movement } from "../api/movements";
 import { buildSalidasExportRows } from "./salidasExportRows";
+import { buildCsv } from "./csv";
 
 const SALIDAS_HEADERS = [
   "Fecha y hora", "Material", "Lote", "Lote SAP", "Documento Material",
@@ -7,17 +8,15 @@ const SALIDAS_HEADERS = [
   "Chofer", "Notas", "Estado",
 ];
 
-function csvCell(value: string | number) {
-  return `"${String(value).replace(/"/g, '""')}"`;
-}
-
 export function buildSalidasCsv(data: Movement[]) {
   const rows = buildSalidasExportRows(data).map((row) => [
     row.fecha, row.material, row.lote, row.sapLot, row.documentoMaterial,
     row.quantity, row.unit, row.pallets, row.desde, row.destino, row.carrier,
     row.driver, row.notes, row.estado,
   ]);
-  return [SALIDAS_HEADERS, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
+  // `buildCsv` neutraliza las celdas que Excel tomaría como fórmula. Notas,
+  // destino, transportista y chofer son texto libre que carga el operador.
+  return buildCsv([SALIDAS_HEADERS, ...rows]);
 }
 
 export function exportSalidasCsv(data: Movement[], filename = "salidas") {

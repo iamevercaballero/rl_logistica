@@ -48,6 +48,7 @@ import {
   type ReactNode,
   type CSSProperties,
 } from 'react';
+import { buildCsv } from '../../lib/csv';
 import './DataTable.css';
 
 /* ── Public types ─────────────────────────────────────────────────────────── */
@@ -142,21 +143,17 @@ function exportToCsv<T>(
       return (c as { accessorKey?: string }).accessorKey ?? (c as { id?: string }).id ?? '';
     });
 
+  // `buildCsv` entrecomilla y, antes de eso, neutraliza las celdas que Excel
+  // tomaría como fórmula. Esta tabla exporta lo que haya en cada columna, así
+  // que el contenido es tan poco confiable como el texto que cargó el operador.
   const csvRows = rows.map((row) =>
-    row
-      .getVisibleCells()
-      .map((cell) => {
-        const val = cell.getValue();
-        if (val === null || val === undefined) return '';
-        const str = String(val).replace(/"/g, '""');
-        return str.includes(',') || str.includes('"') || str.includes('\n')
-          ? `"${str}"`
-          : str;
-      })
-      .join(','),
+    row.getVisibleCells().map((cell) => {
+      const val = cell.getValue();
+      return val === null || val === undefined ? '' : String(val);
+    }),
   );
 
-  const csv = [headers.join(','), ...csvRows].join('\n');
+  const csv = buildCsv([headers, ...csvRows]);
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

@@ -45,6 +45,45 @@ export default defineConfig([
     },
   },
   {
+    // Techo de tamaño (RL-B-04). Un componente de 3.000 líneas no es un problema
+    // de estilo: nadie lo lee entero antes de tocarlo.
+    //
+    // Es un trinquete, no una prohibición retroactiva: los archivos que hoy lo
+    // pasan están abajo con su tamaño actual como límite, así que no pueden
+    // crecer, y cada vez que uno se achica hay que bajar su número. Partir una
+    // pantalla de 3.200 líneas es un trabajo aparte, con su propio riesgo de
+    // regresión; esto detiene el crecimiento mientras tanto.
+    files: ['src/**/*.{ts,tsx}'],
+    rules: {
+      'max-lines': ['error', { max: 800, skipBlankLines: true, skipComments: true }],
+    },
+  },
+  {
+    // Deuda registrada: tamaño actual como techo. Bajar el número al achicarlos.
+    files: ['src/pages/Movements.tsx'],
+    rules: { 'max-lines': ['error', { max: 3000, skipBlankLines: true, skipComments: true }] },
+  },
+  {
+    files: ['src/pages/Reports.tsx'],
+    rules: { 'max-lines': ['error', { max: 1700, skipBlankLines: true, skipComments: true }] },
+  },
+  {
+    files: ['src/pages/InventoryAdjustment.tsx'],
+    rules: { 'max-lines': ['error', { max: 1000, skipBlankLines: true, skipComments: true }] },
+  },
+  {
+    files: ['src/pages/Warehouses.tsx'],
+    rules: { 'max-lines': ['error', { max: 940, skipBlankLines: true, skipComments: true }] },
+  },
+  {
+    files: ['src/pages/Pallets.tsx'],
+    rules: { 'max-lines': ['error', { max: 930, skipBlankLines: true, skipComments: true }] },
+  },
+  {
+    files: ['src/pages/Locations.tsx'],
+    rules: { 'max-lines': ['error', { max: 830, skipBlankLines: true, skipComments: true }] },
+  },
+  {
     // TanStack Table tipa sus columnas como `ColumnDef<T, any>`: el `any` es
     // parte de su firma pública, no una omisión nuestra. Cambiarlo por
     // `unknown` no compila contra la librería.

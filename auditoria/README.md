@@ -2,7 +2,7 @@
 
 Suite de 169 casos que se ejecutan **contra la API real** y verifican el resultado
 directamente en PostgreSQL. Es la forma ejecutable del
-[informe de auditoría](../INFORME-AUDITORIA-PREPROD.md): sirve para re-testear después de
+[informe de auditoría](INFORME-AUDITORIA-PREPROD.md): sirve para re-testear después de
 corregir los defectos y como regresión antes de cada deploy.
 
 > ⚠️ **Nunca apuntar a la base de producción ni a la de desarrollo.** Los scripts crean,

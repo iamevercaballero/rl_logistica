@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ILike, Repository } from 'typeorm';
-import * as XLSX from 'xlsx';
+import { readUploadedRows } from '../../common/spreadsheet';
 import { Product } from './entities/product.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -163,22 +163,12 @@ export class ProductsService {
   }
 
   /**
-   * Carga masiva de materiales desde un archivo Excel/CSV.
+   * Carga masiva de materiales desde un archivo Excel (.xlsx) o CSV.
    * Filas con datos inválidos, incompletos o códigos duplicados se omiten y se
    * reportan en `errors`; el resto se inserta en un solo lote.
    */
   async bulkImport(buffer: Buffer): Promise<BulkImportResult> {
-    let workbook: XLSX.WorkBook;
-    try {
-      workbook = XLSX.read(buffer, { type: 'buffer' });
-    } catch {
-      throw new BadRequestException('No se pudo leer el archivo. Verificá que sea un Excel (.xlsx/.xls) o CSV válido.');
-    }
-
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    if (!sheet) throw new BadRequestException('El archivo no contiene hojas con datos.');
-
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', raw: false });
+    const rows = await readUploadedRows(buffer);
     if (rows.length === 0) throw new BadRequestException('El archivo no contiene filas de datos.');
 
     const existingCodes = new Set((await this.productRepo.find({ select: ['code'] })).map((p) => p.code));

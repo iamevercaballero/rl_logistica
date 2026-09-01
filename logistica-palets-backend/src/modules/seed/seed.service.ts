@@ -8,7 +8,9 @@ import { Product } from '../products/entities/product.entity';
 import { Lot } from '../lots/entities/lot.entity';
 import { Warehouse } from '../warehouses/entities/warehouse.entity';
 import { Location } from '../locations/entities/location.entity';
-import { businessToday } from '../../common/date';
+import * as ExcelJS from 'exceljs';
+import { businessToday, parseExcelDateCell } from '../../common/date';
+import { sheetMatrix } from '../../common/spreadsheet';
 import { parseQuantity, roundQuantity } from '../../common/quantity';
 
 @Injectable()
@@ -18,22 +20,13 @@ export class SeedService {
   constructor(private readonly dataSource: DataSource) {}
 
   async seedFromExcel(maxMovimientos = 300, soloProductos = false): Promise<any> {
-    // xlsx se carga dinámicamente para no romper el bundle de producción
-    let XLSX: any;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy-load deliberado (seed es dev-only)
-      XLSX = require('xlsx');
-    } catch {
-      throw new BadRequestException('Librería xlsx no disponible. Instalá: npm install xlsx');
-    }
-
     const excelPath = this.resolveExcelPath();
     if (!fs.existsSync(excelPath)) {
       throw new BadRequestException(`Excel no encontrado: ${excelPath}`);
     }
 
     this.logger.log(`Leyendo Excel: ${excelPath}`);
-    const { productos, entradas, salidas, stockActual } = this.leerExcel(XLSX, excelPath, maxMovimientos);
+    const { productos, entradas, salidas, stockActual } = await this.leerExcel(excelPath, maxMovimientos);
 
     const stats = {
       productosCreados: 0,
@@ -97,15 +90,17 @@ export class SeedService {
     return candidates.find(p => fs.existsSync(p!)) ?? candidates[0]!;
   }
 
-  private leerExcel(XLSX: any, excelPath: string, maxMov: number) {
-    const wb = XLSX.readFile(excelPath);
-    const dateToISO = (serial: any) => {
-      if (!serial || typeof serial !== 'number') return businessToday();
-      return new Date(Math.round((serial - 25569) * 86400 * 1000)).toISOString().slice(0, 10);
-    };
+  private async leerExcel(excelPath: string, maxMov: number) {
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(excelPath);
 
-    const wsE = wb.Sheets['Entrada'];
-    const dataE: any[][] = XLSX.utils.sheet_to_json(wsE, { header: 1, defval: '' });
+    // Las celdas de fecha llegan ya normalizadas a `YYYY-MM-DD` desde
+    // `sheetMatrix`; `parseExcelDateCell` también cubre el caso de que la
+    // columna esté como texto DD/MM/AAAA en vez de como fecha.
+    const dateToISO = (value: unknown) => parseExcelDateCell(value) ?? businessToday();
+
+    const wsE = wb.getWorksheet('Entrada');
+    const dataE: any[][] = sheetMatrix(wsE);
     const entradas = dataE
       .filter((r, i) => i >= 6 && r[3] && typeof r[3] === 'number' && r[4] && r[6])
       .map(r => ({
@@ -119,8 +114,8 @@ export class SeedService {
       .sort((a, b) => b.fecha.localeCompare(a.fecha))
       .slice(0, maxMov);
 
-    const wsSal = wb.Sheets['Salida'];
-    const dataSal: any[][] = XLSX.utils.sheet_to_json(wsSal, { header: 1, defval: '' });
+    const wsSal = wb.getWorksheet('Salida');
+    const dataSal: any[][] = sheetMatrix(wsSal);
     const salidas = dataSal
       .filter((r, i) => i >= 6 && r[2] && typeof r[2] === 'number' && r[3] && r[6])
       .map(r => ({
@@ -134,8 +129,8 @@ export class SeedService {
       .sort((a, b) => b.fecha.localeCompare(a.fecha))
       .slice(0, maxMov);
 
-    const ws2 = wb.Sheets['Hoja2'];
-    const data2: any[][] = XLSX.utils.sheet_to_json(ws2, { header: 1, defval: '' });
+    const ws2 = wb.getWorksheet('Hoja2');
+    const data2: any[][] = sheetMatrix(ws2);
     const stockActual = data2
       .filter((r, i) => i >= 2 && r[0] && typeof r[0] === 'number' && r[3])
       .map(r => ({

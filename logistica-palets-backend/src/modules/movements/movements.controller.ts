@@ -38,7 +38,7 @@ import { Roles } from '../auth/roles/roles.decorator';
 import { PermissionGuard } from '../permissions/guards/permission.guard';
 import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
 
-const SNAPSHOT_EXTENSIONS = ['.xlsx', '.xls', '.csv'];
+const SNAPSHOT_EXTENSIONS = ['.xlsx', '.csv'];
 
 type AuthedRequest = Request & { user: AccessUser };
 
@@ -106,7 +106,7 @@ export class MovementsController {
         fileFilter: (_req, file, cb) => {
           const ext = extname(file.originalname).toLowerCase();
           if (!SNAPSHOT_EXTENSIONS.includes(ext)) {
-            cb(new BadRequestException('Formato no soportado. Usá un archivo .xlsx, .xls o .csv.'), false);
+            cb(new BadRequestException('Formato no soportado. Usá un archivo .xlsx o .csv.'), false);
             return;
           }
           cb(null, true);

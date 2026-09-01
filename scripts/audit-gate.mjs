@@ -7,12 +7,15 @@
  * Falla si aparece cualquier vulnerabilidad alta o crítica en las dependencias
  * que se despliegan, EXCEPTO las que están listadas abajo con su motivo.
  *
- * Por qué no alcanza `npm audit --audit-level=high --omit=dev` a secas: hay una
- * vulnerabilidad sin parche publicado. Con el comando pelado el CI quedaría rojo
- * para siempre, y un CI que siempre está rojo no avisa de nada — el equipo
- * aprende a ignorarlo y la próxima vulnerabilidad real pasa desapercibida.
- * Bajar el umbral a `critical` sería peor: dejaría de mirar justo la categoría
- * donde caen casi todas.
+ * Por qué no alcanza `npm audit --audit-level=high --omit=dev` a secas: tarde o
+ * temprano aparece una vulnerabilidad sin parche publicado (fue el caso de
+ * `xlsx` hasta que se lo reemplazó por exceljs). Con el comando pelado el CI
+ * quedaría rojo hasta que exista el parche, y un CI que siempre está rojo no
+ * avisa de nada — el equipo aprende a ignorarlo y la próxima vulnerabilidad
+ * real pasa desapercibida. Bajar el umbral a `critical` sería peor: dejaría de
+ * mirar justo la categoría donde caen casi todas.
+ *
+ * Hoy no hay ninguna excepción activa, que es el estado deseado.
  *
  * La lista de excepciones es la parte importante: cada una tiene que decir por
  * qué se acepta y qué la saca de acá. Si una excepción no se puede justificar en
@@ -29,16 +32,7 @@ import { execSync } from 'node:child_process';
  * paquete.
  */
 const EXCEPCIONES_POR_PROYECTO = {
-  'logistica-palets-backend': {
-    xlsx: {
-      motivo:
-        'Sin parche publicado en npm (las versiones corregidas de SheetJS sólo se distribuyen por su CDN). ' +
-        'Se usa para leer archivos subidos, así que la exposición es real y está registrada como RL-A-06. ' +
-        'La salida es reemplazarlo por exceljs, que ya usa el frontend — implica dejar de aceptar .xls, ' +
-        'que es una decisión de producto, no técnica.',
-      revisar: 'Sacar esta excepción al migrar a exceljs, o si SheetJS publica una versión corregida en npm.',
-    },
-  },
+  'logistica-palets-backend': {},
   'logistica-palets-frontend': {},
 };
 

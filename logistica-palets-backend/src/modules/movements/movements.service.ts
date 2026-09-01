@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DataSource, EntityManager, In, IsNull } from 'typeorm';
-import * as XLSX from 'xlsx';
+import { readUploadedRows } from '../../common/spreadsheet';
 import { CreateMovementDto } from './dto/create-movement.dto';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { AdjustmentRequest } from '../adjustments/entities/adjustment-request.entity';
@@ -2680,15 +2680,7 @@ export class MovementsService {
    * mantiene la igualdad Stock = Lotes = Palets desde el primer día.
    */
   async stockSnapshotFromLotList(buffer: Buffer, userId: string, commit: boolean): Promise<StockLotSnapshotResult> {
-    let workbook: XLSX.WorkBook;
-    try {
-      workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
-    } catch {
-      throw new BadRequestException('No se pudo leer el archivo de stock. Verificá que sea un Excel/CSV válido.');
-    }
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    if (!sheet) throw new BadRequestException('El archivo de stock no contiene hojas con datos.');
-    const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', raw: false });
+    const raw = await readUploadedRows(buffer);
 
     const CODE_ALIASES = ['codigo', 'codigo material'];
     const DESC_ALIASES = ['material', 'descripcion'];

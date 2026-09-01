@@ -25,7 +25,7 @@ import { Roles } from '../auth/roles/roles.decorator';
 import { PermissionGuard } from '../permissions/guards/permission.guard';
 import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
 
-const IMPORT_EXTENSIONS = ['.xlsx', '.xls', '.csv'];
+const IMPORT_EXTENSIONS = ['.xlsx', '.csv'];
 
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
 @Controller('products')
@@ -71,7 +71,7 @@ export class ProductsController {
       fileFilter: (_req, file, cb) => {
         const ext = extname(file.originalname).toLowerCase();
         if (!IMPORT_EXTENSIONS.includes(ext)) {
-          cb(new BadRequestException('Formato no soportado. Usá un archivo .xlsx, .xls o .csv.'), false);
+          cb(new BadRequestException('Formato no soportado. Usá un archivo .xlsx o .csv.'), false);
           return;
         }
         cb(null, true);

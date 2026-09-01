@@ -8,7 +8,7 @@
  *   node scripts/seed-from-excel.js --max-movimientos 100
  */
 
-const XLSX  = require('xlsx');
+const ExcelJS = require('exceljs');
 const axios = require('axios');
 const path  = require('path');
 
@@ -50,9 +50,55 @@ async function call(method, endpoint, body) {
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
 
-const excelDate = (n) => {
-  if (!n || typeof n !== 'number') return new Date().toISOString().slice(0, 10);
-  return new Date(Math.round((n - 25569) * 86400000)).toISOString().slice(0, 10);
+/**
+ * Fecha de una celda, ya normalizada a YYYY-MM-DD por `sheetMatrix`. Acepta
+ * tambien texto DD/MM/AAAA por si la columna quedo como texto en la planilla.
+ * `en-CA` formatea como YYYY-MM-DD en la zona local, que es la del deposito;
+ * `toISOString()` daria el dia en UTC y adelantaria un dia despues de las 21:00.
+ */
+const excelDate = (value) => {
+  if (typeof value === 'string') {
+    const iso = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (iso) return value.trim();
+    const dmy = value.trim().match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+    if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+  }
+  return new Date().toLocaleDateString('en-CA');
+};
+
+/**
+ * Equivalente minimo de `src/common/spreadsheet.ts` para este script, que es
+ * CommonJS y no puede importar el modulo TypeScript. Si cambia el contrato de
+ * alla (normalizacion de celdas, indices), hay que reflejarlo aca.
+ *
+ * Las fechas se toman en UTC a proposito: exceljs materializa el serial de
+ * Excel a medianoche UTC, asi que sus componentes UTC son el dia que se tipeo.
+ */
+const cellValue = (value) => {
+  if (value === null || value === undefined) return '';
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (typeof value === 'object') {
+    if (value.richText) return value.richText.map((f) => f.text).join('');
+    if (value.formula || value.sharedFormula) return cellValue(value.result ?? '');
+    if (value.hyperlink) return cellValue(value.text ?? '');
+    if (value.error) return '';
+  }
+  return value;
+};
+
+/** Hoja como matriz 0-indexada, conservando filas vacias (indice 0 = fila 1). */
+const sheetMatrix = (sheet) => {
+  if (!sheet) return [];
+  const matrix = [];
+  for (let rowNumber = 1; rowNumber <= sheet.rowCount; rowNumber += 1) {
+    const row = sheet.getRow(rowNumber);
+    const cells = [];
+    for (let column = 1; column <= sheet.columnCount; column += 1) {
+      cells.push(cellValue(row.getCell(column).value));
+    }
+    matrix.push(cells);
+  }
+  return matrix;
 };
 
 const log     = (m) => console.log(`  ✓ ${m}`);
@@ -62,12 +108,13 @@ const sleep   = (ms) => new Promise(r => setTimeout(r, ms));
 
 // ─── Lectura del Excel ────────────────────────────────────────────────────────
 
-function leerExcel() {
+async function leerExcel() {
   console.log(`\nLeyendo: ${EXCEL_PATH}`);
-  const wb = XLSX.readFile(EXCEL_PATH);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.readFile(EXCEL_PATH);
 
   // Hoja Entrada — col[2]=fecha, [3]=cod, [4]=desc, [5]=palets, [6]=cant, [7]=um, [9]=remito, [11]=prov, [12]=transp, [13]=cond
-  const dataE = XLSX.utils.sheet_to_json(wb.Sheets['Entrada'], { header: 1, defval: '' });
+  const dataE = sheetMatrix(wb.getWorksheet('Entrada'));
   const entradas = dataE
     .filter((r, i) => i >= 6 && r[3] && typeof r[3] === 'number' && r[4] && Number(r[6]) > 0)
     .map(r => ({
@@ -84,7 +131,7 @@ function leerExcel() {
     }));
 
   // Hoja Salida — col[1]=fecha, [2]=cod, [3]=desc, [5]=palets, [6]=cant, [7]=um, [10]=remito, [11]=transp, [12]=destino, [13]=cond
-  const dataSal = XLSX.utils.sheet_to_json(wb.Sheets['Salida'], { header: 1, defval: '' });
+  const dataSal = sheetMatrix(wb.getWorksheet('Salida'));
   const salidas = dataSal
     .filter((r, i) => i >= 6 && r[2] && typeof r[2] === 'number' && r[3] && Number(r[6]) > 0)
     .map(r => ({
@@ -101,7 +148,7 @@ function leerExcel() {
     }));
 
   // Hoja2 — stock actual: col[0]=cod, [1]=desc, [2]=lote, [3]=cant, [4]=palets
-  const data2 = XLSX.utils.sheet_to_json(wb.Sheets['Hoja2'], { header: 1, defval: '' });
+  const data2 = sheetMatrix(wb.getWorksheet('Hoja2'));
   const stockActual = data2
     .filter((r, i) => i >= 2 && r[0] && typeof r[0] === 'number' && Number(r[3]) > 0)
     .map(r => ({
@@ -150,7 +197,7 @@ async function main() {
 
   // 2. Excel
   section('2/7 — Lectura del Excel');
-  const { productos, entradas, salidas, stockActual } = leerExcel();
+  const { productos, entradas, salidas, stockActual } = await leerExcel();
 
   // 3. Depósito
   section('3/7 — Depósito y Ubicación');

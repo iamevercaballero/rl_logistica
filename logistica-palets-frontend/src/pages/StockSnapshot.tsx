@@ -40,12 +40,12 @@ function FilePicker({ label, file, onChange }: { label: string; file: File | nul
              {file.name} <span style={{ color: "var(--muted)", fontWeight: 400 }}>({(file.size / 1024).toFixed(0)} KB)</span>
           </span>
         ) : (
-          <span style={{ fontSize: 13, color: "var(--muted)" }}>Click para seleccionar (.xlsx, .xls, .csv)</span>
+          <span style={{ fontSize: 13, color: "var(--muted)" }}>Click para seleccionar (.xlsx o .csv)</span>
         )}
         <input
           ref={inputRef}
           type="file"
-          accept=".xlsx,.xls,.csv"
+          accept=".xlsx,.csv"
           onChange={(e) => onChange(e.target.files?.[0] ?? null)}
           style={{ display: "none" }}
         />

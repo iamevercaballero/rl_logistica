@@ -7,6 +7,7 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { validateEnv } from './config/env.validation';
 import { parseTrustProxy } from './common/client-ip';
+import { corsOriginCallback } from './config/cors';
 
 async function bootstrap() {
   // Fail-fast: en producción aborta si faltan secretos JWT (o son débiles).
@@ -40,12 +41,7 @@ async function bootstrap() {
 
   // CORS: en producción restringido a CORS_ORIGIN (lista separada por coma);
   // si la variable está vacía (dev), se refleja cualquier origen.
-  const corsOrigin = process.env.CORS_ORIGIN?.trim();
-  app.enableCors(
-    corsOrigin
-      ? { origin: corsOrigin.split(',').map((o) => o.trim()), credentials: true }
-      : { origin: true, credentials: true },
-  );
+  app.enableCors({ origin: corsOriginCallback, credentials: true });
 
   app.useGlobalPipes(
     new ValidationPipe({

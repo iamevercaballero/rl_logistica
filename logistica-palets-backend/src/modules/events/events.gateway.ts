@@ -8,6 +8,7 @@ import {
 import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { Server, Socket } from 'socket.io';
+import { corsOriginCallback } from '../../config/cors';
 
 /* ── Event payload types ──────────────────────────────────────────────────── */
 
@@ -27,8 +28,12 @@ export interface StockUpdatedPayload {
   namespace: '/events',
   transports: ['websocket', 'polling'],
   cors: {
-    // In production, restrict via CORS_ORIGIN env var
-    origin: process.env.CORS_ORIGIN ?? '*',
+    // Misma lista que la API, y evaluada por conexión. Antes se pasaba
+    // `CORS_ORIGIN` cruda: con más de un dominio el navegador comparaba su
+    // origen contra la cadena entera y el WebSocket no conectaba para nadie.
+    // Y sin la variable caía en `'*'` junto a `credentials: true`, que el
+    // estándar CORS prohíbe. Ver `src/config/cors.ts`.
+    origin: corsOriginCallback,
     credentials: true,
   },
 })

@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import React, { createContext, useCallback, useContext, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import {
@@ -57,6 +57,38 @@ async function fetchMe(): Promise<AuthUser> {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
   const [hasToken, setHasToken] = useState(() => !!getToken());
+  /**
+   * Refresco silencioso al arrancar (RL-M-01).
+   *
+   * El token de acceso vive en memoria, así que una recarga o una pestaña nueva
+   * empiezan sin él. La sesión se recupera con el refresh token, que va en una
+   * cookie HttpOnly: el navegador la manda solo y el script nunca la ve.
+   *
+   * Mientras esto corre la app no puede decidir si hay sesión, así que
+   * `isReady` espera — sin esto se vería un parpadeo del login en cada recarga
+   * de alguien que sí tenía la sesión abierta.
+   */
+  const [bootstrapping, setBootstrapping] = useState(true);
+
+  useEffect(() => {
+    let cancelado = false;
+    void api
+      .post<{ access_token: string }>("/auth/refresh")
+      .then(({ data }) => {
+        if (cancelado || !data?.access_token) return;
+        setToken(data.access_token);
+        setHasToken(true);
+      })
+      .catch(() => {
+        // Sin cookie válida no hay sesión que recuperar: no es un error, es el
+        // caso de alguien que no inició sesión o cuyo refresh venció.
+        clearAuthStorage();
+      })
+      .finally(() => {
+        if (!cancelado) setBootstrapping(false);
+      });
+    return () => { cancelado = true; };
+  }, []);
 
   const meQuery = useQuery({
     queryKey: AUTH_ME_QUERY_KEY,
@@ -78,7 +110,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // interceptor de axios no haya resuelto con un hard-redirect antes) también
   // se considera resuelto — `user` queda `null` y `RequireRole` manda a
   // `/login`, sin necesitar un efecto que apague `hasToken` por su cuenta.
-  const isReady = !hasToken || !!user || meQuery.isError;
+  const isReady = !bootstrapping && (!hasToken || !!user || meQuery.isError);
 
   const login = useCallback((payload: { access_token: string }) => {
     setToken(payload.access_token);
@@ -87,6 +119,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [queryClient]);
 
   const logout = useCallback(() => {
+    // El refresco silencioso ya terminó o no importa: cerrar sesión no debe
+    // quedar esperándolo.
+    setBootstrapping(false);
     // Best-effort: le pedimos al server que invalide la cookie HttpOnly del
     // refresh token. No se espera — el estado local se limpia igual.
     void api.post("/auth/logout").catch(() => {});

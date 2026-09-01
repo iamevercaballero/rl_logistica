@@ -47,6 +47,25 @@ const VENTANA_BLOQUEO_MS = 15 * 60_000;
 /** Vida del refresh token, en milisegundos. Espeja `JWT_REFRESH_EXPIRES_IN`. */
 const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+/**
+ * Ventana de gracia para una rotación recién hecha (RL-M-01).
+ *
+ * Con el token de acceso en memoria, cada pestaña que se abre pide un refresco
+ * al arrancar. Dos pestañas abiertas a la vez presentan la MISMA cookie: la
+ * primera rota, y la segunda llega con un token que acaba de quedar rotado. Sin
+ * esta ventana eso se interpreta como reuso y se cierran todas las sesiones del
+ * usuario — un cierre de sesión cada vez que alguien abre dos pestañas.
+ *
+ * Dentro de la ventana, y sólo si el reemplazo sigue vivo, se devuelve ese
+ * reemplazo en vez de cortar: es una carrera entre pestañas, no un robo.
+ *
+ * El precio es acotado y explícito: quien robe un token y lo use dentro de estos
+ * treinta segundos de la rotación legítima obtiene la sesión. Fuera de esa
+ * ventana —que es el escenario real de un token robado y usado más tarde— la
+ * detección sigue intacta.
+ */
+const GRACIA_ROTACION_MS = 30_000;
+
 const HASH_DE_DESCARTE = '$2b$12$C6UzMDM.H6dfI/f/IKcEe.6vfoRfJUcqPnhAvGDRSsIzKQfLzM7Ei';
 
 /** Identidad de red del intento, resuelta por el controlador. */
@@ -353,9 +372,27 @@ export class AuthService {
     }
 
     if (session.revokedAt) {
-      // Presentar un token ya rotado significa que hay dos copias en
-      // circulación. No se puede saber cuál es la legítima, así que se cierra la
-      // familia entera y el usuario vuelve a entrar con su contraseña.
+      // Carrera entre pestañas: la sesión se rotó hace un instante y su
+      // reemplazo sigue vivo. Se devuelve ese reemplazo en vez de cortar.
+      const recien = Date.now() - session.revokedAt.getTime() <= GRACIA_ROTACION_MS;
+      if (session.revokedReason === 'ROTATED' && recien && session.replacedById) {
+        const reemplazo = await this.sessions.findOne({ where: { id: session.replacedById } });
+        if (reemplazo && !reemplazo.revokedAt && reemplazo.expiresAt.getTime() > Date.now()) {
+          return {
+            access_token: await this.jwt.signAsync({
+              sub: user.id, username: user.username, role: user.role,
+            }),
+            refresh_token: await this.jwt.signAsync(
+              { sub: user.id, username: user.username, role: user.role, jti: reemplazo.id },
+              { secret: this.refreshSecret, expiresIn: this.refreshExpiresIn as any },
+            ),
+          };
+        }
+      }
+
+      // Presentar un token ya rotado fuera de esa ventana significa que hay dos
+      // copias en circulación. No se puede saber cuál es la legítima, así que se
+      // cierra la familia entera y el usuario vuelve a entrar con su contraseña.
       await this.cortarFamilia(session.familyId);
       await this.registrarIntento('LOGIN_FAILED', user.username, user.id, 'REFRESH_REUSED', contexto);
       this.logger.warn(

@@ -1,7 +1,24 @@
 import type { AuthUser, EffectivePermissions } from "./AuthContext";
 
-const TOKEN_KEY = "access_token";
 const USER_KEY = "user";
+
+/**
+ * Token de acceso: en memoria, nunca en localStorage (RL-M-01).
+ *
+ * En localStorage lo lee cualquier script que llegue a ejecutarse en el origen
+ * —una dependencia comprometida, un XSS— y, peor, sobrevive al cierre de la
+ * pestaña: se puede robar hoy y usar mañana desde otra máquina. En memoria
+ * muere con la pestaña, así que deja de ser un secreto persistente.
+ *
+ * No hace que un XSS sea inofensivo: mientras la página corre, el script puede
+ * usar la sesión igual. Lo que quita es la exfiltración de una credencial que
+ * dura horas.
+ *
+ * La sesión se sigue recuperando al recargar porque el refresh token vive en
+ * una cookie HttpOnly —esa sí inalcanzable para el script— y el arranque pide
+ * un token nuevo con ella.
+ */
+let accessToken = "";
 
 type RawAuthUser = Partial<AuthUser> & {
   id?: string;
@@ -43,11 +60,11 @@ export function normalizeAuthUser(user: RawAuthUser | null | undefined): AuthUse
 }
 
 export function getToken() {
-  return localStorage.getItem(TOKEN_KEY) || "";
+  return accessToken;
 }
 
 export function setToken(token: string) {
-  localStorage.setItem(TOKEN_KEY, token);
+  accessToken = token;
 }
 
 export function setStoredUser(user: AuthUser) {
@@ -68,6 +85,9 @@ export function getStoredUser(): AuthUser | null {
 }
 
 export function clearAuthStorage() {
-  localStorage.removeItem(TOKEN_KEY);
+  accessToken = "";
   localStorage.removeItem(USER_KEY);
+  // Restos de la versión que guardaba el token acá: se limpian una vez para que
+  // no quede una credencial vieja en el navegador de nadie.
+  localStorage.removeItem("access_token");
 }

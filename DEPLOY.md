@@ -92,6 +92,15 @@ reintentos agresivos puede provocarlo— pero merece mirarse junto con la IP.
 
 Las sesiones vencidas se purgan solas a las 4 de la mañana.
 
+**Ventana de gracia de 30 segundos.** El token de acceso vive en memoria del
+navegador (RL-M-01), así que cada pestaña pide un refresco al abrirse y dos
+pestañas presentan la misma cookie. Sin la ventana, la segunda se leería como
+reuso y cerraría la sesión cada vez que alguien abre dos pestañas. Dentro de esos
+30 segundos, y sólo si el reemplazo sigue vivo, se devuelve ese reemplazo. El
+precio es explícito: un token robado y usado dentro de esos 30 segundos de la
+rotación legítima obtiene la sesión; fuera de esa ventana —el escenario real de
+un robo— la detección sigue intacta.
+
 ## Contenedores sin root y con límites (RL-A-10)
 
 Los contenedores corrían **todos como root** y sin ningún límite de recursos. El

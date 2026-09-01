@@ -40,6 +40,18 @@ async function crearUsuario(username = 'operador.uno'): Promise<User> {
 
 const sesiones = () => ds.getRepository(RefreshSession).find({ order: { createdAt: 'ASC' } });
 
+/**
+ * Envejece las revocaciones más allá de la ventana de gracia.
+ *
+ * Con la ventana (RL-M-01), reusar un token recién rotado es indistinguible de
+ * dos pestañas refrescando a la vez y se trata como carrera. El reuso REAL —un
+ * token robado y usado más tarde— es el que hay que simular acá.
+ */
+const envejecerRotacion = () =>
+  ds.query(
+    `UPDATE "refresh_sessions" SET "revokedAt" = "revokedAt" - interval '5 minutes' WHERE "revokedAt" IS NOT NULL`,
+  );
+
 beforeAll(async () => {
   ds = createTestDataSource();
   await ds.initialize();
@@ -155,8 +167,9 @@ describe('detección de reuso', () => {
     const user = await crearUsuario();
     const { refresh_token: robado } = await auth.login(user.username, CLAVE);
     const { refresh_token: legitimo } = await auth.refresh(robado);
+    await envejecerRotacion();
 
-    // El atacante usa la copia vieja.
+    // El atacante usa la copia vieja, más tarde.
     await expect(auth.refresh(robado)).rejects.toBeInstanceOf(UnauthorizedException);
 
     // Y el token del usuario legítimo también deja de servir: tiene que volver
@@ -172,6 +185,7 @@ describe('detección de reuso', () => {
     const user = await crearUsuario();
     const { refresh_token: robado } = await auth.login(user.username, CLAVE);
     await auth.refresh(robado);
+    await envejecerRotacion();
     await auth.refresh(robado).catch(() => undefined);
 
     const eventos = await ds.getRepository(AuthEvent).find();
@@ -185,10 +199,67 @@ describe('detección de reuso', () => {
     const dispositivoB = await auth.login(user.username, CLAVE);
 
     const rotadoA = await auth.refresh(dispositivoA.refresh_token);
+    await envejecerRotacion();
     await auth.refresh(dispositivoA.refresh_token).catch(() => undefined); // reuso en A
 
     await expect(auth.refresh(rotadoA.refresh_token)).rejects.toBeInstanceOf(UnauthorizedException);
     await expect(auth.refresh(dispositivoB.refresh_token)).resolves.toHaveProperty('access_token');
+  });
+});
+
+describe('carrera entre pestañas (RL-M-01)', () => {
+  it('dos pestañas refrescando a la vez no cierran la sesión', async () => {
+    // Con el token de acceso en memoria, cada pestaña pide un refresco al
+    // arrancar y las dos presentan la MISMA cookie. Sin la ventana de gracia
+    // eso se leía como reuso y echaba al usuario cada vez que abría dos
+    // pestañas.
+    const user = await crearUsuario();
+    const { refresh_token: cookie } = await auth.login(user.username, CLAVE);
+
+    const pestanaA = await auth.refresh(cookie);
+    const pestanaB = await auth.refresh(cookie); // misma cookie, un instante después
+
+    expect(pestanaA.access_token).toBeTruthy();
+    expect(pestanaB.access_token).toBeTruthy();
+
+    // Y la sesión sigue viva para las dos.
+    const todas = await sesiones();
+    expect(todas.some((x) => x.revokedAt === null)).toBe(true);
+    expect(todas.some((x) => x.revokedReason === 'REUSE_DETECTED')).toBe(false);
+  });
+
+  it('la segunda pestaña recibe el reemplazo, no una sesión nueva', async () => {
+    // No se rota dos veces: sería crear una cadena por pestaña.
+    const user = await crearUsuario();
+    const { refresh_token: cookie } = await auth.login(user.username, CLAVE);
+    await auth.refresh(cookie);
+    const antes = (await sesiones()).length;
+
+    await auth.refresh(cookie);
+
+    expect((await sesiones()).length).toBe(antes);
+  });
+
+  it('fuera de la ventana sigue siendo reuso y corta la familia', async () => {
+    // Un token robado y usado más tarde —el escenario real— no cambia.
+    const user = await crearUsuario();
+    const { refresh_token: robado } = await auth.login(user.username, CLAVE);
+    await auth.refresh(robado);
+
+    await envejecerRotacion();
+
+    await expect(auth.refresh(robado)).rejects.toBeInstanceOf(UnauthorizedException);
+    expect((await sesiones()).some((x) => x.revokedReason === 'REUSE_DETECTED')).toBe(true);
+  });
+
+  it('si el reemplazo ya fue revocado, no hay gracia que valga', async () => {
+    // Cerrar sesión y después presentar el token viejo no puede revivir nada.
+    const user = await crearUsuario();
+    const { refresh_token: viejo } = await auth.login(user.username, CLAVE);
+    const rotado = await auth.refresh(viejo);
+    await auth.logout(rotado.refresh_token);
+
+    await expect(auth.refresh(viejo)).rejects.toBeInstanceOf(UnauthorizedException);
   });
 });
 

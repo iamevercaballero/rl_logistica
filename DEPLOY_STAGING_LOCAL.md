@@ -34,7 +34,7 @@ Esta parte es un runbook de una sola vez, no repetible desde el repo:
 - Dos rutas configuradas en la pestaña **"Published application routes"**
   del túnel (Networks → Tunnels → tu túnel → esa pestaña, NO "Hostname
   routes" — esa es para rutas privadas vía Cloudflare Gateway/WARP y no
-  sirve acá): `staging.<dominio>` → `http://frontend:80`, `staging-api.
+  sirve acá): `staging.<dominio>` → `http://frontend:8080`, `staging-api.
   <dominio>` → `http://backend:3000`. Cloudflare resuelve el destino por
   nombre de contenedor porque `cloudflared` corre en la misma red `internal`
   del compose (DNS embebido de Docker, sin config extra). Si el DNS no

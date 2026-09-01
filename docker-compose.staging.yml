@@ -6,7 +6,8 @@
 # Diferencias con docker-compose.prod.yml:
 #  - No hay Caddy: TLS lo termina Cloudflare en su borde. El servicio
 #    `cloudflared` abre un túnel saliente hacia Cloudflare y expone
-#    frontend:80 / backend:3000 en los hostnames públicos configurados
+#    frontend:8080 / backend:3000 en los hostnames públicos configurados
+#    (8080 porque nginx corre sin privilegios y no puede tomar el puerto 80)
 #    en el dashboard de Cloudflare Zero Trust (Networks → Tunnels →
 #    Public Hostname). No requiere config.yml ni credentials.json: todo
 #    el ruteo vive en el dashboard, acá solo hace falta TUNNEL_TOKEN.
@@ -50,6 +51,16 @@ services:
       retries: 10
     networks: [internal]
     # Sin 'ports': la base de datos NO es accesible desde el host.
+    security_opt: [ "no-new-privileges:true" ]
+    cap_drop: [ ALL ]
+    cap_add: [ CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID ]
+    deploy:
+      resources:
+        limits:   { memory: 1g, cpus: "1.5" }
+        reservations: { memory: 256m }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
 
   # ── Redis ──────────────────────────────────────────────────────────────────
   redis:
@@ -64,6 +75,16 @@ services:
       retries: 5
     networks: [internal]
     # Sin 'ports': Redis no expuesto al host.
+    security_opt: [ "no-new-privileges:true" ]
+    cap_drop: [ ALL ]
+    cap_add: [ CHOWN, DAC_OVERRIDE, SETGID, SETUID ]
+    deploy:
+      resources:
+        limits:   { memory: 256m, cpus: "0.5" }
+        reservations: { memory: 64m }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
   # ── Backend ───────────────────────────────────────────────────────────────
   backend:
@@ -106,6 +127,18 @@ services:
     volumes:
       - uploads_data_staging:/app/uploads
     networks: [internal]
+    security_opt: [ "no-new-privileges:true" ]
+    cap_drop: [ ALL ]
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    deploy:
+      resources:
+        limits:   { memory: 1g, cpus: "1.5" }
+        reservations: { memory: 256m }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
 
   # ── Frontend (React → Nginx) ───────────────────────────────────────────────
   frontend:
@@ -122,6 +155,21 @@ services:
       - backend
     # Sin 'ports': lo expone cloudflared por la red interna.
     networks: [internal]
+    security_opt: [ "no-new-privileges:true" ]
+    cap_drop: [ ALL ]
+    read_only: true
+    # nginx sin privilegios escribe temporales y pid; con read_only necesita esto.
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+      - /var/cache/nginx:size=16m,mode=0755,uid=101,gid=101
+      - /var/run:size=1m,mode=0755,uid=101,gid=101
+    deploy:
+      resources:
+        limits:   { memory: 128m, cpus: "0.5" }
+        reservations: { memory: 32m }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
   # ── Cloudflare Tunnel (reemplaza a Caddy: TLS termina en el borde de CF) ───
   cloudflared:
@@ -135,6 +183,16 @@ services:
       - backend
       - frontend
     networks: [internal]
+    security_opt: [ "no-new-privileges:true" ]
+    cap_drop: [ ALL ]
+    read_only: true
+    deploy:
+      resources:
+        limits:   { memory: 128m, cpus: "0.5" }
+        reservations: { memory: 32m }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
 volumes:
   postgres_data_staging:

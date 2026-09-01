@@ -14,7 +14,7 @@ Backups: pg_dump diario → R2/B2 (off-site) + snapshot del VPS
 ```
 
 `cloudflared` abre una conexión **saliente** hacia Cloudflare, que enruta los
-hostnames públicos hasta `frontend:80` y `backend:3000` por la red interna del
+hostnames públicos hasta `frontend:8080` y `backend:3000` por la red interna del
 compose. Nada entra al VPS desde internet, que es una superficie de ataque menos
 que un reverse proxy escuchando en 443.
 
@@ -37,7 +37,9 @@ desplegar a medias. Nunca imprime el valor de un secreto.
 
 ## 1. Prerrequisitos en el VPS
 - Ubuntu LTS, usuario no-root con sudo, SSH por clave (password deshabilitado).
-- Firewall (ufw): permitir 22, 80, 443; denegar el resto.
+- Firewall (ufw): permitir **sólo 22**; denegar el resto. El túnel es una
+  conexión saliente, así que 80 y 443 no hacen falta (con la alternativa de
+  Caddy sí, ver más abajo).
 - Docker + Docker Compose plugin instalados.
 - Repo clonado en `/opt/rl_logistica` (por ejemplo).
 
@@ -51,7 +53,7 @@ En **Public Hostname** del mismo túnel, agregar dos rutas:
 
 | Hostname | Service |
 |---|---|
-| `app.rl-logistica.com` | `http://frontend:80` |
+| `app.rl-logistica.com` | `http://frontend:8080` |
 | `api.rl-logistica.com` | `http://backend:3000` |
 
 Los nombres de servicio son los del compose: `cloudflared` los alcanza por la red
@@ -64,6 +66,62 @@ alcanza con permitir 22.
 > **Si usás la alternativa con Caddy** en lugar del túnel: creá registros A hacia
 > la IP del VPS, ponelos en *DNS only* (nube gris) la primera vez para que Caddy
 > emita los certificados, y recién después activá el proxy en *Full (strict)*.
+
+## Contenedores sin root y con límites (RL-A-10)
+
+Los contenedores corrían **todos como root** y sin ningún límite de recursos. El
+backend —el que recibe los archivos que sube un operador— corría como root de
+punta a punta, y el master de nginx también. Además, el backend de desarrollo
+figuraba como `Exited (137)`: señal 9, típicamente el kernel matándolo por
+memoria.
+
+Qué cambia:
+
+| Servicio | Usuario | Capacidades | Techo de memoria |
+|---|---|---|---|
+| `backend` | `node` (1000) | ninguna, `read_only` | 1 GB |
+| `frontend` | `nginx` (101) | ninguna, `read_only` | 128 MB |
+| `db` | root → baja a `postgres` | sólo las 5 que necesita para bajar | 1 GB |
+| `redis` | root → baja a `redis` | sólo las 4 que necesita | 256 MB |
+| `cloudflared` | — | ninguna, `read_only` | 128 MB |
+
+`db` y `redis` conservan unas pocas capacidades porque sus *entrypoints* arrancan
+como root y bajan de usuario por su cuenta (verificado: sus procesos de servidor
+ya corrían como `postgres` y `redis`). Quitarles `SETUID`/`SETGID` les impide
+hacer ese descenso y no arrancan.
+
+`NODE_OPTIONS=--max-old-space-size=768` es lo que ataca el `Exited (137)`: Node no
+ve el límite del cgroup y por defecto dimensiona su heap contra la RAM del host,
+así que crece hasta que el kernel lo mata. Con el techo declarado el recolector
+actúa antes y el proceso se ralentiza en vez de morir.
+
+### Dos cosas que hay que hacer a mano
+
+**1. El hostname público de la app cambia de puerto.** nginx ahora corre sin
+privilegios y escucha en **8080**, porque un proceso sin privilegios no puede
+tomar un puerto por debajo de 1024. En Cloudflare Zero Trust → Networks →
+Tunnels → *Public Hostname*, el servicio de `app.` pasa de `http://frontend:80`
+a `http://frontend:8080`. **Aplica también al túnel de staging, que ya está
+configurado.** El de `api.` no cambia.
+
+**2. El volumen de adjuntos, si ya existe.** El backend pasa a correr como
+`node` (uid 1000). Un volumen nuevo hereda el dueño correcto desde la imagen,
+pero uno creado por un despliegue anterior es de root y el backend no va a poder
+escribir un solo adjunto. Con el stack levantado:
+
+```bash
+docker compose -f docker-compose.prod.yml exec -u root backend chown -R node:node /app/uploads
+```
+
+Verificación de las dos cosas:
+
+```bash
+docker compose -f docker-compose.prod.yml exec backend id
+docker compose -f docker-compose.prod.yml exec backend sh -c 'touch /app/uploads/.probe && rm /app/uploads/.probe && echo "adjuntos escribibles"'
+```
+
+El primero tiene que devolver `uid=1000(node)`; el segundo, escribir sin error.
+Si el segundo falla, es el punto 2 de arriba.
 
 ## Índice de la pantalla de movimientos (RL-A-07)
 

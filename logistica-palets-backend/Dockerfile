@@ -19,5 +19,20 @@ COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 # dist incluye main.js + data-source.js + migrations/ + **/*.entity.js
 COPY --from=builder /app/dist ./dist
+
+# El proceso corre como `node` (uid 1000), no como root. Es el que recibe los
+# archivos que sube un operador y todo el tráfico de la API: si algo lo
+# compromete, root dentro del contenedor es un escalón de más que no hace falta
+# regalar. La imagen de node ya trae ese usuario.
+#
+# El directorio de adjuntos se crea acá y con dueño `node` a propósito: cuando
+# Docker crea un volumen nombrado vacío, copia el contenido Y el dueño del
+# directorio de la imagen. Si no existiera con el dueño correcto, el volumen
+# nacería de root y el backend no podría escribir un solo adjunto. Para un
+# volumen que YA existe de un despliegue anterior hay que corregirlo a mano —
+# está documentado en DEPLOY.md.
+RUN mkdir -p /app/uploads && chown -R node:node /app/uploads
+USER node
+
 EXPOSE 3000
 CMD ["node", "dist/main.js"]

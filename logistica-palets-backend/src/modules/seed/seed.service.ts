@@ -64,17 +64,57 @@ export class SeedService {
     return { mensaje: 'Seed completado exitosamente', stats };
   }
 
-  async resetData(): Promise<any> {
-    this.logger.warn('Eliminando datos de movimientos, stock, lotes, productos...');
-    await this.dataSource.query(`DELETE FROM "movement_details" WHERE true`).catch(() => null);
-    await this.dataSource.query(`DELETE FROM "movements" WHERE true`).catch(() => null);
-    await this.dataSource.query(`DELETE FROM "stocks" WHERE true`).catch(() => null);
-    await this.dataSource.query(`DELETE FROM "pallets" WHERE true`).catch(() => null);
-    await this.dataSource.query(`DELETE FROM "lots" WHERE true`).catch(() => null);
-    await this.dataSource.query(`DELETE FROM "locations" WHERE true`).catch(() => null);
-    await this.dataSource.query(`DELETE FROM "warehouses" WHERE true`).catch(() => null);
-    await this.dataSource.query(`DELETE FROM "products" WHERE true`).catch(() => null);
-    return { mensaje: 'Datos eliminados' };
+  /**
+   * Tablas operativas que borra `resetData`, en un solo `TRUNCATE`.
+   *
+   * No se listan las bitácoras (`document_events`, `user_audit_log`,
+   * `auth_events`) ni los usuarios y permisos: un reset de datos de prueba no
+   * tiene por qué borrar quién hizo qué, y esas tablas además son append-only.
+   */
+  private static readonly TABLAS_A_VACIAR = [
+    'movement_details', 'movements', 'stocks', 'pallets', 'pilas', 'lots',
+    'logistics_documents', 'regularization_logs',
+    'adjustment_request_lines', 'adjustment_requests',
+    'document_sequences', 'sap_stock_snapshots',
+    'locations', 'warehouses', 'products',
+  ];
+
+  /**
+   * Vacía los datos operativos. Sólo para desarrollo — el controlador exige
+   * `ALLOW_SEED`, que en producción está apagado.
+   *
+   * Antes eran ocho `DELETE` sueltos, cada uno con `.catch(() => null)`. Dos
+   * problemas: sin transacción, un fallo a mitad de camino dejaba la base
+   * parcialmente vaciada; y con el catch, ese fallo no se veía — la respuesta
+   * decía "Datos eliminados" igual. Desde que existen las claves foráneas
+   * (RL-C-03) eso dejó de ser hipotético: borrar `locations` con `movements`
+   * apuntando todavía a ellas falla por RESTRICT, y ese error se tragaba.
+   *
+   * Un solo `TRUNCATE ... CASCADE` resuelve las dos cosas: es atómico y no
+   * depende del orden, así que no hay forma de quedar a mitad. `CASCADE` alcanza
+   * a cualquier tabla que referencie a estas — que es lo que se quiere y lo que
+   * los DELETE sueltos no lograban.
+   */
+  async resetData(): Promise<{ mensaje: string; tablas: string[]; filasEliminadas: number }> {
+    const tablas = SeedService.TABLAS_A_VACIAR;
+    this.logger.warn(`Vaciando datos operativos: ${tablas.join(', ')}`);
+
+    const contar = async () => {
+      const filas = (await this.dataSource.query(
+        tablas.map((t) => `SELECT COUNT(*)::int AS n FROM "${t}"`).join(' UNION ALL '),
+      )) as Array<{ n: number }>;
+      return filas.reduce((total, f) => total + Number(f.n), 0);
+    };
+
+    const antes = await contar();
+    // Sin `.catch`: si esto falla, tiene que fallar la petición. Una respuesta
+    // que dice "eliminado" sobre una base a medio vaciar es peor que un error.
+    await this.dataSource.query(
+      `TRUNCATE TABLE ${tablas.map((t) => `"${t}"`).join(', ')} RESTART IDENTITY CASCADE`,
+    );
+
+    this.logger.warn(`Datos operativos eliminados: ${antes} fila(s)`);
+    return { mensaje: 'Datos eliminados', tablas: [...tablas], filasEliminadas: antes };
   }
 
   // ─── Helpers privados ────────────────────────────────────────────────────────

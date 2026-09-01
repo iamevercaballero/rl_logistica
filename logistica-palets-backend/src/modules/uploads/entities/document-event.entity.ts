@@ -15,6 +15,7 @@ export const documentEventTypes = [
   'RECHAZADO',           // Ajuste rechazado (vuelve a borrador)
   'ANULACION_SOLICITADA',// Solicitud de anulación generada
   'ANULADO',             // Movimiento marcado como VOIDED
+  'CARGA_INICIAL_REVERTIDA', // Un ajuste de la carga inicial fue eliminado por el revert
   'NOTA_IMPRESA',        // Nota RLNE/RLNS impresa o descargada
   'INSPECCION',          // Inspección de vehículo registrada
 ] as const;

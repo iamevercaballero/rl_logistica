@@ -133,8 +133,8 @@ export class MovementsController {
   @Post('stock-snapshot/revert')
   @Roles('ADMIN')
   @RequirePermission('movements', 'create')
-  revertStockSnapshot(@Query('commit') commit: string) {
-    return this.service.revertStockSnapshot(commit === 'true');
+  revertStockSnapshot(@Query('commit') commit: string, @Req() req: AuthedRequest) {
+    return this.service.revertStockSnapshot(commit === 'true', req.user.userId);
   }
 
   /** Transferencia multi-producto: N pallets de una ubicación a otra en una sola transacción. */

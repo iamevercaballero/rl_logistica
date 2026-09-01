@@ -3094,11 +3094,35 @@ export class MovementsService {
    * borra lotes/pallets asociados y los movimientos. No toca productos,
    * ubicaciones ni ningún otro dato. `commit=false` solo lista qué se revertiría.
    */
-  async revertStockSnapshot(commit: boolean): Promise<StockSnapshotRevertResult> {
+  async revertStockSnapshot(commit: boolean, userId: string): Promise<StockSnapshotRevertResult> {
     const movements = await this.dataSource.getRepository(Movement).find({
       where: { type: 'ADJUSTMENT_IN', adjustmentCategory: 'CARGA_INICIAL' },
       order: { createdAt: 'ASC' },
     });
+
+    // Resguardo: esto es para deshacer una carga inicial que salió mal, ANTES de
+    // que el depósito empiece a operar. Si ya hay movimientos que no son de la
+    // carga inicial, el stock actual depende de ellos y borrar la carga lo
+    // dejaría descuadrado sin forma de reconstruirlo. Es un borrado sin vuelta
+    // atrás: mejor negarlo que dejar el inventario inconsistente.
+    if (commit) {
+      // `IS DISTINCT FROM` y no `!=`: la mayoría de los movimientos tiene
+      // `adjustmentCategory` en NULL —sólo los ajustes la llevan— y en SQL
+      // `NULL != 'CARGA_INICIAL'` es NULL, no verdadero. Con un `!=` pelado, un
+      // depósito con quinientas entradas normales habría dado cero y el
+      // resguardo no habría resguardado nada.
+      const [{ otros }] = (await this.dataSource.query(
+        `SELECT COUNT(*)::int AS otros FROM movements
+          WHERE "adjustmentCategory" IS DISTINCT FROM 'CARGA_INICIAL'`,
+      )) as Array<{ otros: number }>;
+      if (otros > 0) {
+        throw new BadRequestException(
+          `No se puede revertir la carga inicial: ya hay ${otros} movimiento(s) posteriores. ` +
+            'El stock actual depende de ellos y revertirla lo dejaría descuadrado. ' +
+            'Corregí las diferencias con un ajuste de inventario, que sí queda registrado.',
+        );
+      }
+    }
 
     const products = await this.dataSource.getRepository(Product).find();
     const productById = new Map(products.map((p) => [p.id, p] as const));
@@ -3140,6 +3164,32 @@ export class MovementsService {
           if (details.length) await manager.delete(MovementDetail, { movementId: movement.id });
 
           await this.applyDecrease(manager, movement.productId, movement.warehouseId ?? null, movement.locationId ?? null, movement.quantity);
+
+          // El rastro se escribe ANTES de borrar y dentro de la misma
+          // transacción: la fila del movimiento desaparece, así que si el
+          // evento no queda, no queda nada. `document_events` es append-only
+          // por trigger, de modo que el registro del borrado tampoco se puede
+          // borrar. Es la diferencia entre deshacer y hacer desaparecer.
+          await this.uploads.log({
+            entityType: 'MOVEMENT',
+            entityId: movement.id,
+            eventType: 'CARGA_INICIAL_REVERTIDA',
+            description:
+              `Ajuste de carga inicial eliminado: ${base.code} — ${formatQuantity(movement.quantity)} ` +
+              `${details.length ? `(${details.length} línea(s) de detalle)` : ''}`.trim(),
+            userId,
+            metadata: {
+              productId: movement.productId,
+              warehouseId: movement.warehouseId ?? null,
+              locationId: movement.locationId ?? null,
+              quantity: movement.quantity,
+              documentNumber: movement.documentNumber ?? null,
+              lotIds: details.map((d) => d.lotId).filter(Boolean),
+              palletIds: details.map((d) => d.palletId).filter(Boolean),
+            },
+            manager,
+          });
+
           await manager.delete(Movement, movement.id);
         });
         items.push({ ...base, reverted: true });

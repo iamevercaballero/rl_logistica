@@ -20,6 +20,17 @@ Esta parte es un runbook de una sola vez, no repetible desde el repo:
 - VM Ubuntu Server con Docker + Compose plugin instalados, accesible por SSH.
 - Un túnel de Cloudflare ya creado (Zero Trust → Networks → Tunnels →
   Create a tunnel → Cloudflared) con su `TUNNEL_TOKEN` a mano.
+
+  > **El token no es el «Tunnel ID».** La pantalla de detalles del túnel muestra
+  > un UUID (`3e20ae2b-…`) que lo identifica; el token es otra cosa: una cadena
+  > larga en base64 que empieza con `eyJhIjoi…` y aparece dentro del comando de
+  > instalación del conector (`cloudflared service install <TOKEN>`, o
+  > `... tunnel run --token <TOKEN>` en la variante Docker). Por CLI, desde una
+  > máquina con `cloudflared login` hecho: `cloudflared tunnel token <nombre>`.
+  >
+  > **No uses «Rotate token» para verlo.** Ese botón no revela el token actual:
+  > lo invalida y genera uno nuevo, y cualquier conector que esté corriendo con
+  > el anterior se cae hasta que lo actualices. Es para cuando el token se filtró.
 - Dos rutas configuradas en la pestaña **"Published application routes"**
   del túnel (Networks → Tunnels → tu túnel → esa pestaña, NO "Hostname
   routes" — esa es para rutas privadas vía Cloudflare Gateway/WARP y no

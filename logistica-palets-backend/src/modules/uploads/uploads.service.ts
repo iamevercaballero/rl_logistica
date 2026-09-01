@@ -5,7 +5,7 @@ import {
   StreamableFile,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { createReadStream, existsSync, mkdirSync, unlinkSync } from 'fs';
 import { join, resolve, sep } from 'path';
 import { Attachment, AttachmentCategory, AttachmentEntityType } from './entities/attachment.entity';
@@ -107,14 +107,14 @@ export class UploadsService {
     await this.attachRepo.save(attachment);
 
     // Evento en bitácora
-    await this.log(
-      dto.entityType,
-      dto.entityId,
-      'FOTO_ADJUNTADA',
-      `Archivo adjuntado: "${dto.name.trim()}" (${dto.category}) — ${file.originalname}`,
+    await this.log({
+      entityType: dto.entityType,
+      entityId: dto.entityId,
+      eventType: 'FOTO_ADJUNTADA',
+      description: `Archivo adjuntado: "${dto.name.trim()}" (${dto.category}) — ${file.originalname}`,
       userId,
       username,
-    );
+    });
 
     return attachment;
   }
@@ -162,14 +162,14 @@ export class UploadsService {
     const fullPath = this.rutaDentroDeUploads(attachment.filePath);
     this.descartarArchivo(fullPath);
 
-    await this.log(
-      attachment.entityType as AttachmentEntityType,
-      attachment.entityId,
-      'ARCHIVO_ELIMINADO',
-      `Archivo eliminado: "${attachment.name}" — ${attachment.originalName}`,
+    await this.log({
+      entityType: attachment.entityType as AttachmentEntityType,
+      entityId: attachment.entityId,
+      eventType: 'ARCHIVO_ELIMINADO',
+      description: `Archivo eliminado: "${attachment.name}" — ${attachment.originalName}`,
       userId,
       username,
-    );
+    });
 
     await this.attachRepo.delete(id);
     return { deleted: true };
@@ -182,28 +182,40 @@ export class UploadsService {
   /**
    * Registra un evento en la bitácora.
    * Público para que otros servicios lo puedan llamar.
+   *
+   * `manager` permite escribir el evento DENTRO de la transacción de la
+   * operación que lo origina. Es la diferencia entre una bitácora que refleja
+   * lo que pasó y una que refleja lo que pasó *casi siempre*: si el evento se
+   * escribe aparte y falla, o el proceso muere entre el commit y el log, queda
+   * un movimiento sin rastro de quién lo hizo. Pasándolo, o se guardan los dos
+   * o no se guarda ninguno.
    */
-  async log(
-    entityType: string,
-    entityId: string,
-    eventType: DocumentEventType,
-    description: string,
-    userId?: string,
-    username?: string,
-    metadata?: Record<string, unknown>,
-    entityCode?: string,
-  ) {
-    const event = this.eventRepo.create({
-      entityType,
-      entityId,
-      eventType,
-      description,
-      entityCode: entityCode ?? null,
-      userId: userId ?? null,
-      username: username ?? null,
-      metadata: metadata ? JSON.stringify(metadata) : null,
+  async log(evento: {
+    entityType: string;
+    entityId: string;
+    eventType: DocumentEventType;
+    description: string;
+    userId?: string;
+    username?: string;
+    metadata?: Record<string, unknown>;
+    entityCode?: string;
+    /** Escribe el evento dentro de esta transacción — ver el comentario de arriba. */
+    manager?: EntityManager;
+  }) {
+    const repo = evento.manager
+      ? evento.manager.getRepository(DocumentEvent)
+      : this.eventRepo;
+    const event = repo.create({
+      entityType: evento.entityType,
+      entityId: evento.entityId,
+      eventType: evento.eventType,
+      description: evento.description,
+      entityCode: evento.entityCode ?? null,
+      userId: evento.userId ?? null,
+      username: evento.username ?? null,
+      metadata: evento.metadata ? JSON.stringify(evento.metadata) : null,
     });
-    await this.eventRepo.save(event);
+    await repo.save(event);
     return event;
   }
 

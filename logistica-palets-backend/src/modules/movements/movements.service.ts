@@ -252,12 +252,14 @@ export class MovementsService {
         voidAdjRequestId: request.id,
       });
 
+      await this.uploads.log({
+        entityType: 'MOVEMENT', entityId: id, eventType: 'ANULACION_SOLICITADA',
+        description: `Anulación solicitada — generado ${request.code} pendiente de aprobación`,
+        userId, entityCode: request.code, manager,
+      });
+
       return { requestId: request.id, code: request.code };
     });
-
-    void this.uploads.log('MOVEMENT', id, 'ANULACION_SOLICITADA',
-      `Anulación solicitada — generado ${result.code} pendiente de aprobación`,
-      userId, undefined, undefined, result.code);
 
     return { ...result, warnings };
   }
@@ -1166,9 +1168,23 @@ export class MovementsService {
           .join('; ')}`
       : '';
 
-    void this.uploads.log('DOCUMENT', result.documentId, 'CREADO',
-      `Remito ${result.code} creado con ${result.movementIds.length} línea(s)${descParciales}`,
-      userId, undefined, metadata, result.code);
+    // Queda fuera de la transacción a propósito: la descripción y el metadata se
+    // arman con el detalle de salidas parciales que recién existe una vez
+    // confirmado el remito. El fallo se registra en vez de propagarse — un 500
+    // acá le diría al operador que el remito no se creó cuando sí se creó.
+    // Antes iba con `void` y sin captura, y una promesa rechazada sin manejar
+    // termina el proceso en Node 20 (verificado sobre la imagen de producción).
+    await this.uploads
+      .log({
+        entityType: 'DOCUMENT', entityId: result.documentId, eventType: 'CREADO',
+        description: `Remito ${result.code} creado con ${result.movementIds.length} línea(s)${descParciales}`,
+        userId, metadata, entityCode: result.code,
+      })
+      .catch((error: unknown) =>
+        this.logger.error(
+          `Remito ${result.code} creado pero su evento de bitácora no se pudo escribir: ${String(error)}`,
+        ),
+      );
 
     return {
       documentId: result.documentId,
@@ -1923,12 +1939,20 @@ export class MovementsService {
       const signo = r.type === 'ADJUSTMENT_IN' ? '+' : '−';
       parts.push(`${r.code} (${signo}${formatQuantity(r.totalQuantity)} unid.) pendiente de aprobación`);
     }
-    void this.uploads.log(
-      'MOVEMENT', id,
-      result.requests.length > 0 ? 'ENVIADO_APROBACION' : 'EDITADO',
-      `Corrección de lotes/cantidades — ${parts.join(' · ')}`,
-      userId,
-    );
+    // Mismo criterio que el remito: la descripción se arma con el resumen de las
+    // solicitudes generadas, que existe recién después del commit.
+    await this.uploads
+      .log({
+        entityType: 'MOVEMENT', entityId: id,
+        eventType: result.requests.length > 0 ? 'ENVIADO_APROBACION' : 'EDITADO',
+        description: `Corrección de lotes/cantidades — ${parts.join(' · ')}`,
+        userId,
+      })
+      .catch((error: unknown) =>
+        this.logger.error(
+          `Corrección del movimiento ${id} aplicada pero su evento de bitácora no se pudo escribir: ${String(error)}`,
+        ),
+      );
 
     if (result.renamed > 0 || result.lotFieldChanges > 0) {
       this.invalidateWarehouseCaches(

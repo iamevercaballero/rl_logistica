@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { Transport, TransportDriver } from './entities/transport.entity';
@@ -12,12 +12,38 @@ type TransportView = Omit<Transport, 'driversJson'> & { drivers: TransportDriver
 
 @Injectable()
 export class TransportsService {
+  private readonly logger = new Logger(TransportsService.name);
+
   constructor(
     @InjectRepository(Transport)
     private readonly repo: Repository<Transport>,
     private readonly dataSource: DataSource,
     private readonly uploads: UploadsService,
   ) {}
+
+  /**
+   * Registra un evento de flota sin poder tumbar el proceso.
+   *
+   * Antes cada llamada iba con `void` y sin captura, y una promesa rechazada sin
+   * manejar termina el proceso en Node 20 — un fallo escribiendo la bitácora de
+   * un vehículo se llevaba puesta toda petición en vuelo.
+   *
+   * No va en transacción, a diferencia de inventario y ajustes: esto es el
+   * catálogo de la flota, no el histórico que hay que poder reconstruir a diez
+   * años. Perder un evento acá se registra y se sigue; ahí no.
+   */
+  private async registrar(
+    entityId: string,
+    eventType: 'CREADO' | 'EDITADO' | 'INSPECCION',
+    description: string,
+    userId?: string,
+  ): Promise<void> {
+    try {
+      await this.uploads.log({ entityType: 'VEHICLE', entityId, eventType, description, userId });
+    } catch (error) {
+      this.logger.error(`No se pudo registrar "${description}" del vehículo ${entityId}: ${String(error)}`);
+    }
+  }
 
   private toView(t: Transport): TransportView {
     const { driversJson, ...rest } = t;
@@ -52,8 +78,7 @@ export class TransportsService {
     });
     const saved = await this.repo.save(transport);
 
-    void this.uploads.log('VEHICLE', saved.id, 'CREADO',
-      `Vehículo ${saved.plate} (${saved.type}) registrado en la flota`, userId);
+    await this.registrar(saved.id, 'CREADO', `Vehículo ${saved.plate} (${saved.type}) registrado en la flota`, userId);
 
     return this.toView(saved);
   }
@@ -82,8 +107,7 @@ export class TransportsService {
     const saved = await this.repo.save(transport);
 
     if (dto.status && dto.status !== oldStatus) {
-      void this.uploads.log('VEHICLE', id, 'EDITADO',
-        `Estado operativo: ${oldStatus} → ${dto.status}`, userId);
+      await this.registrar(id, 'EDITADO', `Estado operativo: ${oldStatus} → ${dto.status}`, userId);
     }
 
     return this.toView(saved);
@@ -130,16 +154,17 @@ export class TransportsService {
       CON_OBSERVACIONES: 'con observaciones',
       RECHAZADA: 'rechazada',
     };
-    await this.uploads.log('VEHICLE', id, 'INSPECCION',
+    await this.registrar(
+      id, 'INSPECCION',
       `Inspección ${labels[dto.result] ?? dto.result}${dto.notes?.trim() ? ` — ${dto.notes.trim()}` : ''}`,
-      userId);
+      userId,
+    );
 
     if (dto.setStatus && dto.setStatus !== transport.status) {
       const oldStatus = transport.status;
       transport.status = dto.setStatus;
       await this.repo.save(transport);
-      void this.uploads.log('VEHICLE', id, 'EDITADO',
-        `Estado operativo: ${oldStatus} → ${dto.setStatus} (por inspección)`, userId);
+      await this.registrar(id, 'EDITADO', `Estado operativo: ${oldStatus} → ${dto.setStatus} (por inspección)`, userId);
     }
 
     return this.toView(transport);
@@ -150,8 +175,7 @@ export class TransportsService {
     if (!transport) throw new NotFoundException('Transporte no encontrado');
     await this.repo.remove(transport);
 
-    void this.uploads.log('VEHICLE', id, 'EDITADO',
-      `Vehículo ${transport.plate} eliminado de la flota`, userId);
+    await this.registrar(id, 'EDITADO', `Vehículo ${transport.plate} eliminado de la flota`, userId);
 
     return { deleted: true };
   }

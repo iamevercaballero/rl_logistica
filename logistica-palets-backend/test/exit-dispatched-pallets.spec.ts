@@ -26,16 +26,22 @@ const noopCache = { delPattern: async () => {} } as unknown as CacheService;
 type LogCall = { entityType: string; eventType: string; description: string; metadata?: Record<string, unknown> };
 const logCalls: LogCall[] = [];
 const recordingUploads = {
-  log: async (
-    entityType: string,
-    _entityId: string,
-    eventType: string,
-    description: string,
-    _userId?: string,
-    _username?: string,
-    metadata?: Record<string, unknown>,
-  ) => {
-    logCalls.push({ entityType, eventType, description, metadata });
+  // `log` toma un objeto de opciones desde RL-A-05. El doble seguía con la firma
+  // posicional y, al ir casteado con `as unknown as`, TypeScript no lo marcaba:
+  // sólo lo detectó este test, cuando `entityType` empezó a recibir el objeto
+  // entero y el resto llegaba `undefined`.
+  log: async (evento: {
+    entityType: string;
+    eventType: string;
+    description: string;
+    metadata?: Record<string, unknown>;
+  }) => {
+    logCalls.push({
+      entityType: evento.entityType,
+      eventType: evento.eventType,
+      description: evento.description,
+      metadata: evento.metadata,
+    });
   },
 } as unknown as UploadsService;
 

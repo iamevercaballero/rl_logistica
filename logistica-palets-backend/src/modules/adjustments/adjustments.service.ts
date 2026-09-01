@@ -109,12 +109,14 @@ export class AdjustmentsService {
       request.totalQuantity = sumQuantities(lines.map((l) => l.totalQuantity));
       await manager.save(request);
 
+      await this.uploads.log({
+        entityType: 'ADJUSTMENT', entityId: request.id, eventType: 'CREADO',
+        description: `Solicitud ${request.code} creada como borrador — motivo: ${dto.reason}`,
+        userId, entityCode: request.code, manager,
+      });
+
       return { requestId: request.id, code: request.code };
     });
-
-    void this.uploads.log('ADJUSTMENT', result.requestId, 'CREADO',
-      `Solicitud ${result.code} creada como borrador — motivo: ${dto.reason}`,
-      userId, undefined, undefined, result.code);
 
     return result;
   }
@@ -170,12 +172,15 @@ export class AdjustmentsService {
       req.rejectReason = null;
       req.updatedAt = new Date();
       await manager.save(req);
+
+      await this.uploads.log({
+        entityType: 'ADJUSTMENT', entityId: req.id, eventType: 'ENVIADO_APROBACION',
+        description: `Solicitud ${req.code} enviada para aprobación`,
+        userId, entityCode: req.code, manager,
+      });
+
       return { requestId: req.id, code: req.code, status: req.status };
     });
-
-    void this.uploads.log('ADJUSTMENT', result.requestId, 'ENVIADO_APROBACION',
-      `Solicitud ${result.code} enviada para aprobación`,
-      userId, undefined, undefined, result.code);
 
     return result;
   }
@@ -239,6 +244,23 @@ export class AdjustmentsService {
         );
       }
 
+      await this.uploads.log({
+        entityType: 'ADJUSTMENT', entityId: id, eventType: 'APROBADO',
+        description: `Solicitud ${locked.code} aprobada — stock actualizado (${movementIds.length} movimiento(s))`,
+        userId, entityCode: locked.code, manager,
+      });
+
+      // Cierra el ciclo en la bitácora del movimiento original: hasta acá solo
+      // constaba la solicitud (ANULACION_SOLICITADA); sin este evento, quien mira
+      // la bitácora del movimiento nunca se entera de que la anulación se confirmó.
+      if (locked.originalMovementId) {
+        await this.uploads.log({
+          entityType: 'MOVEMENT', entityId: locked.originalMovementId, eventType: 'ANULADO',
+          description: `Anulación confirmada — aprobada como ${locked.code}`,
+          userId, entityCode: locked.code, manager,
+        });
+      }
+
       return { requestId: id, code: locked.code, movementIds, originalMovementId: locked.originalMovementId ?? null };
     });
 
@@ -246,19 +268,6 @@ export class AdjustmentsService {
     // ajuste en el depósito 02 no debe recalcular ni refrescar el 01.
     this.invalidateWarehouseCaches(req.warehouseId ?? null);
     this.events.emitStockUpdated({ warehouseId: req.warehouseId ?? null });
-
-    void this.uploads.log('ADJUSTMENT', id, 'APROBADO',
-      `Solicitud ${result.code} aprobada — stock actualizado (${result.movementIds.length} movimiento(s))`,
-      userId, undefined, undefined, result.code);
-
-    // Cierra el ciclo en la bitácora del movimiento original: hasta acá solo
-    // constaba la solicitud (ANULACION_SOLICITADA); sin este evento, quien mira
-    // la bitácora del movimiento nunca se entera de que la anulación se confirmó.
-    if (result.originalMovementId) {
-      void this.uploads.log('MOVEMENT', result.originalMovementId, 'ANULADO',
-        `Anulación confirmada — aprobada como ${result.code}`,
-        userId, undefined, undefined, result.code);
-    }
 
     return result;
   }
@@ -278,12 +287,15 @@ export class AdjustmentsService {
       req.rejectReason = dto.rejectReason.trim();
       req.updatedAt = new Date();
       await manager.save(req);
+
+      await this.uploads.log({
+        entityType: 'ADJUSTMENT', entityId: id, eventType: 'RECHAZADO',
+        description: `Solicitud rechazada — vuelve a borrador. Motivo: ${dto.rejectReason}`,
+        userId, entityCode: req.code, manager,
+      });
+
       return { requestId: req.id, code: req.code, status: req.status };
     });
-
-    void this.uploads.log('ADJUSTMENT', id, 'RECHAZADO',
-      `Solicitud rechazada — vuelve a borrador. Motivo: ${dto.rejectReason}`,
-      userId, undefined, undefined, result.code);
 
     return result;
   }
@@ -314,17 +326,19 @@ export class AdjustmentsService {
         );
       }
 
+      // El movimiento queda operable de nuevo — sin este evento, su bitácora se
+      // quedaría en "anulación solicitada" para siempre aunque en los hechos se
+      // haya cancelado y el movimiento siga vigente.
+      if (req.originalMovementId) {
+        await this.uploads.log({
+          entityType: 'MOVEMENT', entityId: req.originalMovementId, eventType: 'RECHAZADO',
+          description: `Anulación cancelada (${req.code}) — el movimiento sigue vigente`,
+          userId, entityCode: req.code, manager,
+        });
+      }
+
       return { requestId: req.id, code: req.code, originalMovementId: req.originalMovementId ?? null };
     });
-
-    // El movimiento queda operable de nuevo — sin este evento, su bitácora se
-    // quedaría en "anulación solicitada" para siempre aunque en los hechos se
-    // haya cancelado y el movimiento siga vigente.
-    if (result.originalMovementId) {
-      void this.uploads.log('MOVEMENT', result.originalMovementId, 'RECHAZADO',
-        `Anulación cancelada (${result.code}) — el movimiento sigue vigente`,
-        userId, undefined, undefined, result.code);
-    }
 
     return result;
   }

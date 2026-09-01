@@ -7,10 +7,12 @@ import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
 import { UsersModule } from '../users/users.module';
 import { AuthEvent } from './entities/auth-event.entity';
+import { RefreshSession } from './entities/refresh-session.entity';
+import { RefreshSessionCleanupService } from './refresh-session-cleanup.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([AuthEvent]),
+    TypeOrmModule.forFeature([AuthEvent, RefreshSession]),
     UsersModule,
     ConfigModule,
     JwtModule.registerAsync({
@@ -24,7 +26,7 @@ import { AuthEvent } from './entities/auth-event.entity';
       }),
     }),
   ],
-  providers: [AuthService, JwtStrategy],
+  providers: [AuthService, JwtStrategy, RefreshSessionCleanupService],
   controllers: [AuthController],
   exports: [AuthService],
 })

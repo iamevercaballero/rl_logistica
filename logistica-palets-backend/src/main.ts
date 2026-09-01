@@ -8,6 +8,7 @@ import cookieParser from 'cookie-parser';
 import { validateEnv } from './config/env.validation';
 import { parseTrustProxy } from './common/client-ip';
 import { corsOriginCallback } from './config/cors';
+import { AllExceptionsFilter } from './common/all-exceptions.filter';
 
 async function bootstrap() {
   // Fail-fast: en producción aborta si faltan secretos JWT (o son débiles).
@@ -42,6 +43,11 @@ async function bootstrap() {
   // CORS: en producción restringido a CORS_ORIGIN (lista separada por coma);
   // si la variable está vacía (dev), se refleja cualquier origen.
   app.enableCors({ origin: corsOriginCallback, credentials: true });
+
+  // Normaliza los errores y les agrega el id de correlación, para que un
+  // operador pueda dictar un código y se llegue directo a sus líneas de log.
+  // Los filtros de ruta (`@UseFilters`) siguen teniendo precedencia.
+  app.useGlobalFilters(new AllExceptionsFilter());
 
   app.useGlobalPipes(
     new ValidationPipe({

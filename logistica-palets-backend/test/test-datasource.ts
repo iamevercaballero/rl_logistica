@@ -30,6 +30,7 @@ import { PermissionsService } from '../src/modules/permissions/permissions.servi
 import { ROLE_PERMISSIONS_SEED } from '../src/modules/permissions/role-permissions.seed';
 import { IdempotencyKey } from '../src/common/idempotency/idempotency-key.entity';
 import { AuthEvent } from '../src/modules/auth/entities/auth-event.entity';
+import { RefreshSession } from '../src/modules/auth/entities/refresh-session.entity';
 import { applyAppendOnlyTriggers } from '../src/common/append-only';
 import {
   addConstraintIfMissing,
@@ -49,7 +50,7 @@ export const TEST_ENTITIES = [
   Product, Warehouse, Location, Stock, Lot, Pallet, Pila, Supplier, Destination, User, UserWarehouse,
   Movement, MovementDetail, LogisticsDocument, DocumentSequence, RegularizationLog,
   AdjustmentRequest, AdjustmentRequestLine, Attachment, DocumentEvent, SapStockSnapshot,
-  UserAuditLog, RolePermission, UserPermission, IdempotencyKey, AuthEvent,
+  UserAuditLog, RolePermission, UserPermission, IdempotencyKey, AuthEvent, RefreshSession,
 ];
 
 /** Tablas a vaciar entre tests (orden irrelevante por CASCADE). */
@@ -59,7 +60,7 @@ const TABLES = [
   'adjustment_request_lines', 'adjustment_requests',
   'attachments', 'document_events', 'document_sequences',
   'sap_stock_snapshots', 'user_warehouses', 'products', 'locations', 'warehouses', 'suppliers', 'destinations',
-  'user_audit_log', 'auth_events', 'role_permissions', 'user_permissions', 'users',
+  'user_audit_log', 'auth_events', 'refresh_sessions', 'role_permissions', 'user_permissions', 'users',
   'idempotency_keys',
 ];
 

@@ -19,7 +19,7 @@ export const AUTH_EVENT_TYPES = ['LOGIN_SUCCESS', 'LOGIN_FAILED'] as const;
 export type AuthEventType = (typeof AUTH_EVENT_TYPES)[number];
 
 /** Motivo real del rechazo. Sólo vive acá: la respuesta al cliente es genérica. */
-export const AUTH_FAILURE_REASONS = ['USER_NOT_FOUND', 'USER_INACTIVE', 'BAD_PASSWORD', 'ACCOUNT_LOCKED'] as const;
+export const AUTH_FAILURE_REASONS = ['USER_NOT_FOUND', 'USER_INACTIVE', 'BAD_PASSWORD', 'ACCOUNT_LOCKED', 'REFRESH_REUSED'] as const;
 export type AuthFailureReason = (typeof AUTH_FAILURE_REASONS)[number];
 
 @Index('idx_auth_event_created_at', ['createdAt'])

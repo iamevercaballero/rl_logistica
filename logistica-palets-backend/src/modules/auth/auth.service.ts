@@ -1,11 +1,13 @@
 import { HttpException, HttpStatus, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { BCRYPT_COST, UsersService } from '../users/users.service';
 import { wasIssuedBeforePasswordChange } from './token-freshness';
 import { AuthEvent, type AuthEventType, type AuthFailureReason } from './entities/auth-event.entity';
+import { RefreshSession } from './entities/refresh-session.entity';
+import { randomUUID } from 'node:crypto';
 
 /**
  * Bloqueo de cuenta por intentos fallidos (RL-M-11).
@@ -42,6 +44,9 @@ const VENTANA_BLOQUEO_MS = 15 * 60_000;
  * veces más LENTA. Por eso los hashes viejos se reescriben al primer ingreso
  * exitoso — ver `rehashSiHaceFalta`.
  */
+/** Vida del refresh token, en milisegundos. Espeja `JWT_REFRESH_EXPIRES_IN`. */
+const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 const HASH_DE_DESCARTE = '$2b$12$C6UzMDM.H6dfI/f/IKcEe.6vfoRfJUcqPnhAvGDRSsIzKQfLzM7Ei';
 
 /** Identidad de red del intento, resuelta por el controlador. */
@@ -60,7 +65,75 @@ export class AuthService {
     private readonly jwt: JwtService,
     @InjectRepository(AuthEvent)
     private readonly authEvents: Repository<AuthEvent>,
+    @InjectRepository(RefreshSession)
+    private readonly sessions: Repository<RefreshSession>,
   ) {}
+
+  /**
+   * Abre una sesión de refresco y devuelve el token que la representa.
+   *
+   * El `jti` es el id de la fila: sin una fila viva que le corresponda, el token
+   * no vale nada. Eso es lo que convierte el logout en una revocación real.
+   */
+  private async emitirRefresh(
+    user: { id: string; username: string; role: string },
+    contexto: AuthAttemptContext,
+    familyId?: string,
+  ): Promise<{ token: string; session: RefreshSession }> {
+    const expiresAt = new Date(Date.now() + REFRESH_TTL_MS);
+    const session = await this.sessions.save(
+      this.sessions.create({
+        userId: user.id,
+        familyId: familyId ?? randomUUID(),
+        expiresAt,
+        ip: contexto.ip ?? null,
+        userAgent: contexto.userAgent ?? null,
+      }),
+    );
+    const token = await this.jwt.signAsync(
+      { sub: user.id, username: user.username, role: user.role, jti: session.id },
+      { secret: this.refreshSecret, expiresIn: this.refreshExpiresIn as any },
+    );
+    return { token, session };
+  }
+
+  /** Revoca una sesión concreta. */
+  private async revocar(id: string, reason: 'ROTATED' | 'LOGOUT' | 'REUSE_DETECTED', replacedById?: string) {
+    await this.sessions.update(
+      { id, revokedAt: IsNull() },
+      { revokedAt: new Date(), revokedReason: reason, replacedById: replacedById ?? null },
+    );
+  }
+
+  /**
+   * Corta la cadena entera de rotación.
+   *
+   * Presentar un refresh token que ya fue rotado significa que hay dos copias en
+   * circulación: la legítima —que ya rotó— y otra. No se puede saber cuál es
+   * cuál, así que se cierran todas las sesiones de esa familia y el usuario
+   * vuelve a entrar con su contraseña. Es la respuesta estándar y es la única
+   * que no le deja acceso a quien robó el token.
+   */
+  private async cortarFamilia(familyId: string): Promise<void> {
+    await this.sessions.update(
+      { familyId, revokedAt: IsNull() },
+      { revokedAt: new Date(), revokedReason: 'REUSE_DETECTED' },
+    );
+  }
+
+  /** Cierra la sesión que representa este token. Idempotente. */
+  async logout(refreshToken: string | undefined): Promise<void> {
+    if (!refreshToken) return;
+    try {
+      const payload = await this.jwt.verifyAsync<{ jti?: string }>(refreshToken, {
+        secret: this.refreshSecret,
+      });
+      if (payload.jti) await this.revocar(payload.jti, 'LOGOUT');
+    } catch {
+      // Un token inválido o vencido no tiene nada que revocar; cerrar sesión no
+      // puede fallar por eso.
+    }
+  }
 
   /* ── Access token config (uses JwtModule defaults) ─────────────────────── */
 
@@ -214,14 +287,11 @@ export class AuthService {
 
     const payload = { sub: user.id, username: user.username, role: user.role };
 
-    const [access_token, refresh_token] = await Promise.all([
+    const [access_token, refresh] = await Promise.all([
       this.jwt.signAsync(payload),
-      this.jwt.signAsync(payload, {
-        secret: this.refreshSecret,
-        // Cast needed: @nestjs/jwt uses branded StringValue but accepts plain strings at runtime
-        expiresIn: this.refreshExpiresIn as any,
-      }),
+      this.emitirRefresh(user, contexto),
     ]);
+    const refresh_token = refresh.token;
 
     // Best-effort: un fallo acá no debe impedir el login.
     void this.usersService.touchLastLogin(user.id).catch(() => {});
@@ -243,12 +313,15 @@ export class AuthService {
    * Validate a refresh token and issue a new access token.
    * Throws 401 if the token is missing, expired, or invalid.
    */
-  async refresh(refreshToken: string | undefined): Promise<{ access_token: string }> {
+  async refresh(
+    refreshToken: string | undefined,
+    contexto: AuthAttemptContext = {},
+  ): Promise<{ access_token: string; refresh_token: string }> {
     if (!refreshToken) {
       throw new UnauthorizedException('Refresh token ausente');
     }
 
-    let payload: { sub: string; username: string; role: string; iat: number };
+    let payload: { sub: string; username: string; role: string; iat: number; jti?: string };
     try {
       payload = await this.jwt.verifyAsync(refreshToken, {
         secret: this.refreshSecret,
@@ -268,12 +341,45 @@ export class AuthService {
       throw new UnauthorizedException('La sesión ya no es válida: la contraseña cambió o se cerraron las sesiones.');
     }
 
+    // ── Sesión: el token vale sólo mientras exista su fila viva ─────────────
+    // Un token sin `jti` es de antes de esta feature; se rechaza para que no
+    // quede una vía que evite la revocación.
+    if (!payload.jti) {
+      throw new UnauthorizedException('La sesión ya no es válida: volvé a iniciar sesión.');
+    }
+    const session = await this.sessions.findOne({ where: { id: payload.jti } });
+    if (!session || session.userId !== user.id) {
+      throw new UnauthorizedException('Refresh token inválido o expirado');
+    }
+
+    if (session.revokedAt) {
+      // Presentar un token ya rotado significa que hay dos copias en
+      // circulación. No se puede saber cuál es la legítima, así que se cierra la
+      // familia entera y el usuario vuelve a entrar con su contraseña.
+      await this.cortarFamilia(session.familyId);
+      await this.registrarIntento('LOGIN_FAILED', user.username, user.id, 'REFRESH_REUSED', contexto);
+      this.logger.warn(
+        `Reuso de refresh token detectado (usuario ${user.id}): se cerraron todas sus sesiones.`,
+      );
+      throw new UnauthorizedException('La sesión ya no es válida: volvé a iniciar sesión.');
+    }
+
+    if (session.expiresAt.getTime() <= Date.now()) {
+      throw new UnauthorizedException('Refresh token inválido o expirado');
+    }
+
+    // Rotación: cada refresco entrega un token nuevo y deja el anterior
+    // inservible, así que una copia robada deja de servir en cuanto el usuario
+    // legítimo refresca — y ese uso queda detectado arriba.
+    const nueva = await this.emitirRefresh(user, contexto, session.familyId);
+    await this.revocar(session.id, 'ROTATED', nueva.session.id);
+
     const access_token = await this.jwt.signAsync({
-      sub: payload.sub,
-      username: payload.username,
-      role: payload.role,
+      sub: user.id,
+      username: user.username,
+      role: user.role,
     });
 
-    return { access_token };
+    return { access_token, refresh_token: nueva.token };
   }
 }

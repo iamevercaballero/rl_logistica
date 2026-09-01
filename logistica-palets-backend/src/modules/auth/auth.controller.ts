@@ -75,15 +75,34 @@ export class AuthController {
    * Called automatically by the frontend axios interceptor on 401 errors.
    */
   @Post('refresh')
-  async refresh(@Req() req: Request) {
+  async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const refreshToken = req.cookies?.[REFRESH_COOKIE] as string | undefined;
-    return this.auth.refresh(refreshToken);
+    const { access_token, refresh_token } = await this.auth.refresh(refreshToken, {
+      ip: clientIp(req), userAgent: userAgent(req), requestId: requestId(req),
+    });
+
+    // Rotación: cada refresco entrega una cookie nueva y deja la anterior
+    // inservible. Sin esto, el token viejo seguiría en el navegador y el
+    // siguiente refresco lo presentaría como si fuera un reuso.
+    res.cookie(REFRESH_COOKIE, refresh_token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+      maxAge: REFRESH_COOKIE_MAX_AGE,
+      path: REFRESH_COOKIE_PATH,
+    });
+
+    return { access_token };
   }
 
   // ── Logout ─────────────────────────────────────────────────────────────────
 
   @Post('logout')
-  logout(@Res({ passthrough: true }) res: Response) {
+  async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    // Revoca la sesión, no sólo la cookie: hasta acá cerrar sesión no cerraba
+    // nada para quien tuviera una copia del token, que seguía sirviendo siete
+    // días.
+    await this.auth.logout(req.cookies?.[REFRESH_COOKIE] as string | undefined);
     res.clearCookie(REFRESH_COOKIE, { path: REFRESH_COOKIE_PATH });
     return { loggedOut: true };
   }

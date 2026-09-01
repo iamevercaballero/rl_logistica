@@ -67,6 +67,31 @@ alcanza con permitir 22.
 > la IP del VPS, ponelos en *DNS only* (nube gris) la primera vez para que Caddy
 > emita los certificados, y recién después activá el proxy en *Full (strict)*.
 
+## Sesiones de refresco (RL-M-02) — corta las sesiones abiertas
+
+`CreateRefreshSessions` crea `refresh_sessions`: una fila por cada refresh token
+vigente, cuyo `id` viaja dentro del token. Sin fila viva, el token no vale — eso
+es lo que convierte `logout` en una revocación real (antes sólo borraba la
+cookie y el token seguía sirviendo siete días).
+
+**Al desplegar, todas las sesiones abiertas se cortan.** Los tokens emitidos
+antes no llevan ese identificador y se rechazan a propósito: admitirlos dejaría
+abierta una vía que evita la revocación. La gente vuelve a iniciar sesión una
+vez. Conviene desplegar fuera del horario de operación.
+
+Desde ahora cada refresco entrega un token nuevo y deja el anterior inservible.
+Si alguien presenta un token ya rotado —dos copias en circulación— se cierran
+todas las sesiones de esa cadena y queda registrado:
+
+```bash
+docker compose -f docker-compose.prod.yml exec db psql -U "$DB_USERNAME" -d "$DB_DATABASE" -c "SELECT \"createdAt\", username, ip FROM auth_events WHERE reason = 'REFRESH_REUSED' ORDER BY \"createdAt\" DESC LIMIT 10;"
+```
+
+Si aparecen filas ahí, no es un falso positivo por sí solo —una app móvil con
+reintentos agresivos puede provocarlo— pero merece mirarse junto con la IP.
+
+Las sesiones vencidas se purgan solas a las 4 de la mañana.
+
 ## Contenedores sin root y con límites (RL-A-10)
 
 Los contenedores corrían **todos como root** y sin ningún límite de recursos. El

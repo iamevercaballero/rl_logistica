@@ -20,6 +20,7 @@ import * as bcrypt from 'bcrypt';
 import { AuthService } from '../src/modules/auth/auth.service';
 import { UsersService } from '../src/modules/users/users.service';
 import { AuthEvent } from '../src/modules/auth/entities/auth-event.entity';
+import { RefreshSession } from '../src/modules/auth/entities/refresh-session.entity';
 import { User } from '../src/modules/users/entities/user.entity';
 import { UserAuditLog } from '../src/modules/users/entities/user-audit-log.entity';
 import { BCRYPT_COST } from '../src/modules/users/users.service';
@@ -62,7 +63,10 @@ beforeAll(async () => {
   ds = createTestDataSource();
   await ds.initialize();
   const users = new UsersService(ds.getRepository(User), ds.getRepository(UserAuditLog), ds);
-  auth = new AuthService(users, new JwtService({ secret: 'secreto-de-prueba' }), ds.getRepository(AuthEvent));
+  auth = new AuthService(
+    users, new JwtService({ secret: 'secreto-de-prueba' }),
+    ds.getRepository(AuthEvent), ds.getRepository(RefreshSession),
+  );
 }, 60_000);
 
 afterAll(async () => {

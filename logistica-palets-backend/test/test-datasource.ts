@@ -79,6 +79,18 @@ export function createTestDataSource(): DataSource {
     entities: TEST_ENTITIES,
     synchronize: true,
     logging: false,
+    // Misma zona que la aplicación y que el data-source del CLI. Sin esto, la
+    // suite corría contra una base en UTC mientras el proceso de Node está en
+    // UTC-3: TypeORM parsea `timestamp without time zone` con la zona del
+    // proceso, así que todo valor puesto por un default de la base
+    // —`passwordChangedAt`, `createdAt`— volvía tres horas adelantado.
+    //
+    // No es cosmético: con eso, un token recién emitido parecía anterior al
+    // último cambio de contraseña y `wasIssuedBeforePasswordChange` lo daba por
+    // vencido. Ningún test lo había ejercitado contra la base hasta ahora, así
+    // que el desfase pasó inadvertido — y era la peor clase de test verde: uno
+    // que corre contra un entorno que no es el de producción.
+    extra: { options: '-c timezone=Etc/GMT+3' },
   });
 }
 

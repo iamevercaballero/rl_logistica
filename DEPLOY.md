@@ -65,6 +65,44 @@ alcanza con permitir 22.
 > la IP del VPS, ponelos en *DNS only* (nube gris) la primera vez para que Caddy
 > emita los certificados, y recién después activá el proxy en *Full (strict)*.
 
+## Bitácora de accesos y append-only (RL-M-09)
+
+`CreateAuthEventsAndAppendOnly` crea `auth_events` —el registro de intentos de
+login, con IP real, user-agent e id de correlación— y hace que la base **haga
+cumplir** el append-only sobre las tres bitácoras (`document_events`,
+`user_audit_log`, `auth_events`) con un trigger que rechaza `UPDATE` y `DELETE`.
+Hasta acá era una convención escrita en un comentario.
+
+**`TRUST_PROXY=1` es obligatorio.** Está explicado en `.env.prod.example` y lo
+exige `check-env.sh`: sin eso la conexión la abre el proxy y `req.ip` es la
+misma dirección para todos, con lo que la bitácora registra la IP del túnel y
+el límite de 5 intentos de login por minuto "por IP" pasa a ser de 5 por minuto
+para toda la empresa.
+
+Verificación, con el sistema arriba: entrá con una contraseña incorrecta a
+propósito y revisá que quede la fila con **tu** IP, no la del contenedor.
+
+```bash
+docker compose -f docker-compose.prod.yml exec db psql -U "$DB_USERNAME" -d "$DB_DATABASE" -c "SELECT \"createdAt\", \"eventType\", username, reason, ip FROM auth_events ORDER BY \"createdAt\" DESC LIMIT 5;"
+```
+
+Consultas útiles para investigar un incidente:
+
+```bash
+docker compose -f docker-compose.prod.yml exec db psql -U "$DB_USERNAME" -d "$DB_DATABASE" -c "SELECT ip, COUNT(*) FROM auth_events WHERE \"eventType\"='LOGIN_FAILED' AND \"createdAt\" > now() - interval '24 hours' GROUP BY ip ORDER BY 2 DESC LIMIT 10;"
+```
+
+**Purga.** La tabla no se limpia sola, a propósito: una bitácora que la
+aplicación puede borrar no prueba nada. El volumen es chico (un login por
+persona y turno), pero si alguna vez hay que podarla es un acto deliberado de
+quien administra la base:
+
+```sql
+ALTER TABLE "auth_events" DISABLE TRIGGER "trg_auth_events_append_only";
+DELETE FROM "auth_events" WHERE "createdAt" < now() - interval '2 years';
+ALTER TABLE "auth_events" ENABLE TRIGGER "trg_auth_events_append_only";
+```
+
 ## Migración de permisos finos (RL-M-10) — orden obligatorio
 
 `AddMissingRolePermissions` incorpora proveedores, destinos, adjuntos, alertas y

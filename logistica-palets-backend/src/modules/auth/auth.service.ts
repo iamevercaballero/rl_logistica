@@ -1,14 +1,28 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { UsersService } from '../users/users.service';
 import { wasIssuedBeforePasswordChange } from './token-freshness';
+import { AuthEvent, type AuthEventType, type AuthFailureReason } from './entities/auth-event.entity';
+
+/** Identidad de red del intento, resuelta por el controlador. */
+export type AuthAttemptContext = {
+  ip?: string | null;
+  userAgent?: string | null;
+  requestId?: string | null;
+};
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly usersService: UsersService,
     private readonly jwt: JwtService,
+    @InjectRepository(AuthEvent)
+    private readonly authEvents: Repository<AuthEvent>,
   ) {}
 
   /* ── Access token config (uses JwtModule defaults) ─────────────────────── */
@@ -28,16 +42,65 @@ export class AuthService {
 
   /* ── Public methods ─────────────────────────────────────────────────────── */
 
-  async login(username: string, password: string) {
+  /**
+   * Registra el intento en `auth_events`.
+   *
+   * Es best-effort a propósito, y es una excepción consciente al criterio de
+   * RL-A-05 —donde la auditoría va dentro de la transacción del negocio—. Acá no
+   * hay ninguna operación que revertir: si la escritura falla, negar el login no
+   * "deshace" nada, sólo deja a la gente afuera. El fallo se registra en el log
+   * de la aplicación, que es donde se va a ver que la bitácora dejó de escribir.
+   */
+  private async registrarIntento(
+    eventType: AuthEventType,
+    username: string,
+    userId: string | null,
+    reason: AuthFailureReason | null,
+    contexto: AuthAttemptContext,
+  ): Promise<void> {
+    try {
+      await this.authEvents.save(
+        this.authEvents.create({
+          eventType,
+          // Recortado al largo de la columna: el nombre lo elige quien intenta.
+          username: (username ?? '').slice(0, 120),
+          userId,
+          reason,
+          ip: contexto.ip ?? null,
+          userAgent: contexto.userAgent ?? null,
+          requestId: contexto.requestId ?? null,
+        }),
+      );
+    } catch (error) {
+      this.logger.error(
+        `No se pudo registrar el intento de login (${eventType}): ${(error as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * La respuesta es siempre la misma —"Credenciales inválidas"— para no
+   * confirmarle a quien prueba si un usuario existe. El motivo real queda sólo
+   * en `auth_events`, que es donde sí hace falta para investigar.
+   */
+  async login(username: string, password: string, contexto: AuthAttemptContext = {}) {
     const user = await this.usersService.findByUsername(username);
-    if (!user || !user.active) {
+    if (!user) {
+      await this.registrarIntento('LOGIN_FAILED', username, null, 'USER_NOT_FOUND', contexto);
+      throw new UnauthorizedException('Credenciales inválidas');
+    }
+    if (!user.active) {
+      await this.registrarIntento('LOGIN_FAILED', username, user.id, 'USER_INACTIVE', contexto);
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) {
+      await this.registrarIntento('LOGIN_FAILED', username, user.id, 'BAD_PASSWORD', contexto);
       throw new UnauthorizedException('Credenciales inválidas');
     }
+
+    await this.registrarIntento('LOGIN_SUCCESS', username, user.id, null, contexto);
 
     const payload = { sub: user.id, username: user.username, role: user.role };
 

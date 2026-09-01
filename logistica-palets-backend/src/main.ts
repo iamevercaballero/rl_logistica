@@ -1,10 +1,12 @@
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { Logger } from 'nestjs-pino';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { validateEnv } from './config/env.validation';
+import { parseTrustProxy } from './common/client-ip';
 
 async function bootstrap() {
   // Fail-fast: en producción aborta si faltan secretos JWT (o son débiles).
@@ -12,10 +14,21 @@ async function bootstrap() {
   validateEnv();
 
   // bufferLogs: true ensures Pino captures early boot messages
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
 
   // Replace NestJS default logger with Pino
   app.useLogger(app.get(Logger));
+
+  // Detrás de un proxy (túnel de Cloudflare, Caddy, nginx) la conexión la abre
+  // el proxy, así que sin esto `req.ip` es siempre la misma dirección para todos
+  // los usuarios: el registro de accesos queda inservible y el límite de tasa
+  // "por IP" pasa a ser un presupuesto compartido por toda la empresa.
+  //
+  // Se activa sólo con TRUST_PROXY declarado. No tiene default activo a
+  // propósito: prendido donde el backend sí recibe conexiones directas,
+  // cualquiera podría falsificar su IP con una cabecera y saltear el límite.
+  const trustProxy = parseTrustProxy();
+  if (trustProxy !== null) app.set('trust proxy', trustProxy);
 
   // Parse cookies (needed for HttpOnly refresh token)
   app.use(cookieParser());

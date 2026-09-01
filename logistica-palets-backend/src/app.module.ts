@@ -5,6 +5,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { FriendlyThrottlerGuard } from './common/friendly-throttler.guard';
 import { ScheduleModule } from '@nestjs/schedule';
 import { LoggerModule } from 'nestjs-pino';
+import { randomUUID } from 'node:crypto';
 import { APP_GUARD } from '@nestjs/core';
 import { CacheModule } from './modules/cache/cache.module';
 import { EventsModule } from './modules/events/events.module';
@@ -50,6 +51,24 @@ import { AppController } from './app.controller';
               }
             : undefined,
         base: { service: 'rl-logistica', env: process.env.NODE_ENV },
+        /**
+         * Id de correlación. El default de pino es un contador por proceso, que
+         * se reinicia con el contenedor y se repite entre réplicas: dos pedidos
+         * distintos terminan con el mismo id y no hay forma de saber cuál es
+         * cuál. Un UUID no tiene ese problema.
+         *
+         * Se respeta el `X-Request-Id` entrante si viene de un proxy —así la
+         * traza se puede seguir desde el borde— y se devuelve siempre en la
+         * respuesta, para que el operador que ve un error pueda dictarlo y se
+         * llegue directo a sus líneas de log.
+         */
+        genReqId: (req: { headers?: Record<string, unknown> }, res: { setHeader: (k: string, v: string) => void }) => {
+          const entrante = req.headers?.['x-request-id'];
+          const id =
+            typeof entrante === 'string' && /^[\w.-]{8,64}$/.test(entrante) ? entrante : randomUUID();
+          res.setHeader('X-Request-Id', id);
+          return id;
+        },
         // Nunca loguear tokens JWT ni cookies en los headers
         redact: {
           paths: ['req.headers.authorization', 'req.headers.cookie'],

@@ -39,9 +39,9 @@ echo
 # TUNNEL_TOKEN; con Caddy hacen falta los dominios y el mail de ACME. Se detecta
 # por lo que el archivo ya trae, en vez de pedir un flag que alguien va a olvidar.
 if tr -d '' < "$ENV_FILE" | grep -qE '^TUNNEL_TOKEN='; then
-  PROXY="cloudflare-tunnel"; REQ_PROXY=(TUNNEL_TOKEN)
+  PROXY="cloudflare-tunnel"; REQ_PROXY=(TUNNEL_TOKEN TRUST_PROXY)
 else
-  PROXY="caddy"; REQ_PROXY=(APP_DOMAIN API_DOMAIN ACME_EMAIL)
+  PROXY="caddy"; REQ_PROXY=(APP_DOMAIN API_DOMAIN ACME_EMAIL TRUST_PROXY)
 fi
 echo "Proxy detectado: $PROXY"
 echo
@@ -121,6 +121,19 @@ if [ "$PROXY" = "caddy" ]; then
     *http*) rojo "APP_DOMAIN y API_DOMAIN van sin esquema (app.ejemplo.com, no https://...)" ;;
   esac
 fi
+
+# TRUST_PROXY: las dos arquitecturas ponen un proxy delante del backend, asi que
+# sin esto `req.ip` es siempre la misma direccion -la del proxy- para todos los
+# usuarios. El registro de accesos queda inservible y, peor, el limite de 5
+# intentos de login por minuto "por IP" pasa a ser de 5 por minuto para toda la
+# empresa: al tercer error de un operador, el resto se queda afuera.
+case "$(val TRUST_PROXY)" in
+  ""|0|false) rojo "TRUST_PROXY debe estar activo (1) detras de $PROXY: si no, el limite de intentos de login lo comparten todos los usuarios" ;;
+  true) verde "TRUST_PROXY activo (true)" ;;
+  *[!0-9]*) ambar "TRUST_PROXY no es un numero de saltos ni true: revisa que Express lo entienda" ;;
+  *) verde "TRUST_PROXY activo ($(val TRUST_PROXY) salto/s)" ;;
+esac
+echo
 
 # Vale para las dos arquitecturas: el frontend se compila contra VITE_API_URL y
 # el backend sólo acepta los orígenes de CORS_ORIGIN. Si no coinciden con los

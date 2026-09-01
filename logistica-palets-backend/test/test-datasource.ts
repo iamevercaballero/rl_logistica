@@ -29,6 +29,8 @@ import { UserPermission } from '../src/modules/permissions/entities/user-permiss
 import { PermissionsService } from '../src/modules/permissions/permissions.service';
 import { ROLE_PERMISSIONS_SEED } from '../src/modules/permissions/role-permissions.seed';
 import { IdempotencyKey } from '../src/common/idempotency/idempotency-key.entity';
+import { AuthEvent } from '../src/modules/auth/entities/auth-event.entity';
+import { applyAppendOnlyTriggers } from '../src/common/append-only';
 import {
   addConstraintIfMissing,
   INVENTORY_CHECKS,
@@ -47,7 +49,7 @@ export const TEST_ENTITIES = [
   Product, Warehouse, Location, Stock, Lot, Pallet, Pila, Supplier, Destination, User, UserWarehouse,
   Movement, MovementDetail, LogisticsDocument, DocumentSequence, RegularizationLog,
   AdjustmentRequest, AdjustmentRequestLine, Attachment, DocumentEvent, SapStockSnapshot,
-  UserAuditLog, RolePermission, UserPermission, IdempotencyKey,
+  UserAuditLog, RolePermission, UserPermission, IdempotencyKey, AuthEvent,
 ];
 
 /** Tablas a vaciar entre tests (orden irrelevante por CASCADE). */
@@ -57,7 +59,7 @@ const TABLES = [
   'adjustment_request_lines', 'adjustment_requests',
   'attachments', 'document_events', 'document_sequences',
   'sap_stock_snapshots', 'user_warehouses', 'products', 'locations', 'warehouses', 'suppliers', 'destinations',
-  'user_audit_log', 'role_permissions', 'user_permissions', 'users',
+  'user_audit_log', 'auth_events', 'role_permissions', 'user_permissions', 'users',
   'idempotency_keys',
 ];
 
@@ -125,6 +127,10 @@ let constraintsAplicadas = false;
 export async function resetDb(ds: DataSource): Promise<void> {
   if (!constraintsAplicadas) {
     await applyInventoryConstraints(ds);
+    // Las bitácoras son append-only por trigger en producción. Sin esto, un test
+    // podría borrar o editar una fila de auditoría y pasar en verde.
+    // `TRUNCATE` —lo que usa este mismo reset— no dispara triggers de fila.
+    await applyAppendOnlyTriggers(ds);
     constraintsAplicadas = true;
   }
   await ds.query(`TRUNCATE TABLE ${TABLES.map((t) => `"${t}"`).join(', ')} RESTART IDENTITY CASCADE`);

@@ -1,5 +1,6 @@
 import { ExecutionContext, Injectable } from '@nestjs/common';
 import { ThrottlerGuard, ThrottlerLimitDetail } from '@nestjs/throttler';
+import { clientIp, type ProxyRequest } from './client-ip';
 
 /**
  * ThrottlerGuard con mensajes para el operador, no para el desarrollador.
@@ -11,6 +12,20 @@ import { ThrottlerGuard, ThrottlerLimitDetail } from '@nestjs/throttler';
  */
 @Injectable()
 export class FriendlyThrottlerGuard extends ThrottlerGuard {
+  /**
+   * Clave de conteo: la IP **real** del cliente.
+   *
+   * El `getTracker` de la librería devuelve `req.ip`, que detrás del túnel de
+   * Cloudflare es la IP del contenedor `cloudflared` — la misma para todo el
+   * mundo. Con eso, el límite de 5 intentos de login por minuto "por IP" pasa a
+   * ser de 5 por minuto para toda la empresa: al tercer error de un operador,
+   * el resto se queda afuera. Y al revés, los intentos de un atacante se
+   * mezclan con el tráfico legítimo en el mismo presupuesto.
+   */
+  protected async getTracker(req: ProxyRequest): Promise<string> {
+    return clientIp(req) ?? 'desconocida';
+  }
+
   protected async getErrorMessage(
     context: ExecutionContext,
     _detail: ThrottlerLimitDetail,

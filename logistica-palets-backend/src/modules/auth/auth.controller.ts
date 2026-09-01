@@ -11,6 +11,7 @@ import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import { clientIp, requestId, userAgent } from '../../common/client-ip';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { UsersService } from '../users/users.service';
@@ -44,10 +45,14 @@ export class AuthController {
   async login(
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) res: Response,
+    @Req() req: Request,
   ) {
+    // La identidad de red se resuelve acá y no en el servicio: el servicio no
+    // tiene por qué saber de Express, y así queda probable con un objeto plano.
     const { access_token, refresh_token, user } = await this.auth.login(
       dto.username,
       dto.password,
+      { ip: clientIp(req), userAgent: userAgent(req), requestId: requestId(req) },
     );
 
     // Store refresh token in an HttpOnly cookie — not accessible via JavaScript

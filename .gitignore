@@ -48,6 +48,14 @@ coverage/
 .nyc_output/
 
 # Adjuntos subidos por usuarios (el backend crea el directorio en runtime y
-# en Docker lo cubre un volumen; nunca deben versionarse)
-uploads/
+# en Docker lo cubre un volumen; nunca deben versionarse).
+#
+# La ruta va anclada. Un `uploads/` suelto matchea cualquier directorio con ese
+# nombre a cualquier profundidad, incluido `src/modules/uploads/`, que es código:
+# los archivos que ya estaban versionados seguían funcionando —.gitignore no
+# afecta a lo ya rastreado— pero todo archivo nuevo del módulo se ignoraba en
+# silencio. Se commiteaba, se pusheaba, y el build se rompía en CI porque el
+# archivo nunca había salido de la máquina de quien lo escribió.
+/logistica-palets-backend/uploads/
+/uploads/
 

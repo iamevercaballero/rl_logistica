@@ -7,12 +7,16 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { createReadStream, existsSync, mkdirSync, unlinkSync } from 'fs';
-import { join } from 'path';
+import { join, resolve, sep } from 'path';
 import { Attachment, AttachmentCategory, AttachmentEntityType } from './entities/attachment.entity';
 import { DocumentEvent, DocumentEventType } from './entities/document-event.entity';
+import {
+  attachmentMimeType,
+  MAX_ATTACHMENT_SIZE,
+  UNSUPPORTED_ATTACHMENT_MESSAGE,
+} from './attachment-types';
 
 const UPLOADS_ROOT = join(process.cwd(), 'uploads');
-const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
 
 @Injectable()
 export class UploadsService {
@@ -27,6 +31,33 @@ export class UploadsService {
   //  ADJUNTOS
   // ─────────────────────────────────────────────────────────
 
+  /**
+   * Resuelve `filePath` bajo `uploads/` y confirma que no se escapó del directorio.
+   *
+   * Hoy `filePath` siempre lo genera multer (`uuid` + extensión de la lista blanca),
+   * así que no hay forma de que apunte afuera. La comprobación existe para que siga
+   * siendo verdad si mañana alguien inserta un adjunto por otra vía: es la
+   * diferencia entre un invariante y una casualidad.
+   */
+  private rutaDentroDeUploads(filePath: string): string {
+    const full = resolve(UPLOADS_ROOT, filePath);
+    const raiz = resolve(UPLOADS_ROOT);
+    if (full !== raiz && !full.startsWith(raiz + sep)) {
+      throw new NotFoundException('Archivo no encontrado.');
+    }
+    return full;
+  }
+
+  /** Borra el archivo recién escrito cuando la validación posterior lo rechaza. */
+  private descartarArchivo(path?: string): void {
+    if (!path) return;
+    try {
+      if (existsSync(path)) unlinkSync(path);
+    } catch {
+      /* si ya no está, mejor */
+    }
+  }
+
   async saveAttachment(
     file: Express.Multer.File,
     dto: {
@@ -38,18 +69,35 @@ export class UploadsService {
     userId: string,
     username?: string,
   ) {
-    if (!dto.name?.trim()) {
-      throw new BadRequestException('El nombre del archivo es obligatorio.');
+    // El MIME sale de la extensión, no de `file.mimetype`: ese lo declara quien
+    // sube el archivo y se devolvía tal cual en el `Content-Type` de la descarga.
+    // multer ya filtró por extensión; esto es el segundo candado, para que ningún
+    // otro camino de llamada pueda guardar un tipo arbitrario.
+    const mimeType = attachmentMimeType(file.originalname);
+    if (!mimeType) {
+      this.descartarArchivo(file.path);
+      throw new BadRequestException(UNSUPPORTED_ATTACHMENT_MESSAGE);
     }
-    if (file.size > MAX_FILE_SIZE) {
-      throw new BadRequestException('El archivo supera el límite de 20 MB.');
+
+    // Backstop del límite de multer: si alguna vía dejara pasar un archivo más
+    // grande, no queda registrado ni ocupando disco.
+    if (file.size > MAX_ATTACHMENT_SIZE) {
+      this.descartarArchivo(file.path);
+      throw new BadRequestException(
+        `El archivo supera el límite de ${Math.round(MAX_ATTACHMENT_SIZE / (1024 * 1024))} MB.`,
+      );
+    }
+
+    if (!dto.name?.trim()) {
+      this.descartarArchivo(file.path);
+      throw new BadRequestException('El nombre del archivo es obligatorio.');
     }
 
     const attachment = this.attachRepo.create({
       name: dto.name.trim(),
       originalName: file.originalname,
       category: dto.category,
-      mimeType: file.mimetype,
+      mimeType,
       fileSize: file.size,
       filePath: file.path.replace(UPLOADS_ROOT + '/', '').replace(UPLOADS_ROOT + '\\', ''),
       entityType: dto.entityType,
@@ -82,14 +130,23 @@ export class UploadsService {
     const attachment = await this.attachRepo.findOne({ where: { id } });
     if (!attachment) throw new NotFoundException('Archivo no encontrado.');
 
-    const fullPath = join(UPLOADS_ROOT, attachment.filePath);
+    const fullPath = this.rutaDentroDeUploads(attachment.filePath);
     if (!existsSync(fullPath)) {
       throw new NotFoundException('El archivo no existe en el servidor.');
     }
 
+    // El MIME se vuelve a derivar de la extensión en cada lectura, en vez de
+    // confiar en la columna. Los adjuntos subidos antes de este cambio guardaron
+    // el `Content-Type` que declaró el cliente, así que uno viejo con `text/html`
+    // seguiría sirviéndose como documento. Derivarlo acá cubre esas filas sin
+    // necesitar una migración de datos.
+    const mimeType = attachmentMimeType(attachment.originalName);
+
     return {
       stream: new StreamableFile(createReadStream(fullPath)),
-      mimeType: attachment.mimeType,
+      // Extensión no reconocida (sólo posible en filas anteriores a la lista
+      // blanca): tipo genérico, que el navegador no renderiza.
+      mimeType: mimeType ?? 'application/octet-stream',
       filename: attachment.originalName,
     };
   }
@@ -101,10 +158,9 @@ export class UploadsService {
     // Solo el creador o un MANAGER/ADMIN puede borrar
     // (la validación de rol la hace el controlador)
 
-    const fullPath = join(UPLOADS_ROOT, attachment.filePath);
-    if (existsSync(fullPath)) {
-      try { unlinkSync(fullPath); } catch { /* ignorar si ya no existe */ }
-    }
+    // Misma resolución que la descarga: borrar es aún más delicado que leer.
+    const fullPath = this.rutaDentroDeUploads(attachment.filePath);
+    this.descartarArchivo(fullPath);
 
     await this.log(
       attachment.entityType as AttachmentEntityType,

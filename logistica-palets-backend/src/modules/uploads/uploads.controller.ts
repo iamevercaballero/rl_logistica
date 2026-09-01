@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Delete,
   Get,
@@ -8,20 +9,29 @@ import {
   Req,
   Res,
   UploadedFile,
+  UseFilters,
   UseGuards,
   UseInterceptors,
   ParseUUIDPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { MulterOptions } from '@nestjs/platform-express/multer/interfaces/multer-options.interface';
 import { diskStorage } from 'multer';
-import { extname } from 'path';
 import { v4 as uuid } from 'uuid';
 import { Response, Request } from 'express';
 import { UploadsService } from './uploads.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles/roles.guard';
 import { Roles } from '../auth/roles/roles.decorator';
-import { AttachmentCategory, AttachmentEntityType } from './entities/attachment.entity';
+import { MulterExceptionFilter } from './multer-exception.filter';
+import { AttachmentQueryDto, UploadAttachmentDto } from './dto/upload-attachment.dto';
+import {
+  attachmentExtension,
+  isAllowedAttachment,
+  isInlineSafe,
+  MAX_ATTACHMENT_SIZE,
+  UNSUPPORTED_ATTACHMENT_MESSAGE,
+} from './attachment-types';
 
 function multerStorage() {
   return diskStorage({
@@ -32,11 +42,35 @@ function multerStorage() {
       cb(null, dir);
     },
     filename: (_req, file, cb) => {
-      const ext = extname(file.originalname).toLowerCase();
-      cb(null, `${uuid()}${ext}`);
+      // El nombre en disco es siempre un uuid: el `originalname` viene del cliente
+      // y no debe influir en la ruta. La extensión ya pasó por la lista blanca.
+      cb(null, `${uuid()}${attachmentExtension(file.originalname)}`);
     },
   });
 }
+
+/**
+ * Opciones de multer para los adjuntos.
+ *
+ * `limits` es lo que realmente corta: antes el control de tamaño estaba en
+ * `saveAttachment`, o sea **después** de que multer escribiera el archivo entero
+ * en disco, y el archivo rechazado además quedaba ahí. Subir 500 MB repetidas
+ * veces llenaba el volumen sin que ninguna validación lo impidiera.
+ *
+ * `fileFilter` rechaza por extensión antes de escribir un solo byte. Es el mismo
+ * criterio que ya usaba `products/bulk-import`; los adjuntos habían quedado fuera.
+ */
+const ATTACHMENT_UPLOAD: MulterOptions = {
+  storage: multerStorage(),
+  limits: { fileSize: MAX_ATTACHMENT_SIZE, files: 1 },
+  fileFilter: (_req, file, cb) => {
+    if (!isAllowedAttachment(file.originalname)) {
+      cb(new BadRequestException(UNSUPPORTED_ATTACHMENT_MESSAGE), false);
+      return;
+    }
+    cb(null, true);
+  },
+};
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('attachments')
@@ -49,19 +83,19 @@ export class UploadsController {
    */
   @Post()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
-  @UseInterceptors(FileInterceptor('file', { storage: multerStorage() }))
+  @UseFilters(MulterExceptionFilter)
+  @UseInterceptors(FileInterceptor('file', ATTACHMENT_UPLOAD))
   upload(
     @UploadedFile() file: Express.Multer.File,
-    @Query('name') name: string,
-    @Query('category') category: AttachmentCategory,
-    @Query('entityType') entityType: AttachmentEntityType,
-    @Query('entityId') entityId: string,
+    @Query() dto: UploadAttachmentDto,
     @Req() req: Request & { user: { userId: string; username?: string } },
   ) {
-    if (!file) throw new Error('No se recibió ningún archivo.');
+    // 400, no un Error pelado: sin `file` la petición está mal formada, no es
+    // una falla del servidor.
+    if (!file) throw new BadRequestException('No se recibió ningún archivo.');
     return this.service.saveAttachment(
       file,
-      { name, category: category ?? 'OTRO', entityType, entityId },
+      { ...dto, category: dto.category ?? 'OTRO' },
       req.user.userId,
       req.user.username,
     );
@@ -70,11 +104,8 @@ export class UploadsController {
   /** Lista adjuntos de una entidad. */
   @Get()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
-  list(
-    @Query('entityType') entityType: AttachmentEntityType,
-    @Query('entityId') entityId: string,
-  ) {
-    return this.service.getAttachments(entityType, entityId);
+  list(@Query() query: AttachmentQueryDto) {
+    return this.service.getAttachments(query.entityType, query.entityId);
   }
 
   /** Todos los eventos del sistema — Bitácora global. */
@@ -97,21 +128,30 @@ export class UploadsController {
   /** Historial completo (eventos + adjuntos) de una entidad. */
   @Get('log')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
-  getLog(
-    @Query('entityType') entityType: string,
-    @Query('entityId') entityId: string,
-  ) {
-    return this.service.getDispatchLog(entityType, entityId);
+  getLog(@Query() query: AttachmentQueryDto) {
+    return this.service.getDispatchLog(query.entityType, query.entityId);
   }
 
-  /** Descarga / visualiza un archivo adjunto. */
+  /**
+   * Descarga / visualiza un archivo adjunto.
+   *
+   * El `Content-Type` sale de la extensión validada al subir, no de lo que
+   * declaró el cliente. Y sólo las imágenes se sirven `inline`: el resto va como
+   * descarga, para que ningún adjunto se renderice como documento en el
+   * navegador. El frontend no depende de esto —abre todo desde un Blob— pero
+   * quien pegue la URL directa queda igual de cubierto.
+   */
   @Get(':id/file')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
   async download(@Param('id', ParseUUIDPipe) id: string, @Res({ passthrough: true }) res: Response) {
     const { stream, mimeType, filename } = await this.service.streamFile(id);
+    const disposition = isInlineSafe(mimeType) ? 'inline' : 'attachment';
     res.set({
       'Content-Type': mimeType,
-      'Content-Disposition': `inline; filename="${encodeURIComponent(filename)}"`,
+      'Content-Disposition': `${disposition}; filename*=UTF-8''${encodeURIComponent(filename)}`,
+      // helmet ya lo pone global; explícito acá porque es lo que impide que el
+      // navegador ignore el Content-Type y adivine el tipo por el contenido.
+      'X-Content-Type-Options': 'nosniff',
     });
     return stream;
   }

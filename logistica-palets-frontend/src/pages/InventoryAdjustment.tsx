@@ -35,6 +35,7 @@ import {
 } from "../api/adjustments";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
+import { useClaveIdempotencia } from "../api/idempotency";
 import { useAuth } from "../auth/AuthContext";
 import { canApprove } from "../auth/rbac";
 
@@ -478,12 +479,20 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
   }
 
   // ── Mutaciones ────────────────────────────────────────────────────────────
+  const claveAjuste = useClaveIdempotencia();
+
   const createMut = useMutation({
     mutationFn: async ({ submit, lines }: { submit: boolean; lines: CartLine[] }) => {
       const bucketsOrError = buildBuckets(lines);
       if ("error" in bucketsOrError) throw new Error(bucketsOrError.error);
 
-      const settled = await Promise.allSettled(bucketsOrError.map(async (b) => {
+      // Un envío puede crear varias solicitudes (una por depósito y dirección).
+      // Cada una necesita su propia clave de idempotencia, pero derivadas de una
+      // base estable: así un doble clic manda exactamente las mismas y ninguna
+      // se duplica. Con una clave generada por llamada, el segundo clic crearía
+      // el juego completo de ajustes otra vez.
+      const base = claveAjuste.clave();
+      const settled = await Promise.allSettled(bucketsOrError.map(async (b, i) => {
         const { requestId, code } = await createAdjustmentDraft({
           type: b.direction,
           reason,
@@ -491,7 +500,7 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
           locationId: locationId || undefined,
           notes: notes.trim() || undefined,
           lines: b.lines.map((l) => ({ productId: l.productId, palletItems: l.palletItems, locationId: l.locationId })),
-        });
+        }, `${base}-${i}`);
         if (submit) await submitAdjustmentForApproval(requestId);
         return { code, direction: b.direction, keys: b.lines.map((l) => l.key), qty: b.lines.reduce((s, l) => s + l.totalQty, 0) };
       }));
@@ -506,6 +515,9 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
       return { submit, succeeded, failed };
     },
     onSuccess: ({ submit, succeeded, failed }) => {
+      // Sólo si salió todo: con alguna solicitud fallida, reintentar el envío
+      // tiene que reusar las claves para no duplicar las que sí se crearon.
+      if (failed.length === 0) claveAjuste.renovar();
       const succeededKeys = new Set(succeeded.flatMap((s) => s.keys));
       if (succeeded.length > 0) {
         const parts = succeeded.map((s) => `${s.code} (${s.direction === "ADJUSTMENT_IN" ? "+" : "−"}${s.qty.toLocaleString("es-PY")})`);

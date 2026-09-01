@@ -35,6 +35,7 @@ import type { Product } from "../api/products";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
+import { useClaveIdempotencia } from "../api/idempotency";
 import { useAuth } from "../auth/AuthContext";
 import { canCreate } from "../auth/rbac";
 import SearchableSelect from "../design-system/SearchableSelect";
@@ -879,9 +880,17 @@ export default function MovementsPage() {
     queryClient.invalidateQueries({ queryKey: ["location-content"] });
   }
 
+  const claveRemito = useClaveIdempotencia();
+  const claveTransferencia = useClaveIdempotencia();
+
   const transferMut = useMutation({
-    mutationFn: transferBatch,
+    // La clave sobrevive a los reintentos de esta misma tanda: un doble clic
+    // manda la misma y el backend devuelve el resultado de la primera en vez de
+    // transferir dos veces.
+    mutationFn: (payload: Parameters<typeof transferBatch>[0]) =>
+      transferBatch(payload, claveTransferencia.clave()),
     onSuccess: (res) => {
+      claveTransferencia.renovar();
       invalidateAfterMovement();
       toast.success(
         `Transferencia registrada: ${res.totalPallets} palet${res.totalPallets !== 1 ? "s" : ""} · ${fmtQty(res.totalQty)} unid. → ${locationMap[toLocationId] ?? "destino"}`,
@@ -945,8 +954,10 @@ export default function MovementsPage() {
   });
 
   const createDocumentMut = useMutation({
-    mutationFn: (payload: CreateDocumentPayload) => createDocument(payload),
+    // Ídem: la clave nace con el remito en carga y se renueva al confirmarlo.
+    mutationFn: (payload: CreateDocumentPayload) => createDocument(payload, claveRemito.clave()),
     onSuccess: (res, variables) => {
+      claveRemito.renovar();
       setPendingSubmission(null);
       invalidateAfterMovement();
       void uploadPendingFiles(res.documentId, pendingFiles);

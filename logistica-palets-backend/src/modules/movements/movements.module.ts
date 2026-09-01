@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { IdempotencyModule } from '../../common/idempotency/idempotency.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { MovementsService } from './movements.service';
 import { MovementsController } from './movements.controller';
@@ -20,7 +21,7 @@ import { UploadsModule } from '../uploads/uploads.module';
 import { PilasModule } from '../pilas/pilas.module';
 
 @Module({
-  imports: [
+  imports: [IdempotencyModule, 
     UploadsModule,
     PilasModule,
     TypeOrmModule.forFeature([

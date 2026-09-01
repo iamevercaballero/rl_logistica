@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { IdempotencyModule } from '../../common/idempotency/idempotency.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AdjustmentsController } from './adjustments.controller';
 import { AdjustmentsService } from './adjustments.service';
@@ -10,7 +11,7 @@ import { CacheModule } from '../cache/cache.module';
 import { EventsModule } from '../events/events.module';
 
 @Module({
-  imports: [
+  imports: [IdempotencyModule, 
     TypeOrmModule.forFeature([AdjustmentRequest, AdjustmentRequestLine]),
     MovementsModule,
     UploadsModule,

@@ -9,6 +9,7 @@ import {
   Req,
   UseGuards,
   ParseUUIDPipe,
+  UseInterceptors,
 } from '@nestjs/common';
 import { Request } from 'express';
 import { AdjustmentsService } from './adjustments.service';
@@ -25,6 +26,8 @@ import {
 } from '../warehouses/warehouse-access.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles/roles.guard';
+import { Idempotent } from '../../common/idempotency/idempotent.decorator';
+import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
 import { Roles } from '../auth/roles/roles.decorator';
 import { PermissionGuard } from '../permissions/guards/permission.guard';
 import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
@@ -32,6 +35,7 @@ import { RequirePermission } from '../permissions/decorators/require-permission.
 type AuthedRequest = Request & { user: AccessUser };
 
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
+@UseInterceptors(IdempotencyInterceptor)
 @Controller('adjustments')
 export class AdjustmentsController {
   constructor(
@@ -46,6 +50,7 @@ export class AdjustmentsController {
 
   /** Crea un nuevo borrador de solicitud de ajuste (multi-producto). */
   @Post()
+  @Idempotent()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   @RequirePermission('adjustments', 'create')
   createDraft(@Body() dto: CreateAdjustmentDto, @Req() req: AuthedRequest) {

@@ -1,4 +1,5 @@
 import { api } from "./client";
+import { cabeceraIdempotencia } from "./idempotency";
 import type { PalletItem } from "./movements";
 
 export type AdjustmentType = "ADJUSTMENT_IN" | "ADJUSTMENT_OUT";
@@ -71,8 +72,9 @@ export type UpdateAdjustmentPayload = Partial<Omit<CreateAdjustmentPayload, "typ
 
 export async function createAdjustmentDraft(
   payload: CreateAdjustmentPayload,
+  idempotencyKey?: string,
 ): Promise<{ requestId: string; code: string }> {
-  const { data } = await api.post("/adjustments", payload);
+  const { data } = await api.post("/adjustments", payload, cabeceraIdempotencia(idempotencyKey));
   return data;
 }
 

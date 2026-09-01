@@ -28,6 +28,8 @@ import { CreateDocumentDto } from './dto/create-document.dto';
 import { RegularizeMovementDto } from './dto/regularize-movement.dto';
 import { RequestQuantityEditDto } from './dto/request-quantity-edit.dto';
 import { TransferBatchDto } from './dto/transfer-batch.dto';
+import { Idempotent } from '../../common/idempotency/idempotent.decorator';
+import { IdempotencyInterceptor } from '../../common/idempotency/idempotency.interceptor';
 import { MovementsQueryDto } from './dto/movements-query.dto';
 import { PreviewPlacementDto } from './dto/preview-placement.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -41,6 +43,7 @@ const SNAPSHOT_EXTENSIONS = ['.xlsx', '.xls', '.csv'];
 type AuthedRequest = Request & { user: AccessUser };
 
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
+@UseInterceptors(IdempotencyInterceptor)
 @Controller('movements')
 export class MovementsController {
   constructor(
@@ -59,6 +62,7 @@ export class MovementsController {
   }
 
   @Post()
+  @Idempotent()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   @RequirePermission('movements', 'create')
   create(@Body() dto: CreateMovementDto, @Req() req: AuthedRequest) {
@@ -67,6 +71,7 @@ export class MovementsController {
 
   /** Crea un documento logístico (remito) multi-producto/multi-lote con código RLNE/RLNS. */
   @Post('documents')
+  @Idempotent()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   @RequirePermission('movements', 'create')
   createDocument(@Body() dto: CreateDocumentDto, @Req() req: AuthedRequest) {
@@ -132,6 +137,7 @@ export class MovementsController {
 
   /** Transferencia multi-producto: N pallets de una ubicación a otra en una sola transacción. */
   @Post('transfer-batch')
+  @Idempotent()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   @RequirePermission('movements', 'create')
   createTransferBatch(@Body() dto: TransferBatchDto, @Req() req: AuthedRequest) {

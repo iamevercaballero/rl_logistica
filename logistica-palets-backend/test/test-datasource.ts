@@ -28,6 +28,7 @@ import { RolePermission } from '../src/modules/permissions/entities/role-permiss
 import { UserPermission } from '../src/modules/permissions/entities/user-permission.entity';
 import { PermissionsService } from '../src/modules/permissions/permissions.service';
 import { ROLE_PERMISSIONS_SEED } from '../src/modules/permissions/role-permissions.seed';
+import { IdempotencyKey } from '../src/common/idempotency/idempotency-key.entity';
 import {
   addConstraintIfMissing,
   INVENTORY_CHECKS,
@@ -46,7 +47,7 @@ export const TEST_ENTITIES = [
   Product, Warehouse, Location, Stock, Lot, Pallet, Pila, Supplier, Destination, User, UserWarehouse,
   Movement, MovementDetail, LogisticsDocument, DocumentSequence, RegularizationLog,
   AdjustmentRequest, AdjustmentRequestLine, Attachment, DocumentEvent, SapStockSnapshot,
-  UserAuditLog, RolePermission, UserPermission,
+  UserAuditLog, RolePermission, UserPermission, IdempotencyKey,
 ];
 
 /** Tablas a vaciar entre tests (orden irrelevante por CASCADE). */
@@ -57,6 +58,7 @@ const TABLES = [
   'attachments', 'document_events', 'document_sequences',
   'sap_stock_snapshots', 'user_warehouses', 'products', 'locations', 'warehouses', 'suppliers', 'destinations',
   'user_audit_log', 'role_permissions', 'user_permissions', 'users',
+  'idempotency_keys',
 ];
 
 /**

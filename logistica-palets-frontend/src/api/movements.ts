@@ -1,4 +1,5 @@
 import { api } from "./client";
+import { cabeceraIdempotencia } from "./idempotency";
 
 export type MovementType = "ENTRY" | "EXIT" | "TRANSFER" | "ADJUSTMENT_IN" | "ADJUSTMENT_OUT";
 export type MovementStatus = "NORMAL" | "PENDING_REGULARIZATION";
@@ -108,8 +109,8 @@ export async function createMovement(payload: {
   adjustmentReason?: string;
   adjustmentCategory?: string;
   palletItems?: PalletItem[];
-}): Promise<{ movementId: string; stockImpact: string }> {
-  const { data } = await api.post("/movements", payload);
+}, idempotencyKey?: string): Promise<{ movementId: string; stockImpact: string }> {
+  const { data } = await api.post("/movements", payload, cabeceraIdempotencia(idempotencyKey));
   return data;
 }
 
@@ -205,8 +206,9 @@ export type LogisticsDocument = {
 
 export async function createDocument(
   payload: CreateDocumentPayload,
+  idempotencyKey?: string,
 ): Promise<{ documentId: string; code: string; movementIds: string[]; stockImpact: string }> {
-  const { data } = await api.post("/movements/documents", payload);
+  const { data } = await api.post("/movements/documents", payload, cabeceraIdempotencia(idempotencyKey));
   return data;
 }
 
@@ -408,8 +410,8 @@ export async function transferBatch(payload: {
   toLocationId: string;
   notes?: string;
   lines: { productId: string; palletItems: { palletId: string; quantity: number }[] }[];
-}): Promise<{ movementIds: string[]; totalQty: number; totalPallets: number }> {
-  const { data } = await api.post("/movements/transfer-batch", payload);
+}, idempotencyKey?: string): Promise<{ movementIds: string[]; totalQty: number; totalPallets: number }> {
+  const { data } = await api.post("/movements/transfer-batch", payload, cabeceraIdempotencia(idempotencyKey));
   return data;
 }
 

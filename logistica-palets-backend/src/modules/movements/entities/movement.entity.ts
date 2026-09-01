@@ -25,6 +25,19 @@ export const adjustmentReasons = [
 ] as const;
 export type AdjustmentReason = (typeof adjustmentReasons)[number];
 
+/**
+ * Orden y filtro de la pantalla de movimientos: `ORDER BY date DESC, createdAt
+ * DESC` con paginación, más los filtros por rango de `date`. Sin esto la
+ * consulta hacía un recorrido completo de la tabla y un ordenamiento externo
+ * para devolver 20 filas — ver la migración 1785000000000, que trae las
+ * mediciones.
+ *
+ * Se declara ascendente: un btree se recorre hacia atrás sin costo, y medido
+ * contra un millón de filas rinde igual que declararlo DESC. Además es lo que
+ * `synchronize` sabe crear, así que el esquema de las pruebas queda idéntico al
+ * de producción.
+ */
+@Index('idx_movement_date_created', ['date', 'createdAt'])
 @Index('idx_movement_created_at', ['createdAt'])
 @Index('idx_movement_product', ['productId'])
 @Index('idx_movement_type_status', ['type', 'status'])

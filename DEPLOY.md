@@ -65,6 +65,39 @@ alcanza con permitir 22.
 > la IP del VPS, ponelos en *DNS only* (nube gris) la primera vez para que Caddy
 > emita los certificados, y recién después activá el proxy en *Full (strict)*.
 
+## Índice de la pantalla de movimientos (RL-A-07)
+
+`AddMovementDateIndex` agrega el índice `(date, createdAt)` sobre `movements`,
+que es por donde ordena y filtra la pantalla más usada del sistema y no estaba
+indexado.
+
+No necesita ventana ni `CONCURRENTLY`: construirlo sobre 1,3 millones de filas
+tomó **665 ms** en la medición, y la tabla en producción todavía es chica. Si
+alguna vez hubiera que aplicarlo sobre una tabla ya grande, la alternativa es
+crearlo a mano con `CREATE INDEX CONCURRENTLY` —que no puede ir dentro de una
+transacción— y después marcar la migración como aplicada.
+
+Medido sobre una copia del esquema real con un millón de movimientos y 800.000
+líneas de detalle (diez años a ~275 movimientos por día):
+
+| consulta | antes | después |
+|---|---|---|
+| pantalla principal, página 1 | 2.138 ms | **1,0 ms** |
+| página profunda (offset 10000) | 110 ms | **7,1 ms** |
+| filtro por rango de 30 días | 99 ms | **0,1 ms** |
+| alcance de OPERATOR | 104 ms | **0,1 ms** |
+| COUNT de la paginación | 48 ms | 73 ms (no lo toca el índice) |
+
+El índice **solo** no arregla la pantalla principal: hizo falta además corregir
+la consulta en `movements.service.ts`, que agregaba la tabla de detalles entera
+para devolver 20 filas. Los dos cambios van juntos y ninguno sirve sin el otro.
+
+Verificación, con el sistema arriba:
+
+```bash
+docker compose -f docker-compose.prod.yml exec db psql -U "$DB_USERNAME" -d "$DB_DATABASE" -c "SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_movement_date_created';"
+```
+
 ## Bitácora de accesos y append-only (RL-M-09)
 
 `CreateAuthEventsAndAppendOnly` crea `auth_events` —el registro de intentos de

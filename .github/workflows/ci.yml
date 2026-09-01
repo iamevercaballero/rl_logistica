@@ -33,9 +33,14 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: logistica-palets-backend/package-lock.json
-      # npm install (no ci) porque el package-lock todavía no incluye jest/ts-jest;
-      # tras correrlo y commitear el lock actualizado, se puede pasar a `npm ci`.
-      - run: npm install --no-audit --no-fund
+      - run: npm ci
+      # Falla ante cualquier vulnerabilidad alta o crítica en las dependencias
+      # que se despliegan. `--omit=dev` deja fuera las herramientas: una falla en
+      # vite o typeorm-cli es real pero no viaja al servidor, y bloquear cada PR
+      # por eso hace que el equipo aprenda a ignorar el CI.
+      # Falla ante cualquier vulnerabilidad alta o crítica nueva en lo que se
+      # despliega. Las excepciones aceptadas viven en el script, con su motivo.
+      - run: node ../scripts/audit-gate.mjs
       - run: npm run lint
       - run: npm run build
       - run: npm test
@@ -74,7 +79,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: logistica-palets-backend/package-lock.json
-      - run: npm install --no-audit --no-fund
+      - run: npm ci
       # Camino REAL de producción: DB vacía + migraciones, sin synchronize.
       # Si InitialSchema estuviera incompleta (p.ej. faltara uuid-ossp), falla acá.
       - name: migration:run sobre DB vacía
@@ -113,6 +118,12 @@ jobs:
           cache: npm
           cache-dependency-path: logistica-palets-frontend/package-lock.json
       - run: npm ci
+      # Falla ante cualquier vulnerabilidad alta o crítica nueva en lo que se
+      # despliega. Las excepciones aceptadas viven en el script, con su motivo.
+      - run: node ../scripts/audit-gate.mjs
       - run: npm run lint
+      # Las pruebas del frontend no se corrían en CI: 168 tests que existían y
+      # nadie ejecutaba salvo a mano. Sin esto el job daba verde con la suite rota.
+      - run: npm test
       # `npm run build` corre `tsc -b` → type-check completo del frontend.
       - run: npm run build

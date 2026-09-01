@@ -76,7 +76,7 @@ export default function TransportsPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIdChoice, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("ficha");
   const [search, setSearch] = useState("");
 
@@ -91,9 +91,10 @@ export default function TransportsPage() {
     queryFn: listTransports,
   });
 
-  useEffect(() => {
-    if (!selectedId && items.length > 0) setSelectedId(items[0].id);
-  }, [items, selectedId]);
+  // La primera opción se deriva durante el render, mismo criterio que Warehouses:
+  // un efecto que sólo autoselecciona dispara un segundo render para nada, y es
+  // lo que `react-hooks/set-state-in-effect` marca como cascada evitable.
+  const selectedId = selectedIdChoice ?? items[0]?.id ?? null;
 
   const selected = useMemo(() => items.find((t) => t.id === selectedId) ?? null, [items, selectedId]);
 

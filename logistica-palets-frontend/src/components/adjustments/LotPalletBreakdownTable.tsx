@@ -39,14 +39,22 @@ export default function LotPalletBreakdownTable({
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   // En modo "elegir pallet" conviene ver todos los pallets de entrada — se navega por pallet, no por lote.
+  //
+  // Es un "resetear estado cuando cambia una prop". El arreglo idiomático sería
+  // remontar el componente con una `key` desde el padre, pero acá el operador
+  // puede plegar lotes a mano después, y derivarlo en el render le sacaría esa
+  // posibilidad. Se deja el efecto a propósito: la cascada es un render extra al
+  // cambiar de modo, no en cada interacción.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- ver el comentario de arriba
     if (mode === "select-pallet") setExpanded(new Set(lots.map((l) => l.id)));
   }, [mode, lots]);
 
   function toggle(lotId: string) {
     setExpanded((prev) => {
       const next = new Set(prev);
-      next.has(lotId) ? next.delete(lotId) : next.add(lotId);
+      if (next.has(lotId)) next.delete(lotId);
+      else next.add(lotId);
       return next;
     });
   }

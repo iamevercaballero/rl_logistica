@@ -134,16 +134,21 @@ interface CommandPaletteProps {
 
 export function CommandPalette({ items, isOpen, onClose, onNavigateSamePath }: CommandPaletteProps) {
   const [query, setQuery] = useState('');
-  const [activeIdx, setActiveIdx] = useState(0);
+  const [activeIdxChoice, setActiveIdx] = useState(0);
   const navigate = useNavigate();
   const location = useLocation();
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [history, setHistory] = useState<string[]>([]);
 
-  /* Load history on open */
+  /* Load history on open.
+     Resetea el estado al abrirse. Lo idiomático sería remontar con una `key`
+     desde AppLayout, pero el historial se lee de localStorage y el foco necesita
+     el nodo ya montado; remontarlo complicaría más de lo que ordena. La cascada
+     ocurre una vez por apertura, no por tecla. */
   useEffect(() => {
     if (isOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- ver el comentario de arriba
       setHistory(loadHistory());
       setQuery('');
       setActiveIdx(0);
@@ -185,10 +190,10 @@ export function CommandPalette({ items, isOpen, onClose, onNavigateSamePath }: C
   const groups = grouped();
   const flatItems = groups.flatMap((g) => g.items);
 
-  /* Keep activeIdx in bounds */
-  useEffect(() => {
-    setActiveIdx((prev) => Math.min(prev, Math.max(flatItems.length - 1, 0)));
-  }, [flatItems.length]);
+  /* El índice activo se acota durante el render en vez de por efecto: filtrar la
+     lista no tiene por qué provocar un segundo render sólo para recortar el
+     índice, y así nunca existe un frame con el índice fuera de rango. */
+  const activeIdx = Math.min(activeIdxChoice, Math.max(flatItems.length - 1, 0));
 
   /* Scroll active item into view */
   useEffect(() => {

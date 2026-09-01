@@ -23,6 +23,10 @@ export type PermissionModuleKey =
   | "reports"
   | "bitacora"
   | "billing"
+  | "suppliers"
+  | "destinations"
+  | "attachments"
+  | "alerts"
   | "users";
 
 export const ACTION_LABELS: Record<PermissionAction, string> = {
@@ -40,8 +44,6 @@ export type PermissionModuleDef = {
   key: PermissionModuleKey;
   label: string;
   actions: PermissionAction[];
-  /** El backend todavía no exige este permiso en Facturación (retrofit pendiente). */
-  enforcementPending?: boolean;
 };
 
 export type PermissionCategory = {
@@ -59,6 +61,7 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
       { key: "adjustments", label: "Diferencias de inventario", actions: ["read", "create", "update", "approve"] },
       { key: "pallets", label: "Palets", actions: ["read", "create", "update", "remove"] },
       { key: "lots", label: "Lotes", actions: ["read", "create", "update", "remove"] },
+      { key: "attachments", label: "Adjuntos", actions: ["read", "create", "remove"] },
     ],
   },
   {
@@ -69,8 +72,11 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
       { key: "warehouses", label: "Depósitos", actions: ["read", "create", "update", "remove"] },
       { key: "locations", label: "Localizador", actions: ["read", "create", "update", "remove"] },
       { key: "transports", label: "Transportes", actions: ["read", "create", "update", "remove"] },
+      { key: "suppliers", label: "Proveedores", actions: ["read", "create", "update", "remove"] },
+      { key: "destinations", label: "Destinos", actions: ["read", "create", "update", "remove"] },
+      { key: "alerts", label: "Alertas", actions: ["read", "create", "update", "remove"] },
       { key: "users", label: "Usuarios", actions: ["read", "create", "update", "remove"] },
-      { key: "billing", label: "Facturación", actions: ["read", "create", "update", "remove"], enforcementPending: true },
+      { key: "billing", label: "Facturación", actions: ["read", "create", "update", "remove"] },
     ],
   },
   {
@@ -78,7 +84,7 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
     label: "Información",
     modules: [
       { key: "dashboard", label: "Dashboard", actions: ["read"] },
-      { key: "reports", label: "Reportes", actions: ["read"] },
+      { key: "reports", label: "Reportes", actions: ["read", "create"] },
       { key: "bitacora", label: "Registros", actions: ["read"] },
     ],
   },

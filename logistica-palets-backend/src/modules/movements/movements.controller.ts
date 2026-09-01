@@ -114,6 +114,7 @@ export class MovementsController {
       },
     ),
   )
+  @RequirePermission('movements', 'create')
   stockSnapshotFromLots(
     @UploadedFiles() files: { stock?: Express.Multer.File[] },
     @Query('commit') commit: string,
@@ -131,6 +132,7 @@ export class MovementsController {
    */
   @Post('stock-snapshot/revert')
   @Roles('ADMIN')
+  @RequirePermission('movements', 'create')
   revertStockSnapshot(@Query('commit') commit: string) {
     return this.service.revertStockSnapshot(commit === 'true');
   }

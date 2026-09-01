@@ -83,6 +83,58 @@ describe('permisos efectivos por rol (regresión — sin overrides)', () => {
   });
 });
 
+/**
+ * Los módulos que RL-M-10 incorporó al motor de permisos. La plantilla se
+ * transcribió a mano desde los `@Roles()` de cada controller, así que un error
+ * ahí ensancharía o angostaría accesos en silencio: estos casos la fijan.
+ */
+describe('módulos incorporados al motor de permisos (RL-M-10)', () => {
+  it('el operador da de alta proveedores y destinos sobre la marcha, pero no los edita ni los baja', async () => {
+    const op = await makeUser('OPERATOR');
+    for (const modulo of ['suppliers', 'destinations'] as const) {
+      expect(await permissions.hasPermission(op.userId, 'OPERATOR', modulo, 'read')).toBe(true);
+      expect(await permissions.hasPermission(op.userId, 'OPERATOR', modulo, 'create')).toBe(true);
+      expect(await permissions.hasPermission(op.userId, 'OPERATOR', modulo, 'update')).toBe(false);
+      expect(await permissions.hasPermission(op.userId, 'OPERATOR', modulo, 'remove')).toBe(false);
+    }
+  });
+
+  it('el operador sube adjuntos pero no los borra', async () => {
+    const op = await makeUser('OPERATOR');
+    expect(await permissions.hasPermission(op.userId, 'OPERATOR', 'attachments', 'create')).toBe(true);
+    expect(await permissions.hasPermission(op.userId, 'OPERATOR', 'attachments', 'read')).toBe(true);
+    expect(await permissions.hasPermission(op.userId, 'OPERATOR', 'attachments', 'remove')).toBe(false);
+  });
+
+  it('las reglas de alerta las administran ADMIN y MANAGER; el resto sólo ve las alertas activas', async () => {
+    const op = await makeUser('OPERATOR');
+    const mgr = await makeUser('MANAGER');
+    expect(await permissions.hasPermission(op.userId, 'OPERATOR', 'alerts', 'read')).toBe(true);
+    expect(await permissions.hasPermission(op.userId, 'OPERATOR', 'alerts', 'create')).toBe(false);
+    expect(await permissions.hasPermission(mgr.userId, 'MANAGER', 'alerts', 'create')).toBe(true);
+    expect(await permissions.hasPermission(mgr.userId, 'MANAGER', 'alerts', 'remove')).toBe(true);
+  });
+
+  it('la carga del corte de SAP es de supervisión, aunque los reportes los vea todo el mundo', async () => {
+    const op = await makeUser('OPERATOR');
+    const aud = await makeUser('AUDITOR');
+    const mgr = await makeUser('MANAGER');
+    expect(await permissions.hasPermission(op.userId, 'OPERATOR', 'reports', 'read')).toBe(true);
+    expect(await permissions.hasPermission(op.userId, 'OPERATOR', 'reports', 'create')).toBe(false);
+    expect(await permissions.hasPermission(aud.userId, 'AUDITOR', 'reports', 'create')).toBe(false);
+    expect(await permissions.hasPermission(mgr.userId, 'MANAGER', 'reports', 'create')).toBe(true);
+  });
+
+  it('un DENY sobre un módulo nuevo lo apaga igual que sobre uno viejo', async () => {
+    // Es lo que RL-M-10 venía a habilitar: hasta ahora estos módulos estaban
+    // fuera del alcance de los overrides por usuario.
+    const mgr = await makeUser('MANAGER');
+    expect(await permissions.hasPermission(mgr.userId, 'MANAGER', 'suppliers', 'update')).toBe(true);
+    await permissions.setUserPermission(mgr.userId, 'suppliers', 'update', 'DENY');
+    expect(await permissions.hasPermission(mgr.userId, 'MANAGER', 'suppliers', 'update')).toBe(false);
+  });
+});
+
 describe('último ADMIN activo — nunca puede quedar en cero', () => {
   it('con un solo ADMIN, no se puede desactivar', async () => {
     const admin = await makeUser('ADMIN');

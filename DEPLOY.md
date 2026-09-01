@@ -65,6 +65,36 @@ alcanza con permitir 22.
 > la IP del VPS, ponelos en *DNS only* (nube gris) la primera vez para que Caddy
 > emita los certificados, y recién después activá el proxy en *Full (strict)*.
 
+## Migración de permisos finos (RL-M-10) — orden obligatorio
+
+`AddMissingRolePermissions` incorpora proveedores, destinos, adjuntos, alertas y
+la carga del corte de SAP al motor de permisos finos.
+
+**Tiene que correr antes de que quede arriba el código nuevo, no después.**
+`PermissionGuard` falla cerrado: la plantilla de cada rol sale de la tabla
+`role_permissions`, y un módulo sin filas ahí no le da la acción a nadie. Si el
+backend nuevo arranca contra una base sin migrar, esos cinco módulos responden
+403 a **todos los usuarios, incluido el ADMIN** — no es una degradación parcial,
+es el módulo entero caído.
+
+Con `DB_MIGRATIONS_RUN=true` (lo que trae `.env.prod.example`) el backend aplica
+las migraciones pendientes al arrancar, antes de aceptar tráfico, así que el
+orden ya queda bien. Si desplegás con las migraciones en un paso aparte,
+corrélas primero.
+
+Verificación, con el sistema arriba:
+
+```bash
+docker compose -f docker-compose.prod.yml exec db psql -U "$DB_USERNAME" -d "$DB_DATABASE" -c "SELECT module, COUNT(*) FROM role_permissions WHERE module IN ('suppliers','destinations','attachments','alerts') GROUP BY module ORDER BY module;"
+```
+
+Tienen que aparecer los cuatro módulos. Si la consulta vuelve vacía, la
+migración no corrió: no abras el sistema a los operadores hasta resolverlo.
+
+Reversión: `migration:revert` borra esas filas y también los overrides por
+usuario que apunten a ellas. Los endpoints vuelven a quedar protegidos sólo por
+rol, que es como estaban antes — no queda ninguno sin control.
+
 ## Migración de integridad referencial (RL-C-03)
 
 La migración `AddInventoryForeignKeys` agrega 38 claves foráneas y 5

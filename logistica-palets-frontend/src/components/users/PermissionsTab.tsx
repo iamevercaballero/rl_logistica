@@ -159,14 +159,6 @@ function PermissionsForm({ userId, role, data, readOnly }: {
                 <div key={mod.key} style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "6px 18px", padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 8 }}>
                   <span style={{ fontSize: 13, fontWeight: 700, minWidth: 150 }}>
                     {mod.label}
-                    {mod.enforcementPending && (
-                      <span
-                        title="El sistema todavía no aplica estos permisos en Facturación: se guardan, pero por ahora el acceso lo sigue decidiendo el rol."
-                        style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: "var(--muted)", border: "1px solid var(--border)", borderRadius: 4, padding: "1px 5px", cursor: "help" }}
-                      >
-                        sin efecto todavía
-                      </span>
-                    )}
                   </span>
                   <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
                     {mod.actions.map((action) => {

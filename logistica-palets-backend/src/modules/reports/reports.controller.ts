@@ -80,6 +80,7 @@ export class ReportsController {
 
   @Post('sap-stock')
   @Roles('ADMIN', 'MANAGER')
+  @RequirePermission('reports', 'create')
   async upsertSapStock(@Body() dto: UpsertSapStockDto, @Req() req: AuthedRequest) {
     // Escritura: el depósito del snapshot debe ser uno al que el usuario accede.
     if (dto.warehouseId) await this.access.assertWarehouseAccess(req.user, dto.warehouseId);

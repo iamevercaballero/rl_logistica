@@ -9,7 +9,6 @@ import { MovementsModule } from '../movements/movements.module';
 import { UploadsModule } from '../uploads/uploads.module';
 import { CacheModule } from '../cache/cache.module';
 import { EventsModule } from '../events/events.module';
-import { PermissionsModule } from '../permissions/permissions.module';
 
 @Module({
   imports: [IdempotencyModule, 
@@ -18,7 +17,6 @@ import { PermissionsModule } from '../permissions/permissions.module';
     UploadsModule,
     CacheModule,
     EventsModule,
-    PermissionsModule,
   ],
   controllers: [AdjustmentsController],
   providers: [AdjustmentsService],

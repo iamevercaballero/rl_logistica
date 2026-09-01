@@ -82,6 +82,7 @@ export class PalletsController {
   /** Reconcilia estados inconsistentes de pallets existentes según su historial */
   @Post('reconcile-status')
   @Roles('ADMIN', 'MANAGER')
+  @RequirePermission('pallets', 'update')
   reconcileStatuses() {
     return this.service.reconcileStatuses();
   }
@@ -132,6 +133,7 @@ export class PalletsController {
   @Delete(':id')
   @Roles('ADMIN', 'MANAGER')
   @HttpCode(HttpStatus.METHOD_NOT_ALLOWED)
+  @RequirePermission('pallets', 'remove')
   remove(@Param('id', ParseUUIDPipe) _id: string) {
     throw new MethodNotAllowedException(
       'La eliminación de pallets está deshabilitada para preservar la trazabilidad',

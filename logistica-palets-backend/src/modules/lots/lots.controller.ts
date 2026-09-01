@@ -108,6 +108,7 @@ export class LotsController {
   @Post(':id/reconcile')
   @HttpCode(200)
   @Roles('ADMIN', 'MANAGER')
+  @RequirePermission('lots', 'update')
   reconcile(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.reconcileStock(id);
   }
@@ -116,6 +117,7 @@ export class LotsController {
   @Post('reconcile-all')
   @HttpCode(200)
   @Roles('ADMIN', 'MANAGER')
+  @RequirePermission('lots', 'update')
   reconcileAll(@Query('productId') productId?: string) {
     return this.service.reconcileAllStocks(productId);
   }

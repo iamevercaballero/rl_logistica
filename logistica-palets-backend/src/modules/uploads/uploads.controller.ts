@@ -23,6 +23,8 @@ import { UploadsService } from './uploads.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles/roles.guard';
 import { Roles } from '../auth/roles/roles.decorator';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
 import { MulterExceptionFilter } from './multer-exception.filter';
 import { AttachmentQueryDto, UploadAttachmentDto } from './dto/upload-attachment.dto';
 import {
@@ -72,7 +74,7 @@ const ATTACHMENT_UPLOAD: MulterOptions = {
   },
 };
 
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
 @Controller('attachments')
 export class UploadsController {
   constructor(private readonly service: UploadsService) {}
@@ -85,6 +87,7 @@ export class UploadsController {
   @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   @UseFilters(MulterExceptionFilter)
   @UseInterceptors(FileInterceptor('file', ATTACHMENT_UPLOAD))
+  @RequirePermission('attachments', 'create')
   upload(
     @UploadedFile() file: Express.Multer.File,
     @Query() dto: UploadAttachmentDto,
@@ -104,6 +107,7 @@ export class UploadsController {
   /** Lista adjuntos de una entidad. */
   @Get()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('attachments', 'read')
   list(@Query() query: AttachmentQueryDto) {
     return this.service.getAttachments(query.entityType, query.entityId);
   }
@@ -111,6 +115,7 @@ export class UploadsController {
   /** Todos los eventos del sistema — Bitácora global. */
   @Get('events')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('bitacora', 'read')
   getAllEvents(
     @Query() query: {
       entityType?: string; eventType?: string; excludeEventTypes?: string;
@@ -128,6 +133,7 @@ export class UploadsController {
   /** Historial completo (eventos + adjuntos) de una entidad. */
   @Get('log')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('bitacora', 'read')
   getLog(@Query() query: AttachmentQueryDto) {
     return this.service.getDispatchLog(query.entityType, query.entityId);
   }
@@ -143,6 +149,7 @@ export class UploadsController {
    */
   @Get(':id/file')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
+  @RequirePermission('attachments', 'read')
   async download(@Param('id', ParseUUIDPipe) id: string, @Res({ passthrough: true }) res: Response) {
     const { stream, mimeType, filename } = await this.service.streamFile(id);
     const disposition = isInlineSafe(mimeType) ? 'inline' : 'attachment';
@@ -159,6 +166,7 @@ export class UploadsController {
   /** Elimina un adjunto (solo MANAGER/ADMIN). */
   @Delete(':id')
   @Roles('ADMIN', 'MANAGER')
+  @RequirePermission('attachments', 'remove')
   remove(
     @Param('id', ParseUUIDPipe) id: string,
     @Req() req: Request & { user: { userId: string; username?: string } },

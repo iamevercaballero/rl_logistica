@@ -1,6 +1,12 @@
 # =============================================================================
 # RL Logística — Caddy reverse proxy con HTTPS automático (Let's Encrypt).
 #
+# NO LO USA EL DESPLIEGUE ACTUAL. docker-compose.prod.yml y el de staging salen
+# por Cloudflare Tunnel: TLS termina en el borde de Cloudflare y el VPS no abre
+# 80 ni 443. Este archivo queda como la alternativa para un despliegue sin
+# Cloudflare — ver DEPLOY.md. Para usarlo hay que volver a agregar el servicio
+# `caddy` al compose y definir APP_DOMAIN, API_DOMAIN y ACME_EMAIL.
+#
 # Dominios y email se inyectan por variables de entorno desde .env.prod:
 #   APP_DOMAIN  → frontend (ej: app.tudominio.com)
 #   API_DOMAIN  → backend  (ej: api.tudominio.com)  — sirve /api y WebSocket

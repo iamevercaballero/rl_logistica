@@ -35,6 +35,17 @@ val() { tr -d '\r' < "$ENV_FILE" | grep -m1 "^$1=" | cut -d= -f2- | sed -E 's/^"
 echo "Preflight de $ENV_FILE"
 echo
 
+# El proxy determina qué variables hacen falta. Con Cloudflare Tunnel alcanza
+# TUNNEL_TOKEN; con Caddy hacen falta los dominios y el mail de ACME. Se detecta
+# por lo que el archivo ya trae, en vez de pedir un flag que alguien va a olvidar.
+if tr -d '' < "$ENV_FILE" | grep -qE '^TUNNEL_TOKEN='; then
+  PROXY="cloudflare-tunnel"; REQ_PROXY=(TUNNEL_TOKEN)
+else
+  PROXY="caddy"; REQ_PROXY=(APP_DOMAIN API_DOMAIN ACME_EMAIL)
+fi
+echo "Proxy detectado: $PROXY"
+echo
+
 # ── 1. Variables obligatorias ────────────────────────────────────────────────
 echo "Variables requeridas"
 REQUERIDAS=(
@@ -42,9 +53,9 @@ REQUERIDAS=(
   DB_USERNAME DB_PASSWORD DB_DATABASE
   JWT_SECRET JWT_REFRESH_SECRET
   CORS_ORIGIN
-  APP_DOMAIN API_DOMAIN ACME_EMAIL
   VITE_API_URL VITE_WS_URL
   BOOTSTRAP_ADMIN_USER BOOTSTRAP_ADMIN_PASSWORD
+  "${REQ_PROXY[@]}"
 )
 faltan=0
 for k in "${REQUERIDAS[@]}"; do
@@ -72,7 +83,9 @@ echo
 
 # ── 3. Valores de plantilla que quedaron sin reemplazar ──────────────────────
 echo "Valores de plantilla"
-PLANTILLA='tudominio\.com|changeme|admin123|test_password_change_me|CAMBIAR|CHANGE_ME|<.*>'
+# `<...>` sólo cuenta como marcador si adentro hay una palabra suelta (<dominio>),
+# no una dirección de correo con nombre para mostrar ("RL Logística <no-reply@...>").
+PLANTILLA='tudominio\.com|changeme|admin123|test_password_change_me|CAMBIAR|CHANGE_ME|<[a-zA-Z_-]+>'
 sin_reemplazar="$(tr -d '\r' < "$ENV_FILE" | grep -vE '^\s*#' | grep -nEi "=.*($PLANTILLA)" | cut -d: -f2 | cut -d= -f1)"
 if [ -n "$sin_reemplazar" ]; then
   while read -r k; do [ -n "$k" ] && rojo "$k conserva un valor de la plantilla"; done <<< "$sin_reemplazar"
@@ -94,25 +107,38 @@ echo
 # Un CORS_ORIGIN que no coincide con el dominio real del frontend es el clásico
 # «anda todo pero el navegador bloquea cada request», y no se ve hasta produccion.
 echo "Coherencia de dominios"
-app="$(val APP_DOMAIN)"; api="$(val API_DOMAIN)"
-if [ -n "$app" ]; then
-  case "$(val CORS_ORIGIN)" in
+if [ "$PROXY" = "caddy" ]; then
+  app="$(val APP_DOMAIN)"; api="$(val API_DOMAIN)"
+  [ -n "$app" ] && case "$(val CORS_ORIGIN)" in
     *"$app"*) verde "CORS_ORIGIN incluye APP_DOMAIN" ;;
-    *) rojo "CORS_ORIGIN no incluye APP_DOMAIN ($app): el navegador bloquearía cada request" ;;
+    *) rojo "CORS_ORIGIN no incluye APP_DOMAIN ($app)" ;;
   esac
-fi
-if [ -n "$api" ]; then
-  case "$(val VITE_API_URL)" in
+  [ -n "$api" ] && case "$(val VITE_API_URL)" in
     *"$api"*) verde "VITE_API_URL apunta a API_DOMAIN" ;;
     *) rojo "VITE_API_URL no apunta a API_DOMAIN ($api)" ;;
   esac
-  case "$(val VITE_WS_URL)" in
-    *"$api"*) verde "VITE_WS_URL apunta a API_DOMAIN" ;;
-    *) rojo "VITE_WS_URL no apunta a API_DOMAIN ($api)" ;;
+  case "$app$api" in
+    *http*) rojo "APP_DOMAIN y API_DOMAIN van sin esquema (app.ejemplo.com, no https://...)" ;;
   esac
 fi
-case "$(val APP_DOMAIN)$(val API_DOMAIN)" in
-  *http*) rojo "APP_DOMAIN y API_DOMAIN van sin esquema (app.ejemplo.com, no https://app.ejemplo.com)" ;;
+
+# Vale para las dos arquitecturas: el frontend se compila contra VITE_API_URL y
+# el backend sólo acepta los orígenes de CORS_ORIGIN. Si no coinciden con los
+# hostnames publicados, el navegador bloquea cada request y no se ve hasta prod.
+for k in CORS_ORIGIN VITE_API_URL VITE_WS_URL; do
+  case "$(val "$k")" in
+    https://*) verde "$k usa https" ;;
+    "") ;;
+    *) rojo "$k debe usar https en producción" ;;
+  esac
+done
+ws="$(val VITE_WS_URL)"; apiurl="$(val VITE_API_URL)"
+case "$apiurl" in
+  "$ws"*) verde "VITE_WS_URL y VITE_API_URL comparten host" ;;
+  *) [ -n "$ws" ] && [ -n "$apiurl" ] && rojo "VITE_WS_URL y VITE_API_URL apuntan a hosts distintos: el WebSocket no conectaría" ;;
+esac
+case "$(val CORS_ORIGIN)" in
+  *"$(val VITE_WS_URL)"*) ambar "CORS_ORIGIN y VITE_WS_URL comparten host: revisá que el frontend y la API estén en hostnames distintos" ;;
 esac
 echo
 

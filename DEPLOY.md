@@ -1,19 +1,39 @@
 # Deploy a producción — RL Logística WMS
 
 Guía para levantar el stack en un VPS (OVHcloud VPS-2 o similar) con Docker
-Compose + Caddy (HTTPS) + Cloudflare DNS + backups diarios.
+Compose + Cloudflare Tunnel + backups diarios.
 
 ```
-Cloudflare DNS/Proxy
+Cloudflare (TLS + WAF)
+        ↕  túnel saliente
+VPS  ── firewall: solo 22. No hace falta abrir 80 ni 443.
         ↓
-VPS (OVHcloud)  ── firewall: 22, 80, 443
-        ↓
-Caddy (HTTPS automático)
-        ↓
-Docker Compose: frontend · backend · postgres · redis
+Docker Compose: cloudflared · frontend · backend · postgres · redis
         ↓
 Backups: pg_dump diario → R2/B2 (off-site) + snapshot del VPS
 ```
+
+`cloudflared` abre una conexión **saliente** hacia Cloudflare, que enruta los
+hostnames públicos hasta `frontend:80` y `backend:3000` por la red interna del
+compose. Nada entra al VPS desde internet, que es una superficie de ataque menos
+que un reverse proxy escuchando en 443.
+
+**Alternativa sin Cloudflare:** el repo conserva un `Caddyfile` con HTTPS
+automático por Let's Encrypt. Para usarlo hay que volver a agregar el servicio
+`caddy` al compose, abrir 80/443 en el firewall y definir `APP_DOMAIN`,
+`API_DOMAIN` y `ACME_EMAIL` en lugar de `TUNNEL_TOKEN`.
+
+## 0. Antes de cada despliegue
+
+```bash
+bash scripts/check-env.sh .env.prod
+```
+
+Valida que estén todas las variables, que los secretos tengan largo suficiente y
+sean distintos entre sí, que no haya quedado ningún valor de la plantilla, y que
+`CORS_ORIGIN` y `VITE_*` sean coherentes con los hostnames publicados. Sale con
+código distinto de cero si algo falta: encadenalo antes del `up` y no vas a
+desplegar a medias. Nunca imprime el valor de un secreto.
 
 ## 1. Prerrequisitos en el VPS
 - Ubuntu LTS, usuario no-root con sudo, SSH por clave (password deshabilitado).
@@ -21,14 +41,29 @@ Backups: pg_dump diario → R2/B2 (off-site) + snapshot del VPS
 - Docker + Docker Compose plugin instalados.
 - Repo clonado en `/opt/rl_logistica` (por ejemplo).
 
-## 2. DNS (Cloudflare)
-Crear registros A → IP del VPS:
-- `app.tudominio.com`  (frontend)
-- `api.tudominio.com`  (backend)
+## 2. Túnel (Cloudflare Zero Trust)
 
-Ponerlos en **"DNS only" (nube gris)** la primera vez para que Caddy emita los
-certificados Let's Encrypt. Después podés activar el proxy de Cloudflare en
-**"Full (strict)"**.
+En **Zero Trust → Networks → Tunnels**, crear un túnel para producción y anotar
+su token (*Install connector* → la parte que sigue a `--token`). Ese valor va en
+`TUNNEL_TOKEN` dentro de `.env.prod`.
+
+En **Public Hostname** del mismo túnel, agregar dos rutas:
+
+| Hostname | Service |
+|---|---|
+| `app.rl-logistica.com` | `http://frontend:80` |
+| `api.rl-logistica.com` | `http://backend:3000` |
+
+Los nombres de servicio son los del compose: `cloudflared` los alcanza por la red
+interna, así que no hace falta publicar puertos ni crear registros DNS a mano —
+Cloudflare crea los CNAME del túnel solo.
+
+No abras 80 ni 443 en el firewall del VPS: el túnel es saliente. Con `ufw`
+alcanza con permitir 22.
+
+> **Si usás la alternativa con Caddy** en lugar del túnel: creá registros A hacia
+> la IP del VPS, ponelos en *DNS only* (nube gris) la primera vez para que Caddy
+> emita los certificados, y recién después activá el proxy en *Full (strict)*.
 
 ## 3. Secretos — crear `.env.prod`
 ```bash

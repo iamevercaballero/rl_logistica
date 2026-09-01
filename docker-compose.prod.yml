@@ -3,14 +3,21 @@
 # Uso:
 #   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 #
+# Arquitectura: mismo esquema que staging. `cloudflared` abre un túnel SALIENTE
+# hacia Cloudflare, que termina TLS en su borde y enruta los hostnames públicos
+# (app./api.) hasta frontend:80 y backend:3000 por la red interna del compose.
+# No hay Caddy ni certificados que renovar acá.
+#
 # Seguridad:
-#  - La DB NO expone puertos al host (solo red interna del compose).
-#  - Backend y frontend se publican únicamente en 127.0.0.1, para que un
-#    reverse proxy (Nginx/Traefik con SSL) en el host los enrute.
-#    NUNCA exponer estos puertos directamente a internet sin TLS.
+#  - La DB y Redis NO exponen puertos al host (solo red interna del compose).
+#  - El VPS no necesita abrir 80 ni 443: el túnel sale, no entra. El único
+#    puerto publicado es el 3000 del backend, y sólo en 127.0.0.1 para poder
+#    diagnosticar desde el propio servidor.
 #  - Secretos vienen de .env.prod (gitignored), nunca hardcodeados.
 #  - La sección environment: del backend sobreescribe cualquier valor del
 #    .env.prod para las variables críticas de seguridad (belt & suspenders).
+#
+# Antes de levantar: bash scripts/check-env.sh .env.prod
 # =============================================================================
 
 services:
@@ -124,37 +131,34 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
-    # Sin 'ports': el frontend lo expone Caddy por red interna. Para debug local
+    # Sin 'ports': lo expone cloudflared por la red interna. Para debug local
     # podés agregar temporalmente "127.0.0.1:8080:80".
     networks: [internal]
 
-  # ── Caddy (reverse proxy + HTTPS automático) ───────────────────────────────
-  caddy:
-    image: caddy:2-alpine
-    container_name: rl_logistica_caddy_prod
+  # ── Cloudflare Tunnel (TLS termina en el borde de Cloudflare) ──────────────
+  # Reemplaza a Caddy, con el mismo criterio que staging. El túnel es una
+  # conexión SALIENTE hacia Cloudflare: el VPS no necesita abrir 80 ni 443, que
+  # es una superficie de ataque menos. El ruteo a los hostnames públicos
+  # (app./api.) se configura en el dashboard de Cloudflare Zero Trust
+  # (Networks → Tunnels → Public Hostname); acá sólo hace falta TUNNEL_TOKEN.
+  #
+  # El Caddyfile del repo queda como la alternativa documentada en DEPLOY.md
+  # para un despliegue sin Cloudflare; este compose no lo usa.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: rl_logistica_cloudflared_prod
     restart: unless-stopped
-    depends_on:
-      - frontend
-      - backend
+    command: tunnel --no-autoupdate run
     environment:
-      APP_DOMAIN: ${APP_DOMAIN}
-      API_DOMAIN: ${API_DOMAIN}
-      ACME_EMAIL: ${ACME_EMAIL}
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"   # HTTP/3 (QUIC)
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data       # certificados (persistentes — no perderlos)
-      - caddy_config:/config
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+    depends_on:
+      - backend
+      - frontend
     networks: [internal]
 
 volumes:
   postgres_data_prod:
   uploads_data_prod:   # Adjuntos y fotos — ver el comentario en el servicio `backend`
-  caddy_data:
-  caddy_config:
 
 networks:
   internal:

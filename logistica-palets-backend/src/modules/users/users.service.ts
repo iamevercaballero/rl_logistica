@@ -15,7 +15,7 @@ import * as bcrypt from 'bcrypt';
  * es exactamente para lo que sirve: encarece un ataque por fuerza bruta contra
  * un volcado de la base.
  */
-const BCRYPT_COST = 12;
+export const BCRYPT_COST = 12;
 import { User, UserRole } from './entities/user.entity';
 import { UserAuditLog, UserAuditAction } from './entities/user-audit-log.entity';
 
@@ -115,6 +115,17 @@ export class UsersService implements OnApplicationBootstrap {
 
   findByUsername(username: string) {
     return this.userRepo.findOne({ where: { username } });
+  }
+
+  /**
+   * Reescribe sólo el hash, sin tocar `passwordChangedAt`.
+   *
+   * Es importante que NO lo toque: esa marca invalida los tokens emitidos antes,
+   * y acá la contraseña no cambió — sólo se reprotegió con un coste mayor. Si se
+   * actualizara, subir el coste echaría a todos de su sesión.
+   */
+  async replacePasswordHash(id: string, passwordHash: string): Promise<void> {
+    await this.userRepo.update({ id }, { passwordHash });
   }
 
   /** Se llama desde `AuthService.login` tras una autenticación exitosa. */

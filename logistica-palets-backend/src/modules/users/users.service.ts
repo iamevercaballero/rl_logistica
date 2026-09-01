@@ -2,6 +2,20 @@ import { Injectable, BadRequestException, ForbiddenException, NotFoundException,
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
+
+/**
+ * Coste de bcrypt para las contraseñas nuevas (RL-M-19).
+ *
+ * Estaba en 10, por debajo de la recomendación actual de 12 para credenciales
+ * de un sistema de gestión. No hace falta migrar nada: el coste viaja dentro
+ * del propio hash, así que `bcrypt.compare` sigue validando los hashes viejos y
+ * cada cambio de contraseña reescribe el suyo con el coste nuevo.
+ *
+ * El precio es tiempo de CPU en el login —cada punto duplica el trabajo—, que
+ * es exactamente para lo que sirve: encarece un ataque por fuerza bruta contra
+ * un volcado de la base.
+ */
+const BCRYPT_COST = 12;
 import { User, UserRole } from './entities/user.entity';
 import { UserAuditLog, UserAuditAction } from './entities/user-audit-log.entity';
 
@@ -52,7 +66,7 @@ export class UsersService implements OnApplicationBootstrap {
 
     const username = envUser ?? 'admin';
     const password = envPassword ?? 'admin123'; // 'admin123' sólo en dev/test
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(password, BCRYPT_COST);
 
     // Se exige el cambio sólo cuando la contraseña vino de BOOTSTRAP_ADMIN_PASSWORD:
     // ese valor queda escrito en `.env.prod` y lo puede leer cualquiera con acceso
@@ -157,7 +171,7 @@ export class UsersService implements OnApplicationBootstrap {
     const exists = await this.userRepo.findOne({ where: { username } });
     if (exists) throw new BadRequestException('Username ya existe');
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(password, BCRYPT_COST);
     const user = this.userRepo.create({
       username,
       passwordHash,
@@ -224,7 +238,7 @@ export class UsersService implements OnApplicationBootstrap {
         await this.writeAudit(actor.userId, id, dto.active ? 'USER_ACTIVATED' : 'USER_DEACTIVATED', 'active', String(!dto.active), String(dto.active));
       }
       if (dto.password) {
-        user.passwordHash = await bcrypt.hash(dto.password, 10);
+        user.passwordHash = await bcrypt.hash(dto.password, BCRYPT_COST);
         user.passwordChangedAt = new Date();
         await this.writeAudit(actor.userId, id, 'PASSWORD_RESET');
       }
@@ -279,7 +293,7 @@ export class UsersService implements OnApplicationBootstrap {
     if (!user) throw new NotFoundException('Usuario no encontrado');
     this.assertManagerCeiling(actor, user.role);
 
-    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    user.passwordHash = await bcrypt.hash(newPassword, BCRYPT_COST);
     user.passwordChangedAt = new Date();
     user.mustChangePassword = mustChangePassword;
     await this.userRepo.save(user);
@@ -311,7 +325,7 @@ export class UsersService implements OnApplicationBootstrap {
     const ok = await bcrypt.compare(currentPassword, user.passwordHash);
     if (!ok) throw new BadRequestException('La contraseña actual no es correcta.');
 
-    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    user.passwordHash = await bcrypt.hash(newPassword, BCRYPT_COST);
     user.passwordChangedAt = new Date();
     user.mustChangePassword = false;
     await this.userRepo.save(user);

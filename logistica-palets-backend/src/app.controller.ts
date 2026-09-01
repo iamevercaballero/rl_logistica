@@ -1,10 +1,11 @@
-import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
+import { Controller, Get, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import { DataSource } from 'typeorm';
 
 @Controller()
 export class AppController {
   private readonly startedAt = Date.now();
+  private readonly logger = new Logger(AppController.name);
 
   constructor(private readonly dataSource: DataSource) {}
 
@@ -25,11 +26,15 @@ export class AppController {
       await this.dataSource.query('SELECT 1');
       checks.database = { status: 'ok', latencyMs: Date.now() - t0 };
     } catch (e) {
-      checks.database = {
-        status: 'down',
-        latencyMs: Date.now() - t0,
-        note: e instanceof Error ? e.message : 'unknown error',
-      };
+      // El mensaje del driver va al log, no a la respuesta (RL-M-04): este
+      // endpoint no pide autenticación y está exento del límite de tasa, así
+      // que devolvía a cualquiera el error crudo de PostgreSQL — que suele
+      // nombrar el host, el usuario y la base. Para monitorear alcanza con
+      // saber que está caída.
+      this.logger.error(
+        `Health check: la base no responde — ${e instanceof Error ? e.message : 'error desconocido'}`,
+      );
+      checks.database = { status: 'down', latencyMs: Date.now() - t0 };
       status = 'error';
     }
 

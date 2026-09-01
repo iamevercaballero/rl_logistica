@@ -9,6 +9,7 @@ import {
   IsString,
   IsUUID,
   Max,
+  ArrayMaxSize,
   MaxLength,
   Min,
   ValidateNested,
@@ -31,6 +32,10 @@ export class PalletItemDto {
   /** ENTRADA: código de lote interno (crea palet si no existe) */
   @IsOptional()
   @IsString()
+  // La columna es varchar(255): sin cota, una cadena más larga rompía con un
+  // 500 de PostgreSQL en vez de un 400 que explique el problema. El máximo real
+  // en uso son 10 caracteres.
+  @MaxLength(60)
   lotCode?: string;
 
   @NormalizeDecimal()
@@ -49,6 +54,7 @@ export class PalletItemDto {
   /** Lote SAP del día (ej: Z051308201) — agrupa lotes proveedor del mismo día */
   @IsOptional()
   @IsString()
+  @MaxLength(60)
   sapLot?: string;
 
   /** Lote del proveedor — sólo trazabilidad; puede repetirse entre lotes internos. */
@@ -205,6 +211,10 @@ export class CreateMovementDto {
 
   /** Ítems de palets: uno por palet físico */
   @IsOptional()
+  // Cota superior (RL-M-06): cada palet abre su propio bloqueo pesimista
+  // dentro de la transacción, así que una sola petición con miles de items
+  // podía sostener la tabla bloqueada. El máximo real observado son 30.
+  @ArrayMaxSize(200)
   @ValidateNested({ each: true })
   @Type(() => PalletItemDto)
   palletItems?: PalletItemDto[];

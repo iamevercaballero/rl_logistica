@@ -33,3 +33,16 @@ export async function login(username: string, password: string) {
 
   return { access_token: token, user: hydratedUser };
 }
+
+/**
+ * Cambio de contraseña propia.
+ *
+ * OJO: el backend actualiza `passwordChangedAt`, y `jwt.strategy` rechaza todo
+ * token emitido antes de esa marca. O sea que **esta llamada invalida la sesión
+ * en curso**: quien la use tiene que cerrar sesión y volver a entrar, o el
+ * siguiente request choca con un 401 y el interceptor lo saca de la app sin
+ * explicar por qué.
+ */
+export async function changeOwnPassword(currentPassword: string, newPassword: string): Promise<void> {
+  await api.post("/auth/change-password", { currentPassword, newPassword });
+}

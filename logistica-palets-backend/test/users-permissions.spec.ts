@@ -267,3 +267,51 @@ describe('auditoría administrativa', () => {
     expect(JSON.stringify(entry)).not.toContain('NuevaPassword1');
   });
 });
+
+/**
+ * Admin inicial (fresh install). La contraseña de `BOOTSTRAP_ADMIN_PASSWORD`
+ * queda escrita en `.env.prod`, así que tiene que dejar de servir apenas alguien
+ * entre — antes se creaba sin marca y el log sólo sugería cambiarla.
+ */
+describe('admin inicial — bootstrap', () => {
+  const ORIGINAL = { user: process.env.BOOTSTRAP_ADMIN_USER, pass: process.env.BOOTSTRAP_ADMIN_PASSWORD };
+
+  afterEach(() => {
+    if (ORIGINAL.user === undefined) delete process.env.BOOTSTRAP_ADMIN_USER;
+    else process.env.BOOTSTRAP_ADMIN_USER = ORIGINAL.user;
+    if (ORIGINAL.pass === undefined) delete process.env.BOOTSTRAP_ADMIN_PASSWORD;
+    else process.env.BOOTSTRAP_ADMIN_PASSWORD = ORIGINAL.pass;
+  });
+
+  it('con BOOTSTRAP_ADMIN_PASSWORD exige el cambio en el primer inicio de sesión', async () => {
+    process.env.BOOTSTRAP_ADMIN_USER = 'rl.admin';
+    process.env.BOOTSTRAP_ADMIN_PASSWORD = 'una-clave-asignada-larga';
+
+    await users.onApplicationBootstrap();
+
+    const admin = await ds.getRepository(User).findOne({ where: { username: 'rl.admin' } });
+    expect(admin).not.toBeNull();
+    expect(admin!.role).toBe('ADMIN');
+    expect(admin!.mustChangePassword).toBe(true);
+  });
+
+  it('el fallback de desarrollo no lo exige — admin123 es una decisión conocida', async () => {
+    delete process.env.BOOTSTRAP_ADMIN_USER;
+    delete process.env.BOOTSTRAP_ADMIN_PASSWORD;
+
+    await users.onApplicationBootstrap();
+
+    const admin = await ds.getRepository(User).findOne({ where: { username: 'admin' } });
+    expect(admin!.mustChangePassword).toBe(false);
+  });
+
+  it('no hace nada si ya hay usuarios: no pisa una instalación en uso', async () => {
+    await makeUser('OPERATOR', { username: 'ya.existe' });
+    process.env.BOOTSTRAP_ADMIN_USER = 'rl.admin';
+    process.env.BOOTSTRAP_ADMIN_PASSWORD = 'una-clave-asignada-larga';
+
+    await users.onApplicationBootstrap();
+
+    expect(await ds.getRepository(User).findOne({ where: { username: 'rl.admin' } })).toBeNull();
+  });
+});

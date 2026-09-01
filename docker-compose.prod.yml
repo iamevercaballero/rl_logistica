@@ -101,6 +101,14 @@ services:
       start_period: 40s
     ports:
       - "127.0.0.1:3000:3000"
+    volumes:
+      # Adjuntos y fotos de movimientos/remitos. SIN ESTO SE PIERDEN: el backend
+      # los escribe en /app/uploads, que vive dentro del contenedor, así que
+      # cualquier `--force-recreate` o rebuild de imagen los borra. No es un
+      # riesgo teórico — es lo que pasa en cada despliegue. docker-compose.yml y
+      # docker-compose.staging.yml ya tenían el volumen; producción, la única
+      # donde los archivos son irrecuperables, era la que no lo tenía.
+      - uploads_data_prod:/app/uploads
     networks: [internal]
 
   # ── Frontend (React → Nginx) ───────────────────────────────────────────────
@@ -144,6 +152,7 @@ services:
 
 volumes:
   postgres_data_prod:
+  uploads_data_prod:   # Adjuntos y fotos — ver el comentario en el servicio `backend`
   caddy_data:
   caddy_config:
 

@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { can } from "../auth/permissions";
 import WarehouseSelector from "../components/WarehouseSelector";
+import ChangePasswordModal from "../components/ChangePasswordModal";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveWarehouseId } from "../contexts/WarehouseContext";
 import { ThemeToggleButton } from "../design-system/theme";
@@ -129,6 +130,7 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const cmdPalette = useCommandPalette();
+  const [cambiarClave, setCambiarClave] = useState(false);
 
   /**
    * React Router no remonta la ruta activa al navegar a la misma URL en la que
@@ -345,6 +347,16 @@ export default function AppLayout() {
             </div>
           </div>
           <ThemeToggleButton />
+          <button
+            className="sidebar-logout"
+            onClick={() => setCambiarClave(true)}
+            aria-label="Cambiar mi contraseña"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+            Cambiar contraseña
+          </button>
           <button className="sidebar-logout" onClick={handleLogout} aria-label="Cerrar sesión">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
@@ -378,6 +390,16 @@ export default function AppLayout() {
         onClose={cmdPalette.close}
         onNavigateSamePath={() => setRefreshNonce((n) => n + 1)}
       />
+
+      {/* Obligatorio cuando el backend marca `mustChangePassword` — el admin
+          inicial, cuya clave vive en el .env, y cualquiera al que un supervisor
+          le haya reseteado la contraseña. En ese modo el modal no se cierra. */}
+      {(user.mustChangePassword || cambiarClave) && (
+        <ChangePasswordModal
+          obligatorio={user.mustChangePassword}
+          onClose={() => setCambiarClave(false)}
+        />
+      )}
     </div>
   );
 }

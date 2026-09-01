@@ -53,10 +53,26 @@ export class UsersService implements OnApplicationBootstrap {
     const username = envUser ?? 'admin';
     const password = envPassword ?? 'admin123'; // 'admin123' sólo en dev/test
     const passwordHash = await bcrypt.hash(password, 10);
+
+    // Se exige el cambio sólo cuando la contraseña vino de BOOTSTRAP_ADMIN_PASSWORD:
+    // ese valor queda escrito en `.env.prod` y lo puede leer cualquiera con acceso
+    // al servidor, así que tiene que dejar de servir apenas alguien entre. Con el
+    // fallback de desarrollo no se exige: ahí `admin123` es una decisión conocida
+    // de quien levanta el entorno, no una credencial que le asignó otra persona.
+    const mustChangePassword = !!envPassword;
+
     await this.userRepo.save(
-      this.userRepo.create({ username, passwordHash, role: 'ADMIN', active: true, fullName: 'Administrador' }),
+      this.userRepo.create({
+        username, passwordHash, role: 'ADMIN', active: true,
+        fullName: 'Administrador', mustChangePassword,
+      }),
     );
-    this.logger.warn(`Fresh install: usuario admin creado (usuario: ${username}). Cambiá la contraseña.`);
+    this.logger.warn(
+      `Fresh install: usuario admin creado (usuario: ${username}).` +
+        (mustChangePassword
+          ? ' Se pedirá cambiar la contraseña en el primer inicio de sesión.'
+          : ' Cambiá la contraseña.'),
+    );
   }
 
   findAll() {

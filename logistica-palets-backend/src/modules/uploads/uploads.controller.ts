@@ -13,6 +13,7 @@ import {
   UseGuards,
   UseInterceptors,
   ParseUUIDPipe,
+  ForbiddenException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { MulterOptions } from '@nestjs/platform-express/multer/interfaces/multer-options.interface';
@@ -25,6 +26,12 @@ import { RolesGuard } from '../auth/roles/roles.guard';
 import { Roles } from '../auth/roles/roles.decorator';
 import { PermissionGuard } from '../permissions/guards/permission.guard';
 import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { WarehouseAccessService, type AccessUser } from '../warehouses/warehouse-access.service';
+import type { AttachmentEntityType } from './entities/attachment.entity';
+
+/** El rol hace falta para resolver el alcance: `AccessUser` lo exige.
+ *  `JwtAuthGuard` ya lo pone en `req.user`. */
+type AuthedRequest = Request & { user: AccessUser & { username?: string } };
 import { MulterExceptionFilter } from './multer-exception.filter';
 import { AttachmentQueryDto, UploadAttachmentDto } from './dto/upload-attachment.dto';
 import {
@@ -77,7 +84,49 @@ const ATTACHMENT_UPLOAD: MulterOptions = {
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
 @Controller('attachments')
 export class UploadsController {
-  constructor(private readonly service: UploadsService) {}
+  constructor(
+    private readonly service: UploadsService,
+    private readonly access: WarehouseAccessService,
+  ) {}
+
+  /**
+   * Alcance de un adjunto (RL-M-07).
+   *
+   * Hasta acá cualquier rol autenticado podía listar y descargar los adjuntos de
+   * cualquier entidad con sólo conocer un UUID: un operador del depósito 02 veía
+   * las fotos y los remitos del 01. El permiso fino `attachments:read` lo tienen
+   * todos los roles, así que no acotaba nada.
+   *
+   * El depósito no se toma del adjunto —no lo guarda— sino de la entidad a la
+   * que pertenece, resuelta contra la base. Los adjuntos de VEHICLE quedan
+   * fuera a propósito: cuelgan de una inspección de transporte, y los
+   * transportes son un catálogo global sin depósito; ahí el control es el
+   * permiso del módulo `transports`.
+   */
+  private async assertScope(
+    user: AccessUser,
+    entityType: AttachmentEntityType,
+    entityId: string,
+  ): Promise<void> {
+    if (entityType === 'VEHICLE') return;
+    const entidad = entityType === 'MOVEMENT' ? 'movement'
+      : entityType === 'DOCUMENT' ? 'document'
+      : 'adjustment';
+
+    // Se resuelve el depósito acá en vez de delegar en `assertEntityAccess`
+    // porque ese método responde 400 cuando no puede determinarlo, y eso
+    // dejaría fuera hasta a un ADMIN los adjuntos de un registro anterior al
+    // multi-depósito. El criterio correcto es el que ya usa el módulo de
+    // ajustes: sin depósito, sólo los roles de alcance global.
+    const warehouseId = await this.access.resolveEntityWarehouseId(entidad, entityId);
+    if (!warehouseId) {
+      if (this.access.hasGlobalScope(user.role)) return;
+      throw new ForbiddenException(
+        'El adjunto pertenece a un registro sin depósito asignado: no podés operarlo.',
+      );
+    }
+    await this.access.assertWarehouseAccess(user, warehouseId);
+  }
 
   /**
    * Sube un archivo y lo vincula a una entidad (MOVEMENT, DOCUMENT, ADJUSTMENT).
@@ -88,14 +137,15 @@ export class UploadsController {
   @UseFilters(MulterExceptionFilter)
   @UseInterceptors(FileInterceptor('file', ATTACHMENT_UPLOAD))
   @RequirePermission('attachments', 'create')
-  upload(
+  async upload(
     @UploadedFile() file: Express.Multer.File,
     @Query() dto: UploadAttachmentDto,
-    @Req() req: Request & { user: { userId: string; username?: string } },
+    @Req() req: AuthedRequest,
   ) {
     // 400, no un Error pelado: sin `file` la petición está mal formada, no es
     // una falla del servidor.
     if (!file) throw new BadRequestException('No se recibió ningún archivo.');
+    await this.assertScope(req.user, dto.entityType, dto.entityId);
     return this.service.saveAttachment(
       file,
       { ...dto, category: dto.category ?? 'OTRO' },
@@ -108,7 +158,8 @@ export class UploadsController {
   @Get()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
   @RequirePermission('attachments', 'read')
-  list(@Query() query: AttachmentQueryDto) {
+  async list(@Query() query: AttachmentQueryDto, @Req() req: AuthedRequest) {
+    await this.assertScope(req.user, query.entityType, query.entityId);
     return this.service.getAttachments(query.entityType, query.entityId);
   }
 
@@ -134,7 +185,8 @@ export class UploadsController {
   @Get('log')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
   @RequirePermission('bitacora', 'read')
-  getLog(@Query() query: AttachmentQueryDto) {
+  async getLog(@Query() query: AttachmentQueryDto, @Req() req: AuthedRequest) {
+    await this.assertScope(req.user, query.entityType as AttachmentEntityType, query.entityId);
     return this.service.getDispatchLog(query.entityType, query.entityId);
   }
 
@@ -150,7 +202,13 @@ export class UploadsController {
   @Get(':id/file')
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
   @RequirePermission('attachments', 'read')
-  async download(@Param('id', ParseUUIDPipe) id: string, @Res({ passthrough: true }) res: Response) {
+  async download(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res({ passthrough: true }) res: Response,
+    @Req() req: AuthedRequest,
+  ) {
+    const alcance = await this.service.attachmentScope(id);
+    await this.assertScope(req.user, alcance.entityType, alcance.entityId);
     const { stream, mimeType, filename } = await this.service.streamFile(id);
     const disposition = isInlineSafe(mimeType) ? 'inline' : 'attachment';
     res.set({
@@ -167,10 +225,12 @@ export class UploadsController {
   @Delete(':id')
   @Roles('ADMIN', 'MANAGER')
   @RequirePermission('attachments', 'remove')
-  remove(
+  async remove(
     @Param('id', ParseUUIDPipe) id: string,
-    @Req() req: Request & { user: { userId: string; username?: string } },
+    @Req() req: AuthedRequest,
   ) {
+    const alcance = await this.service.attachmentScope(id);
+    await this.assertScope(req.user, alcance.entityType, alcance.entityId);
     return this.service.deleteAttachment(id, req.user.userId, req.user.username);
   }
 }

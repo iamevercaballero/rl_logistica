@@ -119,6 +119,20 @@ export class UploadsService {
     return attachment;
   }
 
+  /**
+   * Entidad a la que pertenece un adjunto. La usa el controlador para decidir
+   * el acceso antes de servir el archivo: hasta acá alcanzaba con conocer el
+   * UUID del adjunto para descargarlo, sin importar de qué depósito fuera.
+   */
+  async attachmentScope(id: string): Promise<{ entityType: AttachmentEntityType; entityId: string }> {
+    const fila = await this.attachRepo.findOne({
+      where: { id },
+      select: { id: true, entityType: true, entityId: true },
+    });
+    if (!fila) throw new NotFoundException('Adjunto no encontrado');
+    return { entityType: fila.entityType as AttachmentEntityType, entityId: fila.entityId };
+  }
+
   async getAttachments(entityType: AttachmentEntityType, entityId: string) {
     return this.attachRepo.find({
       where: { entityType, entityId },

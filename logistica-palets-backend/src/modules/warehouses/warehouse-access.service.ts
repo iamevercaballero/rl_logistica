@@ -27,7 +27,7 @@ const GLOBAL_SCOPE_ROLES: Record<string, boolean> = {
 };
 
 /** Entidades desde las que se puede derivar el depósito real de una operación. */
-export type WarehouseSourceEntity = 'location' | 'pallet' | 'lot' | 'movement' | 'document';
+export type WarehouseSourceEntity = 'location' | 'pallet' | 'lot' | 'movement' | 'document' | 'adjustment';
 
 /**
  * Alcance de depósitos de una consulta: lista de ids permitidos, o `null` para
@@ -190,6 +190,7 @@ export class WarehouseAccessService {
         SELECT COALESCE(m."warehouseId", m."toWarehouseId", m."fromWarehouseId") AS id
         FROM movements m WHERE m.id = $1`,
       document: `SELECT "warehouseId" AS id FROM logistics_documents WHERE id = $1`,
+      adjustment: `SELECT "warehouseId" AS id FROM adjustment_requests WHERE id = $1`,
     };
 
     const rows = await runner.query<Array<{ id: string | null }>>(sql[entity], [id]);

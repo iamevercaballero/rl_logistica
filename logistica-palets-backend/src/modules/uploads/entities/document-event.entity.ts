@@ -11,6 +11,7 @@ export const documentEventTypes = [
   'ARCHIVO_ELIMINADO',   // Archivo adjunto eliminado
   'ENVIADO_APROBACION',  // Ajuste enviado para aprobación
   'APROBADO',            // Ajuste aprobado, stock posteado
+  'AUTOAPROBADO',        // Ajuste aprobado por su propio creador (no había otro aprobador)
   'RECHAZADO',           // Ajuste rechazado (vuelve a borrador)
   'ANULACION_SOLICITADA',// Solicitud de anulación generada
   'ANULADO',             // Movimiento marcado como VOIDED

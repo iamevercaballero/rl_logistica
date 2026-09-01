@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, EntityManager } from 'typeorm';
+import { DataSource, EntityManager, In } from 'typeorm';
 import { AdjustmentRequest } from './entities/adjustment-request.entity';
 import { AdjustmentRequestLine } from './entities/adjustment-request-line.entity';
 import { DocumentSequenceService } from '../movements/document-sequence.service';
@@ -27,6 +27,15 @@ import {
 } from '../warehouses/warehouse-access.service';
 import { CacheService } from '../cache/cache.service';
 import { EventsGateway } from '../events/events.gateway';
+import { PermissionsService } from '../permissions/permissions.service';
+import { User, type UserRole } from '../users/entities/user.entity';
+
+/**
+ * Roles que pueden aprobar un ajuste. Tiene que coincidir con el `@Roles` del
+ * controlador: el permiso fino `adjustments.approve` se evalúa después, pero el
+ * rol es un filtro previo que ese permiso no puede saltear.
+ */
+export const APPROVER_ROLES: UserRole[] = ['ADMIN', 'MANAGER'];
 
 
 @Injectable()
@@ -39,7 +48,86 @@ export class AdjustmentsService {
     private readonly cache: CacheService,
     private readonly events: EventsGateway,
     private readonly access: WarehouseAccessService,
+    private readonly permissions: PermissionsService,
   ) {}
+
+  // ─────────────────────────────────────────────────────────
+  //  SEGREGACIÓN DE FUNCIONES
+  // ─────────────────────────────────────────────────────────
+
+  /**
+   * Otros usuarios que podrían aprobar esta solicitud, además de `excludeUserId`.
+   *
+   * Cuenta como aprobador disponible sólo quien cumple las tres condiciones que
+   * el propio endpoint exige: está activo, su rol está entre los que aprueban y
+   * conserva el permiso fino `adjustments.approve` —que un override por usuario
+   * puede haberle quitado—, y tiene acceso al depósito de la solicitud.
+   *
+   * Sobre lo último: hoy ADMIN y MANAGER tienen los dos alcance global, así que
+   * el depósito nunca termina acotando el conjunto y esa rama no se ejecuta. Se
+   * deja igual porque el día que MANAGER pase a estar acotado por asignaciones
+   * —evolución natural en multi-depósito— sin ella este método contaría de más:
+   * bloquearía a un aprobador único diciéndole que le pida la firma a alguien
+   * que en realidad no puede aprobar ese ajuste. `adjustment-segregation.spec.ts`
+   * fija el supuesto para que ese cambio de política falle acá y no en silencio.
+   */
+  private async otherEligibleApprovers(
+    excludeUserId: string,
+    warehouseId: string | null,
+  ): Promise<{ id: string; username: string }[]> {
+    const candidatos = await this.dataSource.getRepository(User).find({
+      where: { active: true, role: In(APPROVER_ROLES) },
+      select: { id: true, username: true, role: true },
+    });
+    const otros = candidatos.filter((u) => u.id !== excludeUserId);
+    if (otros.length === 0) return [];
+
+    // Los roles de alcance global no necesitan asignación; al resto se le
+    // consultan las suyas en un solo viaje en vez de uno por usuario.
+    const locales = otros.filter((u) => !this.access.hasGlobalScope(u.role));
+    const asignaciones = locales.length
+      ? await this.access.listAssignmentsForUsers(locales.map((u) => u.id))
+      : new Map<string, string[]>();
+
+    const habilitados: { id: string; username: string }[] = [];
+    for (const u of otros) {
+      if (!this.access.hasGlobalScope(u.role)) {
+        // Una solicitud sin depósito sólo la operan los roles globales — mismo
+        // criterio que `assertRequestAccess`.
+        if (!warehouseId) continue;
+        if (!(asignaciones.get(u.id) ?? []).includes(warehouseId)) continue;
+      }
+      if (!(await this.permissions.hasPermission(u.id, u.role, 'adjustments', 'approve'))) continue;
+      habilitados.push({ id: u.id, username: u.username });
+    }
+    return habilitados;
+  }
+
+  /**
+   * Motivo por el que `userId` no puede aprobar esta solicitud, o `null` si sí puede.
+   *
+   * Quien crea un ajuste no lo aprueba: es la operación que corrige stock sin un
+   * documento físico detrás, así que es justo donde el control cruzado sirve.
+   *
+   * La excepción es automática y deliberada: si no existe **ningún otro** usuario
+   * habilitado para aprobar esta solicitud, bloquear no agregaría control —no hay
+   * segunda firma posible— y dejaría al depósito sin poder ajustar ni anular nada.
+   * En ese caso se aprueba y queda registrado como `AUTOAPROBADO` en la bitácora.
+   * El control se reactiva solo en cuanto exista un segundo aprobador, sin que
+   * haya nada que configurar ni que acordarse de apagar.
+   */
+  private async approvalBlockedReason(
+    request: { createdById: string; warehouseId?: string | null },
+    userId: string,
+  ): Promise<string | null> {
+    if (request.createdById !== userId) return null;
+    const otros = await this.otherEligibleApprovers(userId, request.warehouseId ?? null);
+    if (otros.length === 0) return null;
+    return (
+      'No podés aprobar una solicitud que creaste vos. ' +
+      `Puede aprobarla: ${otros.map((u) => u.username).join(', ')}.`
+    );
+  }
 
   // ─────────────────────────────────────────────────────────
   //  SECUENCIAS (delegadas a DocumentSequenceService)
@@ -198,6 +286,13 @@ export class AdjustmentsService {
       throw new BadRequestException('Solo se pueden aprobar solicitudes en estado PENDIENTE_APROBACION.');
     }
 
+    // Segregación de funciones. Se evalúa antes de abrir la transacción para no
+    // sostener el lock mientras se consultan usuarios y permisos; `createdById`
+    // no lo modifica ningún endpoint, así que no hay carrera que cubrir.
+    const motivo = await this.approvalBlockedReason(req, userId);
+    if (motivo) throw new ForbiddenException(motivo);
+    const autoaprobacion = req.createdById === userId;
+
     const lines = await this.dataSource.getRepository(AdjustmentRequestLine).find({ where: { requestId: id } });
     if (lines.length === 0) throw new BadRequestException('No hay líneas en el ajuste.');
 
@@ -249,6 +344,19 @@ export class AdjustmentsService {
         description: `Solicitud ${locked.code} aprobada — stock actualizado (${movementIds.length} movimiento(s))`,
         userId, entityCode: locked.code, manager,
       });
+
+      // La excepción a la segregación queda explícita en la bitácora, con su
+      // propio tipo de evento: un ajuste aprobado por quien lo creó tiene que
+      // poder encontrarse buscando, no leyendo descripciones una por una.
+      if (autoaprobacion) {
+        await this.uploads.log({
+          entityType: 'ADJUSTMENT', entityId: id, eventType: 'AUTOAPROBADO',
+          description:
+            `Aprobada por su propio creador — no hay ningún otro usuario habilitado para aprobar ` +
+            `${locked.warehouseId ? 'en este depósito' : 'solicitudes sin depósito asignado'}`,
+          userId, entityCode: locked.code, manager,
+        });
+      }
 
       // Cierra el ciclo en la bitácora del movimiento original: hasta acá solo
       // constaba la solicitud (ANULACION_SOLICITADA); sin este evento, quien mira
@@ -347,7 +455,7 @@ export class AdjustmentsService {
   //  CONSULTAS
   // ─────────────────────────────────────────────────────────
 
-  async findAll(query: AdjustmentQueryDto, scope: WarehouseScope = null) {
+  async findAll(query: AdjustmentQueryDto, scope: WarehouseScope = null, user?: AccessUser) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 50;
 
@@ -375,7 +483,35 @@ export class AdjustmentsService {
     }
 
     const [data, total] = await qb.getManyAndCount();
-    return { data, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+
+    // Marca las solicitudes que quien consulta no podría aprobar por segregación
+    // de funciones, para que el frontend deshabilite el botón con el motivo a la
+    // vista en vez de dejar que falle con un 403.
+    //
+    // Sólo se calcula para las pendientes que creó el propio usuario, que es el
+    // único caso donde la respuesta no es evidente, y el resultado se memoiza por
+    // depósito: en la carga habitual de la pantalla no cuesta ninguna consulta
+    // extra, y cuando cuesta es una sola.
+    const propias = new Set(
+      user
+        ? data.filter((r) => r.status === 'PENDIENTE_APROBACION' && r.createdById === user.userId)
+        : [],
+    );
+    const motivoPorDeposito = new Map<string, string | null>();
+    for (const req of propias) {
+      const clave = req.warehouseId ?? '';
+      if (!motivoPorDeposito.has(clave)) {
+        motivoPorDeposito.set(clave, await this.approvalBlockedReason(req, user!.userId));
+      }
+    }
+
+    return {
+      data: data.map((r) => ({
+        ...r,
+        approvalBlockedReason: propias.has(r) ? motivoPorDeposito.get(r.warehouseId ?? '') ?? null : null,
+      })),
+      meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
   }
 
   async findOne(id: string, user?: AccessUser) {

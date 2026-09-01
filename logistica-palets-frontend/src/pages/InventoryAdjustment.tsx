@@ -977,6 +977,7 @@ function RequestCard({ adj, canApprove, rejectingId, rejectReason, onApprove, on
   onRejectReasonChange: (v: string) => void; onCancel: () => void; onLog: () => void; onSubmitDraft: () => void;
   approving: boolean; rejecting: boolean; submittingDraft: boolean;
 }) {
+  const approvalBlocked = adj.approvalBlockedReason ?? null;
   const isPending = adj.status === "PENDIENTE_APROBACION";
   const isDraft = adj.status === "BORRADOR";
   const isEditable = adj.status === "BORRADOR" || adj.status === "RECHAZADO";
@@ -1003,6 +1004,9 @@ function RequestCard({ adj, canApprove, rejectingId, rejectReason, onApprove, on
           {adj.rejectReason && (
             <div style={{ fontSize: 12, color: "var(--danger)", marginTop: 4 }}>⚠ Rechazado: {adj.rejectReason}</div>
           )}
+          {isPending && canApprove && approvalBlocked && (
+            <div style={{ fontSize: 12, color: "var(--warning)", marginTop: 4 }}>⊘ {approvalBlocked}</div>
+          )}
         </div>
         <div style={{ display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
           <button className="btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={onLog} title="Ver bitácora y adjuntos"></button>
@@ -1013,7 +1017,11 @@ function RequestCard({ adj, canApprove, rejectingId, rejectReason, onApprove, on
           )}
           {isPending && canApprove && !isRejecting && (
             <>
-              <button className="btn btn--primary" style={{ fontSize: 12 }} onClick={onApprove} disabled={approving}>{approving ? "Aprobando..." : "✓ Aprobar"}</button>
+              {/* El rechazo sigue disponible para el creador: devuelve la solicitud
+                  a borrador, no mueve stock. Lo que la segregacion bloquea es aprobar. */}
+              <button className="btn btn--primary" style={{ fontSize: 12 }} onClick={onApprove}
+                disabled={approving || !!approvalBlocked} title={approvalBlocked ?? undefined}>
+                {approving ? "Aprobando..." : "✓ Aprobar"}</button>
               <button className="btn" style={{ fontSize: 12, color: "var(--danger)" }} onClick={onStartReject}>✕ Rechazar</button>
             </>
           )}

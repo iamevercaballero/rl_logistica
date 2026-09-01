@@ -34,6 +34,13 @@ export type AdjustmentRequest = {
   approvedAt?: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Motivo por el que este usuario no puede aprobar esta solicitud, o null si
+   * puede. Lo calcula el backend: la segregacion de funciones tiene una
+   * excepcion (ser el unico aprobador habilitado) que el frontend no puede
+   * deducir por su cuenta comparando createdById con el usuario actual.
+   */
+  approvalBlockedReason?: string | null;
 };
 
 export type AdjustmentLine = {

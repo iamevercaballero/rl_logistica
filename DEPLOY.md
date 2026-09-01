@@ -142,6 +142,30 @@ desactivarlo en lugar de eliminarlo, con un aviso que lo explica. Antes se
 borraba y dejaba movimientos apuntando al vacío. Es el mismo criterio que ya
 tenían Materiales y Lotes, ahora también en Ubicaciones y Depósitos.
 
+## 2.b Quién aprueba los ajustes (RL-A-12)
+
+Desde esta versión **quien crea un ajuste de inventario no puede aprobarlo**, y
+lo mismo vale para la anulación de un movimiento: la solicitud la aprueba otra
+persona. Es el único circuito que corrige stock sin un documento físico detrás.
+
+La excepción es automática: si el sistema verifica que **no hay ningún otro
+usuario habilitado** para aprobar esa solicitud, deja aprobarla y la registra en
+la bitácora como `AUTOAPROBADO`. No hay nada que configurar, y el control se
+reactiva solo en cuanto exista un segundo aprobador.
+
+**Revisar antes de arrancar.** Cuenta como aprobador disponible todo usuario que
+esté activo, tenga rol ADMIN o MANAGER y conserve el permiso
+`adjustments.approve`. Una cuenta técnica o de desarrollo con rol ADMIN cuenta
+igual que una operativa: si existe, el encargado real deja de poder aprobar sus
+propios ajustes y el sistema le va a decir que se los pida a esa cuenta.
+
+Si esa cuenta no va a aprobar ajustes en la práctica, sacale el permiso en
+**Usuarios → (usuario) → Permisos → Ajustes → Aprobar → Denegar**
+(`PUT /users/:id/permissions`). Conserva ADMIN para todo lo demás y deja de
+contar como segunda firma. Verificación: con un solo aprobador operativo, sus
+aprobaciones aparecen en la bitácora del ajuste como `AUTOAPROBADO`; si aparecen
+sólo como `APROBADO`, es que había otro aprobador y el control cruzado actuó.
+
 ## 3. Secretos — crear `.env.prod`
 ```bash
 cp .env.prod.example .env.prod

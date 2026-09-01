@@ -119,7 +119,11 @@ export class AdjustmentsController {
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
   @RequirePermission('adjustments', 'read')
   async findAll(@Query() query: AdjustmentQueryDto, @Req() req: AuthedRequest) {
-    return this.service.findAll(query, await this.scopeOf(req, query.warehouseId));
+    return this.service.findAll(
+      query,
+      await this.scopeOf(req, query.warehouseId),
+      { userId: req.user.userId, role: req.user.role },
+    );
   }
 
   /** Detalle de una solicitud con sus líneas. */

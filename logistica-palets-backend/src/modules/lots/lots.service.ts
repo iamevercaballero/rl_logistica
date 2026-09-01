@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { Lot, LOT_STATUS_ARCHIVED } from './entities/lot.entity';
 import { Product } from '../products/entities/product.entity';
 import { Pallet } from '../pallets/entities/pallet.entity';
-import { formatQuantity, quantitiesEqual } from '../../common/quantity';
+import { formatQuantity, quantitiesEqual, quantityDelta, roundQuantity } from '../../common/quantity';
 import { CreateLotDto } from './dto/create-lot.dto';
 import { UpdateLotDto } from './dto/update-lot.dto';
 import type { WarehouseScope } from '../warehouses/warehouse-access.service';
@@ -354,11 +354,18 @@ export class LotsService {
       .andWhere("p.status != 'EXITED'")
       .getRawOne();
 
-    const real = Number(result?.total ?? 0);
+    const real = roundQuantity(Number(result?.total ?? 0));
     const previous = lot.stockActual;
-    lot.stockActual = real;
-    await this.lotRepo.save(lot);
-    return { lotId: id, lotCode: lot.lotCode, previous, reconciled: real, delta: real - previous };
+
+    // `quantitiesEqual` compara los enteros escalados, no los flotantes: con un
+    // `!==` directo, un residuo de coma flotante (100.00000000001 vs 100) se
+    // guardaba como si fuera una corrección real y ensuciaba el informe.
+    if (!quantitiesEqual(real, previous)) {
+      lot.stockActual = real;
+      await this.lotRepo.save(lot);
+    }
+
+    return { lotId: id, lotCode: lot.lotCode, previous, reconciled: real, delta: quantityDelta(real, previous) };
   }
 
   /**
@@ -379,9 +386,15 @@ export class LotsService {
         .andWhere("p.status != 'EXITED'")
         .getRawOne();
 
-      const real = Number(result?.total ?? 0);
-      if (real !== lot.stockActual) {
-        corrections.push({ lotId: lot.id, lotCode: lot.lotCode, previous: lot.stockActual, reconciled: real, delta: real - lot.stockActual });
+      const real = roundQuantity(Number(result?.total ?? 0));
+      // Igual que en `reconcileStock`: se comparan los enteros escalados, no los
+      // flotantes. Con `!==` un residuo de coma flotante contaba como corrección
+      // y llenaba el informe de diferencias que no existen.
+      if (!quantitiesEqual(real, lot.stockActual)) {
+        corrections.push({
+          lotId: lot.id, lotCode: lot.lotCode, previous: lot.stockActual,
+          reconciled: real, delta: quantityDelta(real, lot.stockActual),
+        });
         lot.stockActual = real;
         await this.lotRepo.save(lot);
       }

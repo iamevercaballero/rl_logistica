@@ -2462,10 +2462,34 @@ export class MovementsService {
       .setLock('pessimistic_write')
       .where('lot.id = :id', { id: lotId })
       .getOne();
-    if (lot) {
-      lot.stockActual = Math.max(0, roundQuantity(lot.stockActual + delta));
-      await repo.save(lot);
+    if (!lot) return;
+
+    const nuevo = roundQuantity(lot.stockActual + delta);
+
+    // Antes acá había un `Math.max(0, ...)`: una resta que dejaba el lote en
+    // negativo se recortaba a cero y seguía como si nada. Eso enterraba
+    // exactamente la información que hacía falta — que el contador del lote y
+    // sus pallets ya no coinciden— y la divergencia se descubría mucho después,
+    // como una diferencia de inventario sin explicación.
+    //
+    // Ahora corta y revierte la transacción, igual que `applyDecrease` con el
+    // stock de la celda. El mensaje nombra el lote y la reconciliación, porque
+    // el caso real no es "el operador se equivocó" sino "el contador quedó
+    // desfasado y hay que recalcularlo desde los pallets".
+    //
+    // Es además lo que evita un error crudo de Postgres: desde RL-C-03 hay un
+    // CHECK `stockActual >= 0`, así que sin esta comprobación el usuario vería
+    // una violación de restricción en vez de una explicación.
+    if (nuevo < 0) {
+      throw new BadRequestException(
+        `El lote ${lot.lotCode} tiene ${formatQuantity(lot.stockActual)} y la operación intenta descontar ` +
+          `${formatQuantity(Math.abs(delta))}. El contador del lote no coincide con sus pallets: ` +
+          `reconcilialo desde Lotes (o POST /api/lots/${lot.id}/reconcile) y volvé a intentar.`,
+      );
     }
+
+    lot.stockActual = nuevo;
+    await repo.save(lot);
   }
 
   private parseNumber(value: unknown) { return Number(value) || 0; }

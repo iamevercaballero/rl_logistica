@@ -87,6 +87,23 @@ no durante la ventana.
 El mismo informe trae el volumen de las tablas: sirve para estimar cuánto va a
 tardar. Postgres valida cada clave foránea recorriendo la tabla una vez.
 
+### 1.b Desvío del contador de lotes (RL-A-09)
+
+```bash
+docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" rl_logistica_db_prod   psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f - < scripts/check-lot-stock-drift.sql
+```
+
+También de sólo lectura. Lista los lotes cuyo `stockActual` no coincide con la
+suma de sus pallets.
+
+Importa correrlo **antes**, no después: hasta este cambio, una resta que dejaba
+el contador en negativo se recortaba a cero en silencio, así que puede haber
+desvíos arrastrados hace tiempo. Desde ahora esas salidas **cortan** con un
+mensaje que pide reconciliar — que es lo correcto, pero mejor resolverlo en frío
+que descubrirlo cuando un operador no pueda despachar.
+
+Si hay desvíos: `POST /api/lots/reconcile-all` los recalcula desde los pallets.
+
 ### 2. Durante la ventana
 
 ```bash

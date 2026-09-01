@@ -1124,13 +1124,46 @@ export class LocationsService {
       );
     }
 
-    // Sin pallets/stock vivos, cualquier pila que quede acá es residual (vacía
-    // o con solo pallets EXITED) — limpiarla ahora evita que quede colgada
-    // apuntando a un locationId que está a punto de dejar de existir (mismo
-    // riesgo de huérfano que ya se evita arriba para pallets/stocks).
+    // Sin contenido vivo todavía puede haber historia: pallets ya despachados,
+    // movimientos, detalles, o filas de stock en cero (la suma da 0 y el chequeo
+    // de arriba las deja pasar, pero la fila existe). Antes se borraba igual y
+    // esas filas quedaban apuntando a un id inexistente — el mismo huérfano que
+    // el control de arriba evita para el contenido vivo, pero para el pasado.
+    //
+    // Desde RL-C-03 la base tampoco lo permite, así que sin este control el
+    // usuario recibiría un 500 crudo de Postgres en lugar de una explicación.
+    // Con historia se desactiva, igual que Materiales, Depósitos y Lotes: la
+    // ubicación deja de ofrecerse para operar y su pasado sigue resolviendo.
+    const [uso] = (await this.locationRepo.query(
+      `SELECT
+         (SELECT COUNT(*) FROM pallets WHERE "currentLocationId" = $1)::int   AS pallets,
+         (SELECT COUNT(*) FROM stocks  WHERE "locationId" = $1)::int          AS stocks,
+         (SELECT COUNT(*) FROM movements
+           WHERE "locationId" = $1 OR "fromLocationId" = $1
+              OR "toLocationId" = $1)::int                                    AS movimientos,
+         (SELECT COUNT(*) FROM movement_details WHERE "locationId" = $1)::int AS detalles`,
+      [id],
+    )) as Array<{ pallets: number; stocks: number; movimientos: number; detalles: number }>;
+
+    if (uso.pallets + uso.stocks + uso.movimientos + uso.detalles > 0) {
+      location.active = false;
+      await this.locationRepo.save(location);
+      return {
+        deleted: true,
+        deactivated: true,
+        id: location.id,
+        reason:
+          `La ubicación ${location.code} tiene ${uso.movimientos + uso.detalles} registro(s) de movimiento ` +
+          `y ${uso.pallets} palet(s) en su historial: se desactivó en lugar de eliminarse para preservar la trazabilidad.`,
+      };
+    }
+
+    // Sin contenido ni historia, cualquier pila que quede acá es residual —
+    // limpiarla antes de borrar evita dejarla colgada.
     await this.pilaRepo.delete({ locationId: id });
 
-    return this.locationRepo.remove(location);
+    await this.locationRepo.remove(location);
+    return { deleted: true, deactivated: false, id };
   }
 
   /**
@@ -1184,12 +1217,45 @@ export class LocationsService {
       );
     }
 
-    // Igual que en remove(): sin pallets/stock vivos en ninguna ubicación del
-    // pasillo, cualquier pila residual (vacía o con solo EXITED) se limpia
-    // antes de borrar para no dejarla colgada.
-    await this.pilaRepo.delete({ locationId: In(ids) });
+    // Igual que en remove(): sin contenido vivo puede quedar historia. Las
+    // ubicaciones que la tienen se desactivan y las que no, se borran. Antes se
+    // borraba el pasillo entero y las que tenían pasado dejaban huérfanos; ahora
+    // además las claves foráneas de RL-C-03 harían fallar el borrado completo,
+    // así que separar los dos casos es lo que mantiene la operación utilizable.
+    const conHistoria = (await this.locationRepo.query(
+      `SELECT l.id
+         FROM locations l
+        WHERE l.id = ANY($1)
+          AND (EXISTS (SELECT 1 FROM pallets          WHERE "currentLocationId" = l.id)
+            OR EXISTS (SELECT 1 FROM stocks           WHERE "locationId" = l.id)
+            OR EXISTS (SELECT 1 FROM movement_details WHERE "locationId" = l.id)
+            OR EXISTS (SELECT 1 FROM movements
+                        WHERE "locationId" = l.id OR "fromLocationId" = l.id
+                           OR "toLocationId" = l.id))`,
+      [ids],
+    )) as Array<{ id: string }>;
 
-    await this.locationRepo.remove(locations);
-    return { aisle: normalized, deleted: locations.length };
+    const idsConHistoria = new Set(conHistoria.map((r) => r.id));
+    const aBorrar = locations.filter((l) => !idsConHistoria.has(l.id));
+
+    if (idsConHistoria.size > 0) {
+      await this.locationRepo.update([...idsConHistoria], { active: false });
+    }
+
+    if (aBorrar.length > 0) {
+      const idsABorrar = aBorrar.map((l) => l.id);
+      await this.pilaRepo.delete({ locationId: In(idsABorrar) });
+      await this.locationRepo.remove(aBorrar);
+    }
+
+    return {
+      aisle: normalized,
+      deleted: aBorrar.length,
+      deactivated: idsConHistoria.size,
+      reason:
+        idsConHistoria.size > 0
+          ? `${idsConHistoria.size} ubicación(es) tenían movimientos registrados: se desactivaron en lugar de eliminarse para preservar la trazabilidad.`
+          : undefined,
+    };
   }
 }

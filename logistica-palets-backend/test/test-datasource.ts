@@ -28,6 +28,12 @@ import { RolePermission } from '../src/modules/permissions/entities/role-permiss
 import { UserPermission } from '../src/modules/permissions/entities/user-permission.entity';
 import { PermissionsService } from '../src/modules/permissions/permissions.service';
 import { ROLE_PERMISSIONS_SEED } from '../src/modules/permissions/role-permissions.seed';
+import {
+  addConstraintIfMissing,
+  INVENTORY_CHECKS,
+  INVENTORY_FKS,
+  inventoryFkName,
+} from '../src/common/inventory-constraints';
 
 export const TEST_USER_ID = '00000000-0000-0000-0000-0000000000aa';
 
@@ -72,8 +78,53 @@ export function createTestDataSource(): DataSource {
   });
 }
 
+/**
+ * Aplica las claves foráneas y los CHECK de la migración RL-C-03 sobre el
+ * esquema que armó `synchronize`.
+ *
+ * Sin esto la suite correría contra un esquema MÁS PERMISIVO que producción:
+ * `synchronize` sólo crea claves foráneas para relaciones `@ManyToOne`, y en
+ * este modelo casi todas son columnas `uuid` planas. Un test que dejara un
+ * movimiento apuntando a un producto inexistente pasaría en verde y fallaría
+ * recién en el despliegue. Se reutiliza la misma definición que la migración,
+ * así que las dos no pueden divergir.
+ */
+async function applyInventoryConstraints(ds: DataSource): Promise<void> {
+  // El esquema de test es un SUBCONJUNTO del de producción: `TEST_ENTITIES` deja
+  // afuera lo que el motor de stock no toca (alertas, transportes, facturación).
+  // Se aplican sólo las restricciones cuyas dos tablas existen acá, en vez de
+  // recortar la lista a mano — así agregar una entidad al set de test alcanza
+  // para que sus restricciones entren solas.
+  const filas = (await ds.query(
+    `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`,
+  )) as Array<{ table_name: string }>;
+  const existe = new Set(filas.map((f) => f.table_name));
+
+  for (const [tabla, columna, destino, accion] of INVENTORY_FKS) {
+    if (!existe.has(tabla) || !existe.has(destino)) continue;
+    await ds.query(
+      addConstraintIfMissing(
+        tabla,
+        inventoryFkName(tabla, columna),
+        `FOREIGN KEY ("${columna}") REFERENCES "${destino}"("id") ON DELETE ${accion} ON UPDATE NO ACTION`,
+      ),
+    );
+  }
+  for (const [tabla, nombre, expresion] of INVENTORY_CHECKS) {
+    if (!existe.has(tabla)) continue;
+    await ds.query(addConstraintIfMissing(tabla, nombre, `CHECK (${expresion})`));
+  }
+}
+
+/** ¿Ya se aplicaron? Una sola consulta al catálogo, para no repetir 45 DDL por test. */
+let constraintsAplicadas = false;
+
 /** Vacía las tablas del motor de stock. Llamar en beforeEach para aislar tests. */
 export async function resetDb(ds: DataSource): Promise<void> {
+  if (!constraintsAplicadas) {
+    await applyInventoryConstraints(ds);
+    constraintsAplicadas = true;
+  }
   await ds.query(`TRUNCATE TABLE ${TABLES.map((t) => `"${t}"`).join(', ')} RESTART IDENTITY CASCADE`);
 }
 

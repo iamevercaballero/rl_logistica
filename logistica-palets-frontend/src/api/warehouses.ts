@@ -1,4 +1,5 @@
 import { api } from "./client";
+import type { SoftDeleteResult } from "./softDelete";
 
 export type Warehouse = {
   id: string;
@@ -100,6 +101,7 @@ export async function updateWarehouse(id: string, payload: {
   return data;
 }
 
-export async function deleteWarehouse(id: string) {
-  await api.delete(`/warehouses/${id}`);
+export async function deleteWarehouse(id: string): Promise<SoftDeleteResult> {
+  const { data } = await api.delete<SoftDeleteResult>(`/warehouses/${id}`);
+  return data;
 }

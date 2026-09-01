@@ -65,6 +65,66 @@ alcanza con permitir 22.
 > la IP del VPS, ponelos en *DNS only* (nube gris) la primera vez para que Caddy
 > emita los certificados, y recién después activá el proxy en *Full (strict)*.
 
+## Migración de integridad referencial (RL-C-03)
+
+La migración `AddInventoryForeignKeys` agrega 38 claves foráneas y 5
+restricciones de rango a las tablas de inventario. Es la primera que puede
+**fallar por datos**, no por esquema: si hay filas apuntando a registros que ya
+no existen, aborta. Eso es deliberado — decidir qué hacer con un movimiento cuyo
+producto desapareció es una decisión de negocio, no de esquema.
+
+### 1. Antes de la ventana (con el sistema en marcha)
+
+```bash
+docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" rl_logistica_db_prod   psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f - < scripts/check-referential-integrity.sql
+```
+
+Es de sólo lectura y se puede correr las veces que haga falta. Si todas las
+filas dicen `ok`, la migración va a pasar. Si alguna dice `BLOQUEA LA
+MIGRACIÓN`, hay que resolver esas filas primero — y conviene saberlo días antes,
+no durante la ventana.
+
+El mismo informe trae el volumen de las tablas: sirve para estimar cuánto va a
+tardar. Postgres valida cada clave foránea recorriendo la tabla una vez.
+
+### 2. Durante la ventana
+
+```bash
+bash scripts/backup-db.sh                    # backup fresco, no el de anoche
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+```
+
+El backend corre las migraciones al arrancar (`DB_MIGRATIONS_RUN=true`). Si la
+migración aborta, el contenedor no levanta y la base queda **intacta**: todo
+corre dentro de una transacción y el `ROLLBACK` es automático.
+
+### 3. Verificación
+
+```bash
+docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" rl_logistica_db_prod   psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At   -c "SELECT 'FK: ' || count(*) FROM pg_constraint WHERE contype='f' AND connamespace='public'::regnamespace;"   -c "SELECT 'CHECK: ' || count(*) FROM pg_constraint WHERE contype='c' AND connamespace='public'::regnamespace;"
+```
+
+Esperado: **44 claves foráneas** y **6 CHECK** (antes: 6 y 1). Después, una
+entrada y una salida de prueba para confirmar que la operación normal sigue
+funcionando.
+
+### 4. Rollback
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod exec backend   npm run migration:revert
+```
+
+Revierte sólo esta migración y devuelve el esquema a 6 claves foráneas y 1
+CHECK — verificado. No hace falta restaurar el backup: la migración no modifica
+ni una fila de datos, sólo agrega restricciones.
+
+### Qué cambia para el usuario
+
+Borrar un material, una ubicación o un depósito **con historial** pasa a
+desactivarlo en lugar de eliminarlo, con un aviso que lo explica. Antes se
+borraba y dejaba movimientos apuntando al vacío. Es el mismo criterio que ya
+tenían Materiales y Lotes, ahora también en Ubicaciones y Depósitos.
+
 ## 3. Secretos — crear `.env.prod`
 ```bash
 cp .env.prod.example .env.prod

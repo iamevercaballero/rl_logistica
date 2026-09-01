@@ -140,21 +140,52 @@ export class WarehousesService {
   async remove(id: string) {
     const warehouse = await this.findOne(id);
 
-    const [{ locations, stock }] = (await this.warehouseRepo.query(
+    const [uso] = (await this.warehouseRepo.query(
       `SELECT
          (SELECT COUNT(*) FROM locations WHERE "warehouseId" = $1)::int AS locations,
          (SELECT COALESCE(SUM("currentQuantity"), 0) FROM stocks
-           WHERE "warehouseId" = $1)::float8                            AS stock`,
+           WHERE "warehouseId" = $1)::float8                            AS stock,
+         (SELECT COUNT(*) FROM stocks WHERE "warehouseId" = $1)::int    AS "stockRows",
+         (SELECT COUNT(*) FROM movements
+           WHERE "warehouseId" = $1 OR "fromWarehouseId" = $1
+              OR "toWarehouseId" = $1)::int                             AS movements,
+         (SELECT COUNT(*) FROM logistics_documents
+           WHERE "warehouseId" = $1)::int                               AS documents,
+         (SELECT COUNT(*) FROM document_sequences
+           WHERE "warehouseId" = $1)::int                               AS sequences`,
       [id],
-    )) as Array<{ locations: number; stock: number }>;
+    )) as Array<{
+      locations: number; stock: number; stockRows: number;
+      movements: number; documents: number; sequences: number;
+    }>;
 
-    if (locations > 0 || stock !== 0) {
+    if (uso.locations > 0 || uso.stock !== 0) {
       throw new BadRequestException(
-        `No se puede eliminar el depósito ${warehouse.name}: tiene ${locations} ubicación(es) y ${stock} unidad(es) de stock. ` +
+        `No se puede eliminar el depósito ${warehouse.name}: tiene ${uso.locations} ubicación(es) y ${uso.stock} unidad(es) de stock. ` +
         `Vaciá y eliminá sus ubicaciones antes de darlo de baja.`,
       );
     }
 
-    return this.warehouseRepo.remove(warehouse);
+    // RL-M-12: sin ubicaciones ni stock todavía puede haber historia —
+    // movimientos, remitos, correlativos de documento, filas de stock en cero.
+    // Antes se borraba igual y esas filas quedaban apuntando a un depósito
+    // inexistente; desde RL-C-03 la base directamente lo rechaza. Con historia se
+    // desactiva, mismo criterio que Materiales, Ubicaciones y Lotes.
+    const historia = uso.movements + uso.documents + uso.sequences + uso.stockRows;
+    if (historia > 0) {
+      warehouse.active = false;
+      await this.warehouseRepo.save(warehouse);
+      return {
+        deleted: true,
+        deactivated: true,
+        id: warehouse.id,
+        reason:
+          `El depósito ${warehouse.name} tiene ${uso.movements} movimiento(s) y ${uso.documents} remito(s) ` +
+          `en su historial: se desactivó en lugar de eliminarse para preservar la trazabilidad.`,
+      };
+    }
+
+    await this.warehouseRepo.remove(warehouse);
+    return { deleted: true, deactivated: false, id };
   }
 }

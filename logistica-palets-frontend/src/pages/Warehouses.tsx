@@ -20,6 +20,7 @@ import {
   type LocationZone,
 } from "../api/locations";
 import { listPallets } from "../api/pallets";
+import { softDeleteMessage } from "../api/softDelete";
 import { useAuth } from "../auth/AuthContext";
 import { canCreate, canDelete } from "../auth/rbac";
 import { useToast } from "../design-system/toast";
@@ -182,10 +183,12 @@ export default function WarehousesPage() {
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => deleteWarehouse(id),
-    onSuccess: (_res, id) => {
+    onSuccess: (res, id) => {
       queryClient.invalidateQueries({ queryKey: ["warehouses"] });
-      if (selectedId === id) setSelectedId(null);
-      toast.success("Depósito eliminado");
+      // Con historial el backend desactiva en vez de borrar: el depósito sigue
+      // en la lista, así que ni se deselecciona ni se anuncia como eliminado.
+      if (selectedId === id && !res.deactivated) setSelectedId(null);
+      toast.success(softDeleteMessage(res, "Depósito"));
     },
     onError: (err) => toast.error(getFriendlyApiError(err)),
   });
@@ -255,8 +258,8 @@ export default function WarehousesPage() {
 
   const deleteLocMut = useMutation({
     mutationFn: (id: string) => deleteLocation(id),
-    onSuccess: () => {
-      toast.success("Ubicación eliminada");
+    onSuccess: (res) => {
+      toast.success(softDeleteMessage(res, "Ubicación"));
       invalidateLayout();
       setLocDetail(null);
     },
@@ -266,7 +269,13 @@ export default function WarehousesPage() {
   const deleteAisleMut = useMutation({
     mutationFn: ({ warehouseId, aisle }: { warehouseId: string; aisle: string }) => deleteAisle(warehouseId, aisle),
     onSuccess: (res) => {
-      toast.success(`Pasillo ${res.aisle} eliminado (${res.deleted} ubicaciones)`);
+      // El pasillo puede quedar partido: las ubicaciones sin historial se
+      // borran y las que tienen movimientos se desactivan.
+      toast.success(
+        res.deactivated > 0
+          ? `Pasillo ${res.aisle}: ${res.deleted} ubicación(es) eliminada(s) y ${res.deactivated} desactivada(s) por tener movimientos registrados.`
+          : `Pasillo ${res.aisle} eliminado (${res.deleted} ubicaciones)`,
+      );
       invalidateLayout();
       setLocDetail(null);
     },

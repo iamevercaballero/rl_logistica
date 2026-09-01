@@ -1,4 +1,5 @@
 import { api } from "./client";
+import type { SoftDeleteResult } from "./softDelete";
 
 export type LocationZone =
   | "RECEPCION"
@@ -403,16 +404,25 @@ export async function generateLocations(payload: {
   return data;
 }
 
-export async function deleteLocation(id: string) {
-  await api.delete(`/locations/${id}`);
+export async function deleteLocation(id: string): Promise<SoftDeleteResult> {
+  const { data } = await api.delete<SoftDeleteResult>(`/locations/${id}`);
+  return data;
 }
 
 /**
  * Elimina un pasillo completo. Todo-o-nada: si alguna ubicación tiene
  * contenido, el backend rechaza sin borrar nada e indica cuáles.
  */
-export async function deleteAisle(warehouseId: string, aisle: string): Promise<{ aisle: string; deleted: number }> {
-  const { data } = await api.delete<{ aisle: string; deleted: number }>("/locations/aisle", {
+export type DeleteAisleResult = {
+  aisle: string;
+  deleted: number;
+  /** Ubicaciones con historial: se desactivaron en lugar de borrarse. */
+  deactivated: number;
+  reason?: string;
+};
+
+export async function deleteAisle(warehouseId: string, aisle: string): Promise<DeleteAisleResult> {
+  const { data } = await api.delete<DeleteAisleResult>("/locations/aisle", {
     params: { warehouseId, aisle },
   });
   return data;

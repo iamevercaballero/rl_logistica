@@ -26,6 +26,14 @@ services:
   # ── PostgreSQL ────────────────────────────────────────────────────────────
   db:
     image: postgres:16-alpine
+    # pg_stat_statements: sin esto no hay forma de saber qué consulta está
+    # costando el tiempo. La auditoría lo marcaba como pendiente y era cierto.
+    # Tiene que precargarse al arranque del servidor —no alcanza con CREATE
+    # EXTENSION—, y la extensión la crea la migración 1785300000000.
+    #
+    # `command` reemplaza el comando del servidor, no el entrypoint: la imagen
+    # oficial sigue inicializando el cluster igual y termina ejecutando esto.
+    command: postgres -c shared_preload_libraries=pg_stat_statements
     container_name: rl_logistica_db_prod
     restart: unless-stopped
     env_file: [.env.prod]

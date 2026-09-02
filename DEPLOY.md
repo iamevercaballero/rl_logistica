@@ -352,7 +352,7 @@ correr antes que el código nuevo, y una que corta todas las sesiones abiertas.
 
 # Parte II — Migraciones
 
-Siete migraciones quedan pendientes de aplicar sobre cualquier base que ya exista.
+Ocho migraciones quedan pendientes de aplicar sobre cualquier base que ya exista.
 Se aplican solas y en este orden; la tabla dice cuál necesita algo de quien
 despliega.
 
@@ -365,6 +365,7 @@ despliega.
 | 1785000000000 | `AddMovementDateIndex` (RL-A-07) | Índice `(date, createdAt)` | Nada (665 ms) |
 | 1785100000000 | `CreateRefreshSessions` (RL-M-02) | Sesiones de refresco revocables | **Corta las sesiones abiertas** |
 | 1785200000000 | `AddRequestContextToDocumentEvents` (RL-M-09) | IP, user-agent e id de correlación en la bitácora de negocio | Nada |
+| 1785300000000 | `EnablePgStatStatements` | Métricas de consultas | El compose ya trae la precarga |
 
 Ninguna modifica datos existentes. Todas corren dentro de una transacción: si una
 aborta, el contenedor no levanta y la base queda intacta.
@@ -585,6 +586,35 @@ Después del primer movimiento con el sistema arriba, esa consulta tiene que
 devolver la IP real del operador. Si vuelve vacía y hay movimientos nuevos,
 revisá `TRUST_PROXY` — es la misma variable de la que depende RL-M-09.
 
+## 1785300000000 — Métricas de consultas
+
+Habilita `pg_stat_statements`, que es lo que permite responder «¿cuál consulta
+está costando el tiempo?» cuando el sistema se ponga lento. Hasta ahora no había
+con qué: para RL-A-07 hubo que armar a mano un banco de un millón de movimientos.
+
+No hay nada que hacer: el `command` del servicio `db` ya trae la precarga en los
+compose de dev, staging y producción. Cuesta **11 MB** de memoria, medido
+(`postgres:16-alpine` en reposo pasa de 30,4 a 41,8 MiB), o sea el 1 % del techo
+de 1 GB de la base.
+
+> **Un detalle contraintuitivo, verificado en dos contenedores.** `CREATE
+> EXTENSION` funciona **aunque la librería no esté precargada**. Lo que falla,
+> después y sólo al consultar, es la vista: `pg_stat_statements must be loaded
+> via shared_preload_libraries`. Así que la migración nunca va a tumbar el
+> arranque — pero si desplegás con un compose viejo, el problema recién aparece
+> cuando quieras mirar las métricas. Si eso pasa, agregá el `command` al servicio
+> `db` y reiniciá la base.
+
+Para usarlo:
+
+```bash
+docker compose -f docker-compose.prod.yml exec db psql -U "$DB_USERNAME" -d "$DB_DATABASE" -c "SELECT calls, round(mean_exec_time::numeric,1) AS ms_prom, round(total_exec_time::numeric) AS ms_total, left(query, 80) AS consulta FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 20;"
+```
+
+Ordenado por `total_exec_time` y no por `mean_exec_time` a propósito: la
+consulta que más duele no suele ser la más lenta, sino una mediana que corre
+miles de veces.
+
 ---
 
 # Parte III — Cambios de comportamiento
@@ -689,6 +719,24 @@ operador. El problema no es esperar por un bloqueo, es no soltarlo nunca.
 > `DB_STATEMENT_TIMEOUT=0` y volver al valor normal después. La migración de
 > claves foráneas, que valida 44 restricciones recorriendo tablas, ya se exime
 > sola con `SET LOCAL`.
+
+## La importación de materiales pide confirmación
+
+Subir la planilla ya no crea nada de entrada. El primer paso es un **ensayo**:
+valida el archivo, muestra las primeras 100 filas tal como quedarían guardadas
+—ya normalizadas, en mayúsculas y sin espacios de más— y no escribe. Recién el
+botón «Confirmar e importar N» aplica.
+
+El motivo no es formalidad. El archivo corrupto ya se rechazaba; el que hacía
+daño era el **válido y equivocado**: una planilla con las columnas corridas pasa
+todas las validaciones, porque código, descripción y unidad siguen siendo cadenas
+no vacías, y crea cientos de materiales mal. Y un material con historia no se
+borra: se desactiva (RL-C-03), así que limpiarlo después es mucho más caro que
+mirar la muestra antes.
+
+Es el mismo criterio que ya usaba la carga del snapshot de stock, ahora también
+acá. Para integraciones que llamen la API directo, el ensayo es el default y hay
+que pedir `?commit=true` a propósito.
 
 ## Bloqueo de cuenta por intentos fallidos (RL-M-11)
 

@@ -435,10 +435,20 @@ function BulkImportModal({ onClose, onImported }: { onClose: () => void; onImpor
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<BulkImportResult | null>(null);
 
+  // Dos pasos: primero un ensayo que no escribe nada y muestra qué se crearía,
+  // y recién con la confirmación se aplica. El archivo válido pero equivocado
+  // —una planilla con las columnas corridas— pasa todas las validaciones, y un
+  // material con historia después no se borra: se desactiva.
   const mut = useMutation({
-    mutationFn: (f: File) => bulkImportProducts(f),
+    mutationFn: ({ f, commit }: { f: File; commit: boolean }) => bulkImportProducts(f, commit),
     onSuccess: (res) => {
       setResult(res);
+      if (!res.committed) {
+        if (res.valid === 0) {
+          toast.error("Ninguna fila del archivo se puede importar, revisá el detalle");
+        }
+        return;
+      }
       if (res.imported > 0) {
         toast.success(`${res.imported} material${res.imported !== 1 ? "es" : ""} importado${res.imported !== 1 ? "s" : ""}`);
         onImported();
@@ -450,6 +460,9 @@ function BulkImportModal({ onClose, onImported }: { onClose: () => void; onImpor
     onError: (err) => toast.error(getFriendlyApiError(err)),
   });
 
+  /** Hay un ensayo hecho y queda algo por crear: falta confirmar. */
+  const esperandoConfirmacion = !!result && !result.committed && result.valid > 0;
+
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0] ?? null;
     setFile(f);
@@ -458,7 +471,7 @@ function BulkImportModal({ onClose, onImported }: { onClose: () => void; onImpor
 
   function handleImport() {
     if (!file) return;
-    mut.mutate(file);
+    mut.mutate({ f: file, commit: esperandoConfirmacion });
   }
 
   return (
@@ -500,13 +513,47 @@ function BulkImportModal({ onClose, onImported }: { onClose: () => void; onImpor
 
         {result && (
           <div style={{ display: "grid", gap: 8 }}>
-            <div style={{ display: "flex", gap: 14, fontSize: 13 }}>
+            <div style={{ display: "flex", gap: 14, fontSize: 13, flexWrap: "wrap" }}>
               <span><strong>{result.totalRows}</strong> filas leídas</span>
-              <span style={{ color: "var(--success)" }}><strong>{result.imported}</strong> importados</span>
+              <span style={{ color: "var(--success)" }}>
+                <strong>{result.committed ? result.imported : result.valid}</strong>{" "}
+                {result.committed ? "importados" : "se crearían"}
+              </span>
               <span style={{ color: result.skipped ? "var(--danger)" : "var(--muted)" }}>
                 <strong>{result.skipped}</strong> omitidos
               </span>
             </div>
+
+            {!result.committed && result.valid > 0 && (
+              <>
+                <p style={{ fontSize: 12, color: "var(--muted)", margin: 0 }}>
+                  Todavía no se creó nada. Revisá que las columnas estén en su lugar y confirmá.
+                  {result.previewTruncated && ` Se muestran las primeras ${result.preview.length}.`}
+                </p>
+                <div style={{ maxHeight: 240, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6 }}>
+                  <table className="table" style={{ fontSize: 12 }}>
+                    <thead>
+                      <tr>
+                        <th scope="col">Código</th>
+                        <th scope="col">Descripción</th>
+                        <th scope="col">UM</th>
+                        <th scope="col">Apilable</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {result.preview.map((r) => (
+                        <tr key={r.code}>
+                          <td>{r.code}</td>
+                          <td>{r.description}</td>
+                          <td>{r.unitOfMeasure}</td>
+                          <td>{r.stackable ? "Sí" : "No"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
             {result.errors.length > 0 && (
               <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6 }}>
                 <table className="table" style={{ fontSize: 12 }}>
@@ -530,8 +577,17 @@ function BulkImportModal({ onClose, onImported }: { onClose: () => void; onImpor
 
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
           <button type="button" className="btn" onClick={onClose}>Cerrar</button>
-          <button type="button" className="btn btn--primary" onClick={handleImport} disabled={!file || mut.isPending}>
-            {mut.isPending ? "Importando..." : "Importar"}
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={handleImport}
+            disabled={!file || mut.isPending || (!!result && result.committed)}
+          >
+            {mut.isPending
+              ? esperandoConfirmacion ? "Importando..." : "Analizando..."
+              : esperandoConfirmacion
+                ? `Confirmar e importar ${result!.valid}`
+                : "Analizar archivo"}
           </button>
         </div>
       </div>

@@ -78,9 +78,15 @@ export class ProductsController {
       },
     }),
   )
-  bulkImport(@UploadedFile() file: Express.Multer.File) {
+  bulkImport(
+    @UploadedFile() file: Express.Multer.File,
+    @Query('commit') commit?: string,
+  ) {
     if (!file) throw new BadRequestException('No se recibió ningún archivo.');
-    return this.productsService.bulkImport(file.buffer);
+    // `commit=false` es el default y hace un ensayo: valida, informa qué se
+    // crearía y no escribe. Hay que pedir la escritura a propósito. Mismo
+    // criterio que la carga del snapshot de stock.
+    return this.productsService.bulkImport(file.buffer, commit === 'true');
   }
 
   @Patch(':id')

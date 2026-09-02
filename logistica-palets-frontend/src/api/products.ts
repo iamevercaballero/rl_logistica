@@ -33,11 +33,26 @@ export type BulkImportRowError = {
   reason: string;
 };
 
+/** Una fila que la importación crearía, tal como quedaría guardada. */
+export type BulkImportPreviewRow = {
+  code: string;
+  description: string;
+  unitOfMeasure: string;
+  stackable: boolean;
+};
+
 export type BulkImportResult = {
   totalRows: number;
+  /** Filas válidas: las que se crearían (ensayo) o se crearon (confirmación). */
+  valid: number;
+  /** Filas realmente creadas. Siempre 0 en el ensayo. */
   imported: number;
   skipped: number;
+  /** `false` en el ensayo, `true` cuando se aplicó. */
+  committed: boolean;
   errors: BulkImportRowError[];
+  preview: BulkImportPreviewRow[];
+  previewTruncated: boolean;
 };
 
 export async function listProducts(search?: string): Promise<Product[]> {
@@ -99,10 +114,17 @@ export async function deleteProduct(id: string): Promise<DeleteProductResult> {
   return data;
 }
 
-export async function bulkImportProducts(file: File): Promise<BulkImportResult> {
+/**
+ * Carga masiva de materiales.
+ *
+ * `commit=false` —el default— hace un ensayo: valida el archivo, devuelve qué
+ * crearía y no escribe nada. La escritura hay que pedirla a propósito.
+ */
+export async function bulkImportProducts(file: File, commit = false): Promise<BulkImportResult> {
   const form = new FormData();
   form.append("file", file);
   const { data } = await api.post<BulkImportResult>("/products/bulk-import", form, {
+    params: { commit: String(commit) },
     headers: { "Content-Type": "multipart/form-data" },
   });
   return data;

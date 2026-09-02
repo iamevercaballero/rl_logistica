@@ -13,11 +13,31 @@ export interface BulkImportRowError {
   reason: string;
 }
 
+/** Una fila que la importación crearía, tal como quedaría guardada. */
+export interface BulkImportPreviewRow {
+  code: string;
+  description: string;
+  unitOfMeasure: string;
+  stackable: boolean;
+}
+
+/** Cuántas filas de muestra se devuelven en el ensayo. */
+export const PREVIEW_MAX_ROWS = 100;
+
 export interface BulkImportResult {
   totalRows: number;
+  /** Filas válidas: las que se crearían (ensayo) o se crearon (confirmación). */
+  valid: number;
+  /** Filas realmente creadas. Siempre 0 en el ensayo. */
   imported: number;
   skipped: number;
+  /** `false` en el ensayo, `true` cuando se aplicó. */
+  committed: boolean;
   errors: BulkImportRowError[];
+  /** Muestra de lo que se crearía, acotada a PREVIEW_MAX_ROWS. */
+  preview: BulkImportPreviewRow[];
+  /** `true` si hay más filas válidas de las que entran en `preview`. */
+  previewTruncated: boolean;
 }
 
 /** Alias de encabezados aceptados por columna, ya normalizados (sin tildes, minúsculas). */
@@ -166,8 +186,18 @@ export class ProductsService {
    * Carga masiva de materiales desde un archivo Excel (.xlsx) o CSV.
    * Filas con datos inválidos, incompletos o códigos duplicados se omiten y se
    * reportan en `errors`; el resto se inserta en un solo lote.
+   *
+   * **`commit=false` es el default, y es un ensayo**: valida todo, informa qué
+   * se crearía y no escribe nada. El mismo criterio que ya usaba la carga del
+   * snapshot de stock.
+   *
+   * El motivo no es simetría. Una planilla con la columna de descripción
+   * corrida, o con el código en la columna equivocada, pasa todas las
+   * validaciones —son cadenas no vacías— y crea cientos de materiales mal. Y un
+   * material con historia no se borra: se desactiva (RL-C-03). Limpiar eso es
+   * mucho más caro que mirar la muestra antes.
    */
-  async bulkImport(buffer: Buffer): Promise<BulkImportResult> {
+  async bulkImport(buffer: Buffer, commit = false): Promise<BulkImportResult> {
     const rows = await readUploadedRows(buffer);
     if (rows.length === 0) throw new BadRequestException('El archivo no contiene filas de datos.');
 
@@ -223,16 +253,29 @@ export class ProductsService {
       candidates.push(product);
     });
 
-    if (candidates.length > 0) {
+    if (commit && candidates.length > 0) {
       const entities = candidates.map((c) => this.productRepo.create(c));
       await this.productRepo.save(entities);
     }
 
     return {
       totalRows: rows.length,
-      imported: candidates.length,
+      valid: candidates.length,
+      imported: commit ? candidates.length : 0,
       skipped: errors.length,
+      committed: commit,
       errors,
+      // Proyección explícita y no un cast: `candidates` lleva además
+      // `canReceiveWeightOnTop`, que es derivado y no viene de la planilla. La
+      // muestra existe para que el operador coteje las cuatro columnas que
+      // cargó, y un cast dejaría colándose campos que el tipo no declara.
+      preview: candidates.slice(0, PREVIEW_MAX_ROWS).map((c) => ({
+        code: c.code as string,
+        description: c.description as string,
+        unitOfMeasure: c.unitOfMeasure as string,
+        stackable: c.stackable as boolean,
+      })),
+      previewTruncated: candidates.length > PREVIEW_MAX_ROWS,
     };
   }
 }

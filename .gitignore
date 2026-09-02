@@ -31,19 +31,19 @@ Thumbs.db
 !.vscode/extensions.json
 .idea/
 
-# Asistentes de IA. Mismo criterio que .vscode/ acá arriba: se versiona la
-# configuración del proyecto y no el estado local de cada máquina.
+# Asistentes de IA. A diferencia de .vscode/ acá arriba, no se versiona nada:
+# lo que hay adentro es estado de cada máquina y de cada sesión.
 #
 # .codex/config.toml guarda una API key en claro. Sin esta regla, un
 # `git add -A` la publica; hoy el archivo está sin rastrear y nunca entró al
 # historial, así que esto es para que siga siendo así.
 .codex/
 #
-# De .claude/ se conserva launch.json, que define los servidores de desarrollo
-# y sirve a cualquiera que clone. settings.local.json son 305 permisos
-# acumulados de sesiones —el nombre lo dice— y el .lock es estado de ejecución.
-.claude/*
-!.claude/launch.json
+# .claude/ queda entero afuera: settings.local.json son cientos de permisos
+# acumulados sesión tras sesión, el .lock es estado de ejecución, y launch.json
+# apunta a puertos y rutas de la máquina de cada uno. Nada de eso describe al
+# proyecto; lo que sí lo describe está en README.md y en los package.json.
+.claude/
 
 # Logs
 logs/

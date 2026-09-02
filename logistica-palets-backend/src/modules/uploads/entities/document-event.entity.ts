@@ -28,6 +28,7 @@ export type DocumentEventType = (typeof documentEventTypes)[number];
  */
 @Index('idx_doc_event_entity', ['entityType', 'entityId'])
 @Index('idx_doc_event_created_at', ['createdAt'])
+@Index('idx_doc_event_request', ['requestId'], { where: '"requestId" IS NOT NULL' })
 @Entity('document_events')
 export class DocumentEvent {
   @PrimaryGeneratedColumn('uuid')
@@ -62,6 +63,29 @@ export class DocumentEvent {
   /** Username cacheado para mostrar sin JOIN. */
   @Column({ type: 'varchar', length: 100, nullable: true })
   username?: string | null;
+
+  /*
+   * Identidad de red de la petición que originó el evento. Los tres se llenan
+   * solos desde `contextoActual()`; ver `src/common/request-context.ts`.
+   *
+   * Nulables a propósito: el cron de alertas, el seed y el arranque también
+   * escriben en esta bitácora y no vienen de ninguna petición. Ahí NULL es el
+   * valor correcto — una IP inventada sería peor que ninguna.
+   *
+   * Mismos tipos que `auth_events`, para poder cruzar las dos bitácoras por
+   * `requestId` sin conversiones.
+   */
+
+  /** IP real del cliente — ver `src/common/client-ip.ts`. */
+  @Column({ type: 'varchar', length: 45, nullable: true })
+  ip?: string | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  userAgent?: string | null;
+
+  /** Id de correlación, el mismo que viaja en la cabecera `X-Request-Id`. */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  requestId?: string | null;
 
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   createdAt: Date;

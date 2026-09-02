@@ -10,6 +10,7 @@ import { createReadStream, existsSync, mkdirSync, unlinkSync } from 'fs';
 import { join, resolve, sep } from 'path';
 import { Attachment, AttachmentCategory, AttachmentEntityType } from './entities/attachment.entity';
 import { DocumentEvent, DocumentEventType } from './entities/document-event.entity';
+import { contextoActual } from '../../common/request-context';
 import {
   attachmentMimeType,
   MAX_ATTACHMENT_SIZE,
@@ -219,6 +220,15 @@ export class UploadsService {
     const repo = evento.manager
       ? evento.manager.getRepository(DocumentEvent)
       : this.eventRepo;
+
+    // La identidad de red no se pide por parámetro: llega sola desde el
+    // contexto de la petición en curso. Es lo que permitió cerrar la mitad
+    // que faltaba de RL-M-09 sin tocar ninguno de los catorce puntos que
+    // llaman a este método — y una llamada olvidada no habría fallado, sólo
+    // habría escrito una fila incompleta. Fuera de una petición (cron, seed)
+    // los tres vienen en null, que es lo correcto.
+    const red = contextoActual();
+
     const event = repo.create({
       entityType: evento.entityType,
       entityId: evento.entityId,
@@ -228,6 +238,9 @@ export class UploadsService {
       userId: evento.userId ?? null,
       username: evento.username ?? null,
       metadata: evento.metadata ? JSON.stringify(evento.metadata) : null,
+      ip: red.ip,
+      userAgent: red.userAgent,
+      requestId: red.requestId,
     });
     await repo.save(event);
     return event;

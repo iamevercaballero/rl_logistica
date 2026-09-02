@@ -352,7 +352,7 @@ correr antes que el código nuevo, y una que corta todas las sesiones abiertas.
 
 # Parte II — Migraciones
 
-Seis migraciones quedan pendientes de aplicar sobre cualquier base que ya exista.
+Siete migraciones quedan pendientes de aplicar sobre cualquier base que ya exista.
 Se aplican solas y en este orden; la tabla dice cuál necesita algo de quien
 despliega.
 
@@ -364,6 +364,7 @@ despliega.
 | 1784900000000 | `CreateAuthEventsAndAppendOnly` (RL-M-09) | Bitácora de accesos y append-only real | `TRUST_PROXY=1` |
 | 1785000000000 | `AddMovementDateIndex` (RL-A-07) | Índice `(date, createdAt)` | Nada (665 ms) |
 | 1785100000000 | `CreateRefreshSessions` (RL-M-02) | Sesiones de refresco revocables | **Corta las sesiones abiertas** |
+| 1785200000000 | `AddRequestContextToDocumentEvents` (RL-M-09) | IP, user-agent e id de correlación en la bitácora de negocio | Nada |
 
 Ninguna modifica datos existentes. Todas corren dentro de una transacción: si una
 aborta, el contenedor no levanta y la base queda intacta.
@@ -556,6 +557,33 @@ reuso y cerraría la sesión cada vez que alguien abre dos pestañas. Dentro de 
 precio es explícito: un token robado y usado dentro de esos 30 segundos de la
 rotación legítima obtiene la sesión; fuera de esa ventana —el escenario real de
 un robo— la detección sigue intacta.
+
+## 1785200000000 — Identidad de red en la bitácora (RL-M-09)
+
+Agrega `ip`, `userAgent` y `requestId` a `document_events`. RL-M-09 los había
+dejado sólo en `auth_events`, la bitácora de accesos, así que de cada movimiento
+o anulación se sabía **quién**, no **desde dónde** — justo la mitad que hace
+falta el día que algo se investiga.
+
+No hay nada que hacer al desplegar. Las tres columnas son nulables y no se toca
+ninguna fila: `ADD COLUMN` con default nulo no reescribe la tabla en PostgreSQL
+11+, así que corre instantánea sin importar el volumen. Las filas anteriores
+quedan en NULL porque ese dato no existe y no se puede reconstruir.
+
+Los valores llegan solos desde el contexto de la petición, así que las escrituras
+que no vienen de la red —el cron de alertas, el seed, el arranque— guardan NULL,
+que es lo correcto.
+
+El trigger append-only no interfiere: rechaza `UPDATE` y `DELETE` de filas, no
+DDL. Verificado sobre una copia del esquema real, incluida la reversión.
+
+```bash
+docker compose -f docker-compose.prod.yml exec db psql -U "$DB_USERNAME" -d "$DB_DATABASE" -c "SELECT \"createdAt\", \"eventType\", username, ip, \"requestId\" FROM document_events WHERE ip IS NOT NULL ORDER BY \"createdAt\" DESC LIMIT 5;"
+```
+
+Después del primer movimiento con el sistema arriba, esa consulta tiene que
+devolver la IP real del operador. Si vuelve vacía y hay movimientos nuevos,
+revisá `TRUST_PROXY` — es la misma variable de la que depende RL-M-09.
 
 ---
 

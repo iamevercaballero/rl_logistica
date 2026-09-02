@@ -1,5 +1,6 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { RequestContextMiddleware } from './common/request-context';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { FriendlyThrottlerGuard } from './common/friendly-throttler.guard';
@@ -157,4 +158,13 @@ import { AppController } from './app.controller';
     { provide: APP_GUARD, useClass: FriendlyThrottlerGuard },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  /**
+   * El contexto de la petición se siembra para todas las rutas, incluidas las
+   * que terminan rechazadas: son justamente las que interesa poder atribuir.
+   * Va como middleware porque corre antes que guards, pipes e interceptores.
+   */
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(RequestContextMiddleware).forRoutes('*');
+  }
+}

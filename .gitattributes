@@ -1,0 +1,15 @@
+# Los scripts de despliegue se escriben en Windows pero corren en el VPS. Un .sh
+# guardado con CRLF muere en su primera linea en Linux —`set: illegal option -`,
+# verificado en Alpine— y check-env.sh, que es la compuerta previa al deploy,
+# llego a estar exactamente asi: git lo trataba como binario (por un CR literal
+# que el script usa a proposito) y por eso no le normalizaba nada al salir.
+#
+# Marcarlos como texto con eol=lf resuelve las dos mitades: git normaliza al
+# hacer commit y no reconvierte al hacer checkout, en Windows ni en Linux.
+*.sh text eol=lf
+
+# Lo mismo para lo que se copia dentro de una imagen o lee un servicio Linux.
+*.conf text eol=lf
+Caddyfile text eol=lf
+Dockerfile* text eol=lf
+*.sql text eol=lf

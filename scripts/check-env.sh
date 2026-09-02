@@ -38,7 +38,7 @@ echo
 # El proxy determina qué variables hacen falta. Con Cloudflare Tunnel alcanza
 # TUNNEL_TOKEN; con Caddy hacen falta los dominios y el mail de ACME. Se detecta
 # por lo que el archivo ya trae, en vez de pedir un flag que alguien va a olvidar.
-if tr -d '' < "$ENV_FILE" | grep -qE '^TUNNEL_TOKEN='; then
+if tr -d '\r' < "$ENV_FILE" | grep -qE '^TUNNEL_TOKEN='; then
   PROXY="cloudflare-tunnel"; REQ_PROXY=(TUNNEL_TOKEN TRUST_PROXY)
 else
   PROXY="caddy"; REQ_PROXY=(APP_DOMAIN API_DOMAIN ACME_EMAIL TRUST_PROXY)
@@ -153,6 +153,51 @@ esac
 case "$(val CORS_ORIGIN)" in
   *"$(val VITE_WS_URL)"*) ambar "CORS_ORIGIN y VITE_WS_URL comparten host: revisá que el frontend y la API estén en hostnames distintos" ;;
 esac
+echo
+
+# ── 6. Valores que romperían al cargar el archivo en una shell ───────────────
+# docker compose y dotenv leen este archivo con su propio parser y toleran
+# cualquier cosa. Pero DEPLOY.md pide correr comandos con "$DB_USERNAME" y
+# "$POSTGRES_PASSWORD" ya en el entorno, y la forma natural de ponerlos ahí es
+# `set -a; . .env.prod`. Un valor con espacios y sin comillas hace que la shell
+# intente ejecutar la segunda palabra; uno con `<` o `>` abre una redirección y
+# llega a crear un archivo. En los dos casos la carga aborta a la mitad y las
+# variables quedan cargadas a medias, que es peor que no cargarlas.
+#
+# Esto le costó el puesto al backup: backup-db.sh sourceaba el archivo y salía
+# con 127 sin escribir un byte, mientras este preflight daba verde.
+#
+# La comprobación es textual a propósito. Sourcear el archivo para ver si
+# sourcea ejecutaría exactamente lo que se quiere detectar.
+echo "Formato del archivo"
+sospechosas=""
+while IFS= read -r linea; do
+  case "$linea" in
+    [A-Za-z_]*=*) ;;
+    *) continue ;;
+  esac
+  k="${linea%%=*}"
+  v="${linea#*=}"
+  v="${v%"${v##*[![:space:]]}"}"          # sin espacios al final
+  [ -n "$v" ] || continue
+  case "$v" in
+    '"'*|"'"*) continue ;;                 # ya viene entre comillas
+    *'#'*) continue ;;                     # la shell corta en el comentario
+  esac
+  case "$v" in
+    *[[:space:]]*|*'<'*|*'>'*|*'|'*|*'&'*|*';'*|*'`'*|*'$('*)
+      sospechosas="${sospechosas}${k}
+" ;;
+  esac
+done < <(tr -d '\r' < "$ENV_FILE")
+
+if [ -n "$sospechosas" ]; then
+  ambar "estos valores no están entre comillas y romperían \`set -a; . $ENV_FILE\`:"
+  printf '%s' "$sospechosas" | sed 's/^/      /'
+  echo "      Encerralos entre comillas dobles."
+else
+  verde "todos los valores se pueden cargar en una shell"
+fi
 echo
 
 # ── Resultado ────────────────────────────────────────────────────────────────

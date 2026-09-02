@@ -212,10 +212,49 @@ Off-site a Cloudflare R2 / Backblaze B2: configurar `rclone` y exportar
 bash scripts/restore-db.sh backups/<ultimo>.sql.gz   # pide confirmación
 ```
 
-> **Pendiente (RL-M-13).** Los scripts existen y funcionan, pero hasta que no
-> haya VPS no hay cron instalado, no hay copia fuera del servidor y **el restore
-> nunca se probó de punta a punta**. Un backup que nunca se restauró no es un
-> backup. Esto queda abierto a propósito hasta el despliegue real.
+### El ciclo se probó, y probarlo encontró dos fallas
+
+El 1-sep-2026 se ejercitó el ciclo completo contra bases descartables. No es un
+trámite: los dos scripts **abortaban con exit 127 sin escribir un solo byte**,
+porque cargaban el `.env` con `. "$ENV_FILE"` y ahí cualquier valor con espacios
+y sin comillas —`EMISOR_RAZON_SOCIAL`, `MAIL_FROM`— hace que la shell intente
+ejecutarlo. Todos los `.env*` del repo caían en eso. Y `check-env.sh` no lo veía,
+porque parsea en vez de sourcear: **el preflight daba verde mientras el backup no
+producía nada**. Por cron, la falla iba a un log que nadie mira.
+
+Ahora los dos scripts leen el archivo clave por clave, `check-env.sh` avisa si un
+valor rompería al cargarse en una shell, y las plantillas traen los valores
+entrecomillados.
+
+Lo verificado, restaurando **en un contenedor distinto** del de origen —lo que
+además prueba que el dump es autocontenido:
+
+| | |
+|---|---|
+| Estructura | 35 tablas, 104 índices, 44 FK, 6 CHECK, 4 UNIQUE, 3 triggers, 11 funciones: idénticas |
+| Datos | Las 35 tablas con el mismo conteo de filas |
+| Restore | `ON_ERROR_STOP=1` y salida 0: ni una sentencia falló |
+| Append-only | Los 3 triggers vuelven **activos**; 6 intentos de `UPDATE`/`DELETE` sobre las bitácoras, 6 rechazos |
+
+Que los triggers vuelvan activos importa más de lo que parece: si `pg_dump` los
+restaurara deshabilitados, la garantía de la bitácora desaparecería en silencio
+justo después de un incidente.
+
+Para repetirlo:
+
+```bash
+docker run -d --name probe -e POSTGRES_USER=$PGU -e POSTGRES_PASSWORD=$(openssl rand -base64 24) -e POSTGRES_DB=$PGD postgres:16-alpine
+echo si | DB_CONTAINER=probe bash scripts/restore-db.sh backups/<ultimo>.sql.gz
+docker rm -f -v probe
+```
+
+> `pg_isready` responde que sí durante el arranque temporal del init, antes de que
+> exista la base. Esperá a ver `database system is ready to accept connections` en
+> `docker logs`.
+
+> **Lo que sigue pendiente (RL-M-13).** Falta lo que necesita el VPS: instalar el
+> cron, configurar la copia off-site y repetir esta misma prueba con el volumen
+> real de producción. El mecanismo está verificado; la operación, no.
 
 ## 8. Actualizar una instalación existente
 

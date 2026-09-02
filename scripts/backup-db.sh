@@ -19,9 +19,23 @@ RETENTION_DAYS="${RETENTION_DAYS:-14}"
 ENV_FILE="${ENV_FILE:-.env.prod}"
 
 # Credenciales desde .env.prod (no se hardcodean).
-if [ -f "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
-PGUSER="${POSTGRES_USER:?POSTGRES_USER no definido (revisá $ENV_FILE)}"
-PGDB="${POSTGRES_DB:?POSTGRES_DB no definido (revisá $ENV_FILE)}"
+# El archivo se lee clave por clave, no con `. "$ENV_FILE"`. Sourcear rompe: los
+# valores con espacios y sin comillas —EMISOR_RAZON_SOCIAL, MAIL_FROM— hacen que
+# el shell intente ejecutarlos, y con `set -e` el script aborta con exit 127 sin
+# escribir un solo byte. Corriendo por cron eso se pierde en un log que nadie
+# mira, y el problema recien aparece el dia que hace falta restaurar.
+# Una variable ya exportada gana sobre el archivo (util para probar el ciclo
+# contra una base descartable).
+val() {
+  [ -f "$ENV_FILE" ] || return 0
+  tr -d '\r' < "$ENV_FILE" | grep -m1 "^$1=" | cut -d= -f2- |
+    sed -E "s/^\"(.*)\"$/\1/; s/^'(.*)'$/\1/"
+}
+
+PGUSER="${POSTGRES_USER:-$(val POSTGRES_USER)}"
+PGDB="${POSTGRES_DB:-$(val POSTGRES_DB)}"
+: "${PGUSER:?POSTGRES_USER no definido (ponelo en $ENV_FILE o exportalo)}"
+: "${PGDB:?POSTGRES_DB no definido (ponelo en $ENV_FILE o exportalo)}"
 
 mkdir -p "$BACKUP_DIR"
 TS="$(date +%Y%m%d_%H%M%S)"

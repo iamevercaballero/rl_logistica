@@ -79,6 +79,19 @@ pw="$(val BOOTSTRAP_ADMIN_PASSWORD)"
 if [ -n "$pw" ] && [ "${#pw}" -lt 12 ]; then
   rojo "BOOTSTRAP_ADMIN_PASSWORD tiene ${#pw} caracteres (el backend exige 12)"
 fi
+
+# Cifrado de backups. Ausente no es un error de despliegue —el sistema arranca
+# igual— pero sí algo que hay que decidir a propósito y no por olvido: sin esto
+# el dump viaja off-site en claro.
+frase="$(val BACKUP_PASSPHRASE)"
+if [ -z "$frase" ]; then
+  ambar "BACKUP_PASSPHRASE ausente: los backups se van a escribir SIN CIFRAR"
+elif [ "${#frase}" -lt 20 ]; then
+  rojo "BACKUP_PASSPHRASE tiene ${#frase} caracteres (mínimo 20; protege un dump completo)"
+else
+  verde "BACKUP_PASSPHRASE tiene longitud suficiente (${#frase})"
+  command -v gpg >/dev/null 2>&1     || rojo "BACKUP_PASSPHRASE está definida pero gpg no está instalado: el backup va a abortar"
+fi
 echo
 
 # ── 3. Valores de plantilla que quedaron sin reemplazar ──────────────────────

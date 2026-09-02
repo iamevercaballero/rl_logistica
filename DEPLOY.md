@@ -206,13 +206,44 @@ bash scripts/backup-db.sh
 Off-site a Cloudflare R2 / Backblaze B2: configurar `rclone` y exportar
 `RCLONE_REMOTE=r2:rl-logistica-backups`. Sumar snapshot automático del VPS (OVH).
 
+### Cifrado en reposo
+
+Con `BACKUP_PASSPHRASE` definida en `.env.prod`, el dump sale cifrado con
+AES-256 y el archivo pasa a terminar en `.sql.gz.gpg`. Sin ella el backup se
+escribe igual, pero en claro y avisando por `stderr`; `check-env.sh` lo marca
+como aviso.
+
+Lo que más protege es **la copia off-site**: si algún día se filtran las
+credenciales de R2/B2, del otro lado hay una base entera con la operación del
+cliente. El cifrado ocurre antes de que `rclone` suba nada.
+
+Es cifrado **simétrico**, y es una decisión con contrapartida. Con clave pública
+el servidor no podría descifrar sus propios backups —mejor si lo comprometen—,
+pero obliga a custodiar una clave privada que, si se pierde, vuelve inservibles
+todos los backups a la vez. Para una operación de una sola persona eso agrega
+más riesgo del que saca. Si alguna vez hay un segundo administrador, pasar a
+`--recipient` es el camino.
+
+> **Guardá la frase fuera del servidor**, en el gestor de contraseñas. Está en
+> el mismo archivo que la contraseña de la base, así que no es un secreto nuevo
+> que administrar — pero si se pierde `.env.prod` y los backups están cifrados
+> con esa frase, no hay forma de recuperarlos.
+
+La frase nunca viaja por la línea de comandos, que `ps` le muestra a cualquier
+usuario del sistema; va por descriptor de archivo.
+
 **Probar el restore** contra una base descartable:
 
 ```bash
-bash scripts/restore-db.sh backups/<ultimo>.sql.gz   # pide confirmación
+bash scripts/restore-db.sh backups/<ultimo>.sql.gz.gpg   # pide confirmación
 ```
 
-### El ciclo se probó, y probarlo encontró dos fallas
+El restore detecta el cifrado por la extensión, así que un backup viejo sin
+cifrar se restaura igual. Antes de pedir confirmación descifra y valida el gzip
+de adentro: descubrir a mitad de camino que la frase no era la correcta dejaría
+la base con el esquema a medio borrar, porque el dump trae `--clean`.
+
+### El ciclo se probó, y probarlo encontró varias fallas
 
 El 1-sep-2026 se ejercitó el ciclo completo contra bases descartables. No es un
 trámite: los dos scripts **abortaban con exit 127 sin escribir un solo byte**,
@@ -226,6 +257,14 @@ Ahora los dos scripts leen el archivo clave por clave, `check-env.sh` avisa si u
 valor rompería al cargarse en una shell, y las plantillas traen los valores
 entrecomillados.
 
+Agregar el cifrado destapó una tercera del mismo tipo, y peor: leer una clave
+**ausente** también mataba el script en silencio. Con `set -e` y `pipefail`, en
+`X="$(val LO_QUE_SEA)"` el `grep` sin coincidencias hace fallar la sustitución y
+la asignación se lleva puesto el proceso — sin salida, sin archivo, con código 1.
+Nunca se había notado porque hasta ahora todas las claves que se leían existían.
+De arrastre, tampoco se alcanzaba el mensaje que explica que falta
+`POSTGRES_USER`: se moría antes de poder decirlo.
+
 Lo verificado, restaurando **en un contenedor distinto** del de origen —lo que
 además prueba que el dump es autocontenido:
 
@@ -235,6 +274,8 @@ además prueba que el dump es autocontenido:
 | Datos | Las 35 tablas con el mismo conteo de filas |
 | Restore | `ON_ERROR_STOP=1` y salida 0: ni una sentencia falló |
 | Append-only | Los 3 triggers vuelven **activos**; 6 intentos de `UPDATE`/`DELETE` sobre las bitácoras, 6 rechazos |
+| Cifrado | El archivo es `PGP symmetric key encrypted data — AES 256`, sin una línea de SQL en claro; el ciclo cifrado da el mismo resultado |
+| Frase incorrecta | Corta con un mensaje claro **antes** de tocar la base: quedó con 0 tablas, y el restore correcto la dejó en 35 |
 
 Que los triggers vuelvan activos importa más de lo que parece: si `pg_dump` los
 restaurara deshabilitados, la garantía de la bitácora desaparecería en silencio
@@ -254,7 +295,10 @@ docker rm -f -v probe
 
 > **Lo que sigue pendiente (RL-M-13).** Falta lo que necesita el VPS: instalar el
 > cron, configurar la copia off-site y repetir esta misma prueba con el volumen
-> real de producción. El mecanismo está verificado; la operación, no.
+> real de producción. Queda además una decisión de negocio que no es técnica: la
+> retención es de 14 días y la conservación exigida supera los 10 años, así que
+> hay que definir qué copias se archivan y dónde. El mecanismo está verificado;
+> la operación, no.
 
 ## 8. Actualizar una instalación existente
 

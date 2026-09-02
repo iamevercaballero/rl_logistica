@@ -73,3 +73,14 @@ coverage/
 /logistica-palets-backend/uploads/
 /uploads/
 
+
+# Planillas y logo sueltos en la raíz: material de trabajo, no del sistema.
+# Ningún archivo de código referencia los dos xlsx, y "LOGO RL.jpg" es copia
+# byte a byte de logistica-palets-frontend/public/logo.jpg —mismo hash—, que es
+# el que la app realmente usa. Siguen en disco; sólo dejan de versionarse.
+#
+# La barra inicial ancla a la raíz: si alguna vez hace falta una de estas
+# planillas dentro de un módulo, ahí sí se versiona.
+/PRODUCTOS.xlsx
+/FRESCURA JULIO 2026.xlsx
+/LOGO RL.jpg

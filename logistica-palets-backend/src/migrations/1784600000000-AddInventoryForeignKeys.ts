@@ -53,6 +53,14 @@ export class AddInventoryForeignKeys1784600000000 implements MigrationInterface 
   name = 'AddInventoryForeignKeys1784600000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
+    // Esta migración se exime del `statement_timeout` que la aplicación fija en
+    // la conexión (ver src/config/db-limits.ts). No es un caso hipotético:
+    // validar 44 claves foráneas obliga a PostgreSQL a recorrer cada tabla una
+    // vez, y sobre un volumen de producción eso puede pasarse de los 30 segundos
+    // que acotan una consulta de negocio. `SET LOCAL` vale sólo dentro de la
+    // transacción de la migración, así que no afecta a nada más.
+    await queryRunner.query(`SET LOCAL statement_timeout = 0`);
+
     // ── 1. Verificar antes de tocar nada ──────────────────────────────────────
     const problemas: string[] = [];
 

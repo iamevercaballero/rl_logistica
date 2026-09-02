@@ -1,6 +1,7 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { RequestContextMiddleware } from './common/request-context';
+import { limitesDeConexion } from './config/db-limits';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { FriendlyThrottlerGuard } from './common/friendly-throttler.guard';
@@ -95,6 +96,7 @@ import { AppController } from './app.controller';
     TypeOrmModule.forRootAsync({
       useFactory: () => {
         const isProd = process.env.NODE_ENV === 'production';
+        const limites = limitesDeConexion();
         const synchronize = process.env.DB_SYNCHRONIZE === 'true';
         // En prod, migrationsRun por default; en dev, sólo si el usuario lo pide.
         const migrationsRun =
@@ -126,7 +128,24 @@ import { AppController } from './app.controller';
           // el mismo Postgres puede resolver un `TimeZone` distinto según el
           // camino de red por el que llega la conexión (host↔WSL2↔contenedor
           // en dev vs. red interna del compose en prod).
-          extra: { options: '-c timezone=Etc/GMT+3' },
+          // Tamaño del pool. Se declara para poder ajustarlo sin tocar
+          // código; el valor por defecto es el mismo que ya traía node-postgres.
+          poolSize: limites.poolSize,
+          //
+          // Los límites de duración van en las opciones de arranque de la
+          // sesión, junto con la zona horaria: ver src/config/db-limits.ts.
+          //
+          // `statement_timeout` alcanza también a las migraciones, porque corren
+          // por este mismo pool. Es deliberado, y el modo de falla es ruidoso
+          // —el contenedor no levanta, con el error de Postgres en el log—. La
+          // migración de claves foráneas, que valida 44 restricciones
+          // recorriendo tablas, se exime a sí misma con `SET LOCAL`. Si alguna
+          // futura lo necesitara, el escape es desplegar una vez con
+          // `DB_STATEMENT_TIMEOUT=0`; está documentado en DEPLOY.md.
+          extra: {
+            options: limites.options,
+            connectionTimeoutMillis: limites.connectionTimeoutMillis,
+          },
         };
       },
     }),

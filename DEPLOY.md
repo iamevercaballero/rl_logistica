@@ -661,6 +661,35 @@ desactivarlo en lugar de eliminarlo, con un aviso que lo explica. Antes se
 borraba y dejaba movimientos apuntando al vacío. Es el mismo criterio que ya
 tenían Materiales y Lotes, ahora también en Ubicaciones y Depósitos.
 
+## Límites de la conexión a PostgreSQL
+
+Desde esta versión la conexión trae tres límites, todos configurables y con
+default razonable, así que **no hay nada que hacer al desplegar**:
+
+| Variable | Default | Qué acota |
+|---|---|---|
+| `DB_STATEMENT_TIMEOUT` | `30s` | La consulta que se desbocó |
+| `DB_IDLE_TX_TIMEOUT` | `60s` | La transacción abandonada, que retiene bloqueos |
+| `DB_POOL_SIZE` | `10` | Conexiones del pool (el default previo, ahora explícito) |
+| `DB_CONNECTION_TIMEOUT_MS` | `10000` | Cuánto espera una petición por una conexión libre |
+
+El que más importa es el segundo. Los caminos que tocan stock usan bloqueo
+pesimista: una transacción que queda abierta no sólo se queda con su conexión,
+retiene los bloqueos y frena a todos los demás. Con el pool agotado el sistema
+deja de responder aunque la base esté perfecta.
+
+**No se puso `lock_timeout`** a propósito: convertiría una espera normal por
+contención —dos salidas simultáneas sobre el mismo lote— en un error para el
+operador. El problema no es esperar por un bloqueo, es no soltarlo nunca.
+
+> **Si una migración se corta por el timeout.** Las migraciones corren por el
+> mismo pool, así que `statement_timeout` también las alcanza. El modo de falla
+> es ruidoso —el contenedor no levanta y el log dice `canceling statement due to
+> statement timeout`—. La solución es desplegar esa vez con
+> `DB_STATEMENT_TIMEOUT=0` y volver al valor normal después. La migración de
+> claves foráneas, que valida 44 restricciones recorriendo tablas, ya se exime
+> sola con `SET LOCAL`.
+
 ## Bloqueo de cuenta por intentos fallidos (RL-M-11)
 
 Diez fallos de una misma cuenta en 15 minutos la bloquean por lo que resta de la

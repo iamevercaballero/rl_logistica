@@ -21,9 +21,11 @@
 }
 
 # Frontend (React/Vite servido por Nginx dentro del contenedor `frontend`).
+# 8080 y no 80: la imagen de nginx corre sin privilegios (uid 101) y un proceso
+# sin privilegios no puede tomar un puerto por debajo de 1024.
 {$APP_DOMAIN} {
 	encode zstd gzip
-	reverse_proxy frontend:80
+	reverse_proxy frontend:8080
 }
 
 # Backend (NestJS). reverse_proxy gestiona el upgrade WebSocket automáticamente,

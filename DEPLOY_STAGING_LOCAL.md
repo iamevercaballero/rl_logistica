@@ -105,6 +105,14 @@ git pull   # o repetir la transferencia tar+scp del working tree
 docker compose -f docker-compose.staging.yml --env-file .env.staging up -d --build
 ```
 
+> **La primera actualización con los cambios de la auditoría necesita dos cosas.**
+>
+> 1. En el túnel de staging, el hostname de la app tiene que pasar de
+>    `http://frontend:80` a `http://frontend:8080`: nginx ahora corre sin
+>    privilegios y no puede tomar el 80. Sin ese cambio, staging deja de responder.
+> 2. Se aplican seis migraciones. Una puede fallar por datos y otra corta todas
+>    las sesiones abiertas — están explicadas en la Parte II de `DEPLOY.md`.
+
 ## 7. Teardown (cuando el cliente termine de probar)
 
 ```bash

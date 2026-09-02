@@ -206,6 +206,26 @@ bash scripts/backup-db.sh
 Off-site a Cloudflare R2 / Backblaze B2: configurar `rclone` y exportar
 `RCLONE_REMOTE=r2:rl-logistica-backups`. Sumar snapshot automático del VPS (OVH).
 
+### Retención: 14 días de diarios, 120 meses de archivo
+
+Los backups diarios se podan a los **14 días** (`RETENTION_DAYS`). Eso no
+alcanza solo: la conservación exigida supera los diez años. Por eso el **primer
+backup exitoso de cada mes** queda archivado en `backups/mensuales/` y se
+conserva **120 meses** (`RETENTION_MONTHS`).
+
+Es el primero exitoso del mes y no el del día 1: si el servidor estuvo apagado
+ese día, se perdería el mes entero.
+
+El archivo mensual es un **enlace duro**, no una copia. Mientras el diario siga
+vivo no ocupa un byte extra; cuando la poda diaria lo borra, el enlace mantiene
+los datos. El costo en régimen es 120 × el tamaño de un dump: hoy son 36 KB,
+unos 4 MB en total; aun a 100 MB por dump serían 12 GB.
+
+> Los 120 meses salen del requisito de conservación citado en la auditoría.
+> **Falta decidir dónde viven esas copias a largo plazo** — el VPS no es lugar
+> para diez años de historia. La poda usa meses de 31 días a propósito: ante la
+> duda, conservar de más, porque equivocarse hacia el otro lado no tiene arreglo.
+
 ### Cifrado en reposo
 
 Con `BACKUP_PASSPHRASE` definida en `.env.prod`, el dump sale cifrado con

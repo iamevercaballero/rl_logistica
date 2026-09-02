@@ -15,7 +15,8 @@ set -euo pipefail
 
 DB_CONTAINER="${DB_CONTAINER:-rl_logistica_db_prod}"
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
-RETENTION_DAYS="${RETENTION_DAYS:-14}"
+RETENTION_DAYS="${RETENTION_DAYS:-14}"     # backups diarios
+RETENTION_MONTHS="${RETENTION_MONTHS:-120}"  # archivo mensual: 10 años
 ENV_FILE="${ENV_FILE:-.env.prod}"
 
 # Credenciales desde .env.prod (no se hardcodean).
@@ -120,6 +121,34 @@ if [ -n "${RCLONE_REMOTE:-}" ] && command -v rclone >/dev/null 2>&1; then
   rclone copy "$OUT" "$RCLONE_REMOTE" && echo ">> Subido off-site."
 fi
 
-echo ">> Retención: borrando backups locales > ${RETENTION_DAYS} días ..."
-find "$BACKUP_DIR" -name 'rl_*.sql.gz*' -type f -mtime "+${RETENTION_DAYS}" -print -delete
+# ── Archivo mensual ──────────────────────────────────────────────────────────
+# La retención diaria de 14 días no alcanza sola: la conservación exigida supera
+# los diez años. Se guarda el PRIMER backup exitoso de cada mes, y no el del día
+# 1, porque si el servidor estuvo apagado ese día se perdería el mes entero.
+#
+# Es un enlace duro, no una copia: mientras el diario siga vivo no ocupa un solo
+# byte extra, y cuando la retención diaria lo borra el enlace mantiene los datos.
+# El costo en régimen es RETENTION_MONTHS por el tamaño de un dump — hoy 36 KB,
+# así que 120 meses son unos 4 MB; aun a 100 MB por dump serían 12 GB.
+MENSUALES="$BACKUP_DIR/mensuales"
+mkdir -p "$MENSUALES"
+MES="$(date +%Y%m)"
+
+if ! find "$MENSUALES" -maxdepth 1 -name "rl_${PGDB}_${MES}*" -type f | grep -q .; then
+  ln "$OUT" "$MENSUALES/" 2>/dev/null || cp "$OUT" "$MENSUALES/"
+  echo ">> Archivo mensual de $MES guardado."
+  if [ -n "${RCLONE_REMOTE:-}" ] && command -v rclone >/dev/null 2>&1; then
+    rclone copy "$OUT" "$RCLONE_REMOTE/mensuales" && echo ">> Mensual subido off-site."
+  fi
+fi
+
+# `-maxdepth 1` no es opcional: sin eso, la poda diaria entraría en mensuales/ y
+# borraría justamente lo que se quiere conservar.
+echo ">> Retención: borrando backups diarios > ${RETENTION_DAYS} días ..."
+find "$BACKUP_DIR" -maxdepth 1 -name 'rl_*.sql.gz*' -type f -mtime "+${RETENTION_DAYS}" -print -delete
+
+# Se poda con meses de 31 días a propósito: ante la duda, conservar de más. Es
+# una retención legal, y equivocarse hacia el otro lado no tiene arreglo.
+echo ">> Retención mensual: borrando archivos > ${RETENTION_MONTHS} meses ..."
+find "$MENSUALES" -maxdepth 1 -name 'rl_*.sql.gz*' -type f -mtime "+$((RETENTION_MONTHS * 31))" -print -delete
 echo ">> Backup finalizado."

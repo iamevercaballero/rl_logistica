@@ -206,6 +206,21 @@ bash scripts/backup-db.sh
 Off-site a Cloudflare R2 / Backblaze B2: configurar `rclone` y exportar
 `RCLONE_REMOTE=r2:rl-logistica-backups`. Sumar snapshot automático del VPS (OVH).
 
+### Que se note si el backup falla
+
+Un backup que falla por cron no avisa a nadie: la salida va al log y el código
+de salida se pierde. Así fue como este mismo script estuvo abortando con 127 sin
+escribir un byte sin que nadie lo notara.
+
+Con `BACKUP_HEARTBEAT_URL` definida, el script llama esa URL **sólo si todo
+salió bien**, y quien alerta es un servicio de afuera cuando el latido no llega.
+Sirve cualquier *dead man's switch*. La lógica invertida es el punto: un
+`|| enviar alerta` desde adentro del script no cubre un servidor apagado, un
+cron que no arrancó ni un disco lleno; la ausencia de latido, sí.
+
+Que falle el envío del latido no marca el backup como fallido: el archivo ya
+está escrito y verificado.
+
 ### Retención: 14 días de diarios, 120 meses de archivo
 
 Los backups diarios se podan a los **14 días** (`RETENTION_DAYS`). Eso no

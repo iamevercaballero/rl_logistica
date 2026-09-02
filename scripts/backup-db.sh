@@ -151,4 +151,23 @@ find "$BACKUP_DIR" -maxdepth 1 -name 'rl_*.sql.gz*' -type f -mtime "+${RETENTION
 # una retención legal, y equivocarse hacia el otro lado no tiene arreglo.
 echo ">> Retención mensual: borrando archivos > ${RETENTION_MONTHS} meses ..."
 find "$MENSUALES" -maxdepth 1 -name 'rl_*.sql.gz*' -type f -mtime "+$((RETENTION_MONTHS * 31))" -print -delete
+
+# ── Latido para el monitoreo externo (opcional) ──────────────────────────────
+# Un backup que falla por cron no avisa a nadie: la salida se va al log y el
+# código de salida se pierde. Así es como este mismo script estuvo abortando con
+# 127 sin escribir un byte sin que nadie lo notara.
+#
+# El latido invierte la lógica: sólo se envía cuando TODO salió bien, y quien
+# alerta es un servicio de afuera si el latido no llega. Un servidor apagado, un
+# cron que no arrancó o un disco lleno también dejan de latir; un `|| enviar
+# alerta` desde acá adentro no cubre ninguno de los tres.
+#
+# Sirve cualquier URL de "dead man's switch". Si no está definida no pasa nada.
+# El `|| true` es deliberado: que se caiga la red no vuelve fallido un backup
+# que ya está escrito y verificado.
+LATIDO="${BACKUP_HEARTBEAT_URL:-$(val BACKUP_HEARTBEAT_URL)}"
+if [ -n "$LATIDO" ] && command -v curl >/dev/null 2>&1; then
+  curl -fsS -m 10 -o /dev/null "$LATIDO" && echo ">> Latido enviado." ||     echo "!! No se pudo enviar el latido (el backup está bien igual)." >&2
+fi
+
 echo ">> Backup finalizado."

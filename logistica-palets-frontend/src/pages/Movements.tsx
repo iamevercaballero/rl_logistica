@@ -913,15 +913,25 @@ export default function MovementsPage() {
   async function uploadPendingFiles(documentId: string, files: PendingFile[]) {
     if (files.length === 0) return;
     let failed = 0;
+    let motivo = "";
     for (const pf of files) {
       try {
         await uploadAttachment(pf.file, pf.name, pf.category, "DOCUMENT", documentId);
-      } catch {
+      } catch (err) {
         failed++;
+        // Se conserva el primer motivo real en vez de descartarlo. Antes este
+        // catch era vacío y el operador recibía siempre «reintentá desde la
+        // bitácora», que en el caso más común —el almacenamiento sin permiso de
+        // escritura— era un consejo equivocado: ahí falla exactamente igual.
+        motivo = motivo || getFriendlyApiError(err);
       }
     }
     if (failed > 0) {
-      toast.error(`${failed} adjunto(s) no se pudieron subir — reintentá desde la bitácora del remito`);
+      toast.error(
+        motivo
+          ? `${failed} adjunto(s) no se pudieron subir: ${motivo}`
+          : `${failed} adjunto(s) no se pudieron subir — reintentá desde la bitácora del remito`,
+      );
     } else {
       toast.success(`${files.length} archivo(s) adjuntado(s) al remito`);
     }

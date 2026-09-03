@@ -1,4 +1,5 @@
 import {
+  ServiceUnavailableException,
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -307,7 +308,28 @@ export class UploadsService {
 
   static ensureUploadDir(subdir: string): string {
     const dir = join(UPLOADS_ROOT, subdir);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    if (existsSync(dir)) return dir;
+    try {
+      mkdirSync(dir, { recursive: true });
+    } catch (e) {
+      const err = e as NodeJS.ErrnoException;
+      if (err.code === 'EACCES' || err.code === 'EPERM' || err.code === 'EROFS') {
+        // Causa concreta y ya vista en desarrollo: desde RL-A-10 el backend
+        // corre como `node`, y un volumen de adjuntos creado por un arranque
+        // anterior pertenece a root. El síntoma para el operador era un remito
+        // que se guardaba bien y adjuntos que fallaban con un error genérico,
+        // sin ninguna pista de por qué — y el mensaje del frontend le pedía
+        // reintentar desde la bitácora, donde iba a fallar exactamente igual.
+        //
+        // No se nombra la ruta a propósito: quien recibe esto es el operador.
+        throw new ServiceUnavailableException(
+          'El almacenamiento de adjuntos no admite escritura, así que el archivo no se guardó. ' +
+            'El resto de la operación sí. Avisá a quien administra el servidor: hay que revisar ' +
+            'los permisos del volumen de adjuntos.',
+        );
+      }
+      throw e;
+    }
     return dir;
   }
 }

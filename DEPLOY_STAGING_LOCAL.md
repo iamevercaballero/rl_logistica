@@ -105,12 +105,22 @@ git pull   # o repetir la transferencia tar+scp del working tree
 docker compose -f docker-compose.staging.yml --env-file .env.staging up -d --build
 ```
 
-> **La primera actualización con los cambios de la auditoría necesita dos cosas.**
+> **La primera actualización con los cambios de la auditoría necesita tres cosas.**
 >
 > 1. En el túnel de staging, el hostname de la app tiene que pasar de
 >    `http://frontend:80` a `http://frontend:8080`: nginx ahora corre sin
 >    privilegios y no puede tomar el 80. Sin ese cambio, staging deja de responder.
-> 2. Se aplican seis migraciones. Una puede fallar por datos y otra corta todas
+> 2. **El volumen de adjuntos necesita un `chown`.** El backend pasa a correr
+>    como `node` y el volumen creado por el despliegue anterior es de root, así
+>    que no va a poder escribir un solo adjunto. El síntoma es
+>    `EACCES: permission denied, mkdir '/app/uploads/...'` en el log, y del lado
+>    del operador, un remito que se crea bien pero cuyos adjuntos fallan:
+>
+>    ```bash
+>    docker compose -f docker-compose.staging.yml exec -u root backend chown -R node:node /app/uploads
+>    ```
+>
+> 3. Se aplican ocho migraciones. Una puede fallar por datos y otra corta todas
 >    las sesiones abiertas — están explicadas en la Parte II de `DEPLOY.md`.
 
 ## 7. Teardown (cuando el cliente termine de probar)

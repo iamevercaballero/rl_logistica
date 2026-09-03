@@ -32,6 +32,14 @@ cd logistica-palets-backend && DB_HOST=localhost DB_PORT=5433 npm run start:dev
 cd logistica-palets-frontend && npm run dev
 ```
 
+> **Si los adjuntos fallan con `EACCES` sobre `/app/uploads`**, es el volumen:
+> el backend corre como `node` desde RL-A-10 y un volumen creado por un arranque
+> anterior pertenece a root. Pasa igual en desarrollo, no sólo al desplegar.
+>
+> ```bash
+> docker compose exec -u root backend chown -R node:node /app/uploads
+> ```
+
 Usuario inicial de desarrollo: `admin` / `admin123`. El login está limitado a
 5 intentos por minuto por IP y, desde RL-M-11, a 10 fallos por usuario en 15
 minutos; si te trabás, esperá o reiniciá el backend.

@@ -47,8 +47,14 @@ function multerStorage() {
     destination: (_req, _file, cb) => {
       const now = new Date();
       const subdir = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}`;
-      const dir = UploadsService.ensureUploadDir(subdir);
-      cb(null, dir);
+      try {
+        cb(null, UploadsService.ensureUploadDir(subdir));
+      } catch (e) {
+        // Se entrega por el callback y no se deja propagar: multer lo trata como
+        // error de la petición y así llega a los filtros de Nest con su código
+        // y su mensaje. Lanzado desde acá adentro terminaba como un 500 pelado.
+        cb(e as Error, '');
+      }
     },
     filename: (_req, file, cb) => {
       // El nombre en disco es siempre un uuid: el `originalname` viene del cliente

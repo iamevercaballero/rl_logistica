@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { IsBusinessDateString } from '../../../common/is-business-date-string.validator';
 
 export class RegularizeMovementDto {
@@ -14,6 +14,15 @@ export class RegularizeMovementDto {
   @IsOptional() @IsString() driver?: string;
   @IsOptional() @IsString() destination?: string;
   @IsOptional() @IsString() @MaxLength(80) documentoMaterial?: string;
+  /**
+   * Documento Material es dato de LÍNEA: SAP no siempre devuelve el mismo
+   * número para cada material de una misma tanda, y muchas veces llega
+   * después del despacho. Por eso se edita una línea a la vez.
+   *
+   * Con `true` el valor se copia al resto de las líneas del remito — el caso
+   * en que SAP sí devolvió un único documento para toda la tanda.
+   */
+  @IsOptional() @IsBoolean() applyDocumentoMaterialToDocument?: boolean;
   @IsOptional() @IsString() notes?: string;
 
   // Campos de lote — se aplican a todos los lotes asociados al movimiento

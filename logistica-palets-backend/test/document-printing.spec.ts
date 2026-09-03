@@ -10,6 +10,7 @@ import { Movement } from '../src/modules/movements/entities/movement.entity';
 import { RegularizationLog } from '../src/modules/movements/entities/regularization-log.entity';
 import { User } from '../src/modules/users/entities/user.entity';
 import { Destination } from '../src/modules/destinations/entities/destination.entity';
+import { Product } from '../src/modules/products/entities/product.entity';
 import { WarehousesService } from '../src/modules/warehouses/warehouses.service';
 import type { EventsGateway } from '../src/modules/events/events.gateway';
 import type { CacheService } from '../src/modules/cache/cache.service';
@@ -291,6 +292,125 @@ describe('depósito único y snapshots de impresión', () => {
     const completedRows = await service.findAll({ type: ['EXIT'], documentoMaterialStatus: 'COMPLETED' });
     expect(pendingRows.data.map((row) => row.id)).toEqual(pending.movementIds);
     expect(completedRows.data.map((row) => row.id)).toEqual(completed.movementIds);
+  });
+
+  /** Tanda de dos materiales: el caso donde SAP puede dar un documento por material. */
+  async function salidaDeDosMateriales() {
+    const segundoProducto = await ds.getRepository(Product).save(
+      ds.getRepository(Product).create({
+        code: 'P-TEST-2', description: 'Segundo producto', unitOfMeasure: 'UN', active: true,
+      }),
+    );
+    const segundaUbicacion = await ds.getRepository(Location).save(
+      ds.getRepository(Location).create({ code: 'A-2', type: 'RACK', warehouse: base.warehouse, active: true }),
+    );
+
+    const palletA = await createStock(base.warehouse, base.location, 'TANDA-A');
+    await service.create({
+      type: 'ENTRY',
+      productId: segundoProducto.id,
+      warehouseId: base.warehouse.id,
+      locationId: segundaUbicacion.id,
+      palletItems: [{
+        lotCode: 'TANDA-B', quantity: 100, fechaVencimiento: '2027-12-31', locationId: segundaUbicacion.id,
+      }],
+    }, TEST_USER_ID);
+    const palletB = await ds.getRepository(Pallet).findOneOrFail({
+      where: { currentLocationId: segundaUbicacion.id },
+    });
+
+    const remito = await service.createDocument({
+      type: 'EXIT',
+      lines: [
+        { productId: base.product.id, palletItems: [{ palletId: palletA.id, quantity: 10 }] },
+        { productId: segundoProducto.id, palletItems: [{ palletId: palletB.id, quantity: 10 }] },
+      ],
+    }, TEST_USER_ID);
+
+    return { remito, lineaA: remito.movementIds[0], lineaB: remito.movementIds[1] };
+  }
+
+  const documentoMaterialDe = async (movementId: string) =>
+    (await ds.getRepository(Movement).findOneByOrFail({ id: movementId })).documentoMaterial;
+  const documentoMaterialDeLaCabecera = async (documentId: string) =>
+    (await ds.getRepository(LogisticsDocument).findOneByOrFail({ id: documentId })).documentoMaterial;
+
+  it('Documento Material se corrige por material, sin arrastrar a las demás líneas del remito', async () => {
+    const { remito, lineaA, lineaB } = await salidaDeDosMateriales();
+
+    // SAP devuelve primero el documento de un material: el otro sigue pendiente.
+    await service.editMetadata(lineaA, {
+      reason: 'Documento SAP del primer material',
+      documentoMaterial: '4900111111',
+    }, TEST_USER_ID);
+
+    expect(await documentoMaterialDe(lineaA)).toBe('4900111111');
+    expect(await documentoMaterialDe(lineaB)).toBeNull();
+    // Las líneas dejaron de coincidir: ningún número representa al remito entero.
+    expect(await documentoMaterialDeLaCabecera(remito.documentId)).toBeNull();
+
+    // El segundo material llega con otro documento y tampoco pisa al primero.
+    await service.editMetadata(lineaB, {
+      reason: 'Documento SAP del segundo material',
+      documentoMaterial: '4900222222',
+    }, TEST_USER_ID);
+
+    expect(await documentoMaterialDe(lineaA)).toBe('4900111111');
+    expect(await documentoMaterialDe(lineaB)).toBe('4900222222');
+    expect(await documentoMaterialDeLaCabecera(remito.documentId)).toBeNull();
+
+    // Con la cabecera en null, el remito se busca por el documento de cualquier línea.
+    const encontrados = await service.findDocuments({ search: '4900222222' });
+    expect(encontrados.data.map((doc) => doc.id)).toEqual([remito.documentId]);
+  });
+
+  it('Documento Material se copia a todo el remito solo si se pide', async () => {
+    const { remito, lineaA, lineaB } = await salidaDeDosMateriales();
+
+    const aplicado = await service.editMetadata(lineaA, {
+      reason: 'Un único documento SAP para toda la tanda',
+      documentoMaterial: '4900333333',
+      applyDocumentoMaterialToDocument: true,
+    }, TEST_USER_ID);
+
+    // Una auditoría por línea tocada, no una sola por el remito.
+    expect(aplicado.changes).toBe(2);
+    expect(await documentoMaterialDe(lineaA)).toBe('4900333333');
+    expect(await documentoMaterialDe(lineaB)).toBe('4900333333');
+    // Coinciden todas: la cabecera vuelve a poder representarlas.
+    expect(await documentoMaterialDeLaCabecera(remito.documentId)).toBe('4900333333');
+
+    // Corregir después una sola línea no arrastra a la otra.
+    await service.editMetadata(lineaB, {
+      reason: 'Corrección del documento del segundo material',
+      documentoMaterial: '4900444444',
+    }, TEST_USER_ID);
+    expect(await documentoMaterialDe(lineaA)).toBe('4900333333');
+    expect(await documentoMaterialDe(lineaB)).toBe('4900444444');
+    expect(await documentoMaterialDeLaCabecera(remito.documentId)).toBeNull();
+  });
+
+  it('Documento Material se replica al remito sin volver a tipearlo', async () => {
+    const { remito, lineaA, lineaB } = await salidaDeDosMateriales();
+
+    await service.editMetadata(lineaA, {
+      reason: 'Documento SAP del primer material',
+      documentoMaterial: '4900555555',
+    }, TEST_USER_ID);
+    expect(await documentoMaterialDe(lineaB)).toBeNull();
+
+    // Después se confirma que SAP dio un solo documento para toda la tanda: se
+    // replica desde la línea que ya lo tiene, sin volver a escribirlo.
+    const replicado = await service.editMetadata(lineaA, {
+      reason: 'El documento SAP vale para toda la tanda',
+      applyDocumentoMaterialToDocument: true,
+    }, TEST_USER_ID);
+
+    // Solo la hermana quedó auditada: la línea de origen no cambió.
+    expect(replicado.changes).toBe(1);
+    expect(await documentoMaterialDe(lineaA)).toBe('4900555555');
+    expect(await documentoMaterialDe(lineaB)).toBe('4900555555');
+    expect(await documentoMaterialDeLaCabecera(remito.documentId)).toBe('4900555555');
   });
 
   it('rechaza Documento Material fuera del flujo de Salida', async () => {

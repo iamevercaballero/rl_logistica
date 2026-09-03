@@ -1253,9 +1253,19 @@ export class MovementsService {
     if (query.from) qb.andWhere('d.date >= :from', { from: this.toStartDate(query.from) });
     if (query.to) qb.andWhere('d.date <= :to', { to: this.toEndDate(query.to) });
     if (query.search) {
-      qb.andWhere('(d.code ILIKE :s OR d.documentNumber ILIKE :s OR d.supplier ILIKE :s OR d.destination ILIKE :s OR d."documentoMaterial" ILIKE :s)', {
-        s: `%${query.search}%`,
-      });
+      // El Documento Material se busca también línea por línea: la cabecera
+      // solo lo guarda mientras todas coincidan (ver syncDocumentoMaterialCabecera),
+      // así que sin este EXISTS un remito con un documento SAP por material
+      // sería imposible de encontrar por ese número.
+      qb.andWhere(
+        `(d.code ILIKE :s OR d.documentNumber ILIKE :s OR d.supplier ILIKE :s OR d.destination ILIKE :s
+          OR d."documentoMaterial" ILIKE :s
+          OR EXISTS (
+            SELECT 1 FROM movements m
+            WHERE m."documentId" = d.id AND m."documentoMaterial" ILIKE :s
+          ))`,
+        { s: `%${query.search}%` },
+      );
     }
     const total = await qb.getCount();
     const documents = await qb.skip((page - 1) * limit).take(limit).getMany();
@@ -1466,7 +1476,10 @@ export class MovementsService {
     const result = await this.dataSource.transaction(async (manager) => {
       const movement = await manager.findOne(Movement, { where: { id } });
       if (!movement) throw new NotFoundException('Movimiento no encontrado');
-      if (movement.type !== 'EXIT' && dto.documentoMaterial !== undefined) {
+      if (
+        movement.type !== 'EXIT'
+        && (dto.documentoMaterial !== undefined || dto.applyDocumentoMaterialToDocument)
+      ) {
         throw new BadRequestException('Documento Material solo corresponde a una Salida');
       }
 
@@ -1494,9 +1507,14 @@ export class MovementsService {
         }
       }
 
-      // Documento Material es de cabecera: mantener iguales todas las líneas
-      // de una RLNS multi-producto y el snapshot de logistics_documents.
-      if (documentoMaterialChanged && movement.documentId) {
+      // Documento Material es dato de LÍNEA, no de cabecera: SAP no siempre
+      // devuelve el mismo número para cada material de una tanda, y el dato
+      // suele llegar después del despacho (salidas a CERVEPAR). Editarlo en una
+      // línea NO toca a las hermanas del remito, salvo pedido explícito
+      // (`applyDocumentoMaterialToDocument`), que es el caso de la tanda con un
+      // único documento para todos los materiales. Esa copia toma el valor final
+      // de esta línea, haya cambiado recién o ya lo tuviera de antes.
+      if (movement.documentId && dto.applyDocumentoMaterialToDocument) {
         const siblings = await manager.find(Movement, { where: { documentId: movement.documentId } });
         for (const sibling of siblings) {
           if (sibling.id === movement.id) continue;
@@ -1512,13 +1530,6 @@ export class MovementsService {
             changedById: userId,
             reason: dto.reason,
           });
-        }
-
-        const document = await manager.findOne(LogisticsDocument, { where: { id: movement.documentId } });
-        if (document) {
-          document.documentoMaterial = documentoMaterialValue;
-          document.updatedAt = new Date();
-          await manager.save(document);
         }
       }
 
@@ -1570,6 +1581,9 @@ export class MovementsService {
       }
 
       await manager.save(movement);
+      if ((documentoMaterialChanged || dto.applyDocumentoMaterialToDocument) && movement.documentId) {
+        await this.syncDocumentoMaterialCabecera(manager, movement.documentId);
+      }
       for (const log of logs) {
         await manager.save(manager.create(RegularizationLog, log));
       }
@@ -1580,6 +1594,30 @@ export class MovementsService {
     this.invalidateWarehouseCaches(result.warehouseId);
 
     return result;
+  }
+
+  /**
+   * Refleja en la cabecera RLNS el Documento Material de sus líneas.
+   *
+   * El valor solo sobrevive en `logistics_documents` mientras TODAS las líneas
+   * coincidan; si difieren — lo normal cuando SAP entrega un documento por
+   * material — queda en null, porque no existe un único número que represente
+   * al remito. Nada se pierde: reportes y exportaciones ya leen el dato de cada
+   * movimiento, y la búsqueda de remitos mira también las líneas
+   * (ver `findDocuments`).
+   */
+  private async syncDocumentoMaterialCabecera(manager: EntityManager, documentId: string) {
+    const document = await manager.findOne(LogisticsDocument, { where: { id: documentId } });
+    if (!document) return;
+
+    const lines = await manager.find(Movement, { where: { documentId } });
+    const valores = new Set(lines.map((line) => line.documentoMaterial?.trim() || null));
+    const comun = valores.size === 1 ? [...valores][0] : null;
+
+    if ((document.documentoMaterial?.trim() || null) === comun) return;
+    document.documentoMaterial = comun;
+    document.updatedAt = new Date();
+    await manager.save(document);
   }
 
   /** Desglose por lote de un movimiento: cantidades y estado actual de sus pallets (para edición). */
@@ -2127,6 +2165,7 @@ export class MovementsService {
       .leftJoin('warehouses', 'toWarehouse', 'toWarehouse.id = movement."toWarehouseId"')
       .leftJoin('locations', 'toLocation', 'toLocation.id = movement."toLocationId"')
       .leftJoin('users', 'encargado', 'encargado.id = movement."encargadoRecepcionId"')
+      .leftJoin('logistics_documents', 'document', 'document.id = movement."documentId"')
       .leftJoin('lots', 'lot', 'lot.id = movement."lotId"')
       .select([
         'movement.id AS id',
@@ -2173,6 +2212,11 @@ export class MovementsService {
         'encargado.id AS "encargadoId"',
         'encargado.username AS "encargadoUsername"',
         'encargado."fullName" AS "encargadoFullName"',
+        // Cabecera del remito: la pantalla de corrección la usa para saber si
+        // este movimiento comparte remito con otros materiales.
+        'document.id AS "documentId"',
+        'document.code AS "documentCode"',
+        'document."totalLines" AS "documentTotalLines"',
       ])
       .orderBy('movement.date', 'DESC')
       .addOrderBy('movement.createdAt', 'DESC');
@@ -2252,6 +2296,7 @@ export class MovementsService {
       .leftJoin('warehouses', 'toWarehouse', 'toWarehouse.id = movement."toWarehouseId"')
       .leftJoin('locations', 'toLocation', 'toLocation.id = movement."toLocationId"')
       .leftJoin('users', 'encargado', 'encargado.id = movement."encargadoRecepcionId"')
+      .leftJoin('logistics_documents', 'document', 'document.id = movement."documentId"')
       .leftJoin('lots', 'lot', 'lot.id = movement."lotId"')
       .leftJoin(
         (sq) =>
@@ -2312,6 +2357,11 @@ export class MovementsService {
         'encargado.id AS "encargadoId"',
         'encargado.username AS "encargadoUsername"',
         'encargado."fullName" AS "encargadoFullName"',
+        // Cabecera del remito: la pantalla de corrección la usa para saber si
+        // este movimiento comparte remito con otros materiales.
+        'document.id AS "documentId"',
+        'document.code AS "documentCode"',
+        'document."totalLines" AS "documentTotalLines"',
       ])
       .where('movement.id = :id', { id });
 
@@ -2570,6 +2620,13 @@ export class MovementsService {
             // decidir si un `sapLot` guardado sigue vigente o quedó de antes
             // de reconfigurar el depósito (ver `products/uses-sap-lot.ts`).
             usesSapLot: row.warehouseUsesSapLot ?? true,
+          }
+        : null,
+      document: row.documentId
+        ? {
+            id: row.documentId,
+            code: row.documentCode,
+            totalLines: this.parseNumber(row.documentTotalLines),
           }
         : null,
       location: row.locationId ? { id: row.locationId, code: row.locationCode } : null,

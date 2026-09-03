@@ -67,6 +67,8 @@ export type Movement = {
   /** `usesSapLot`: el depósito opera con Lote SAP. Ausente en respuestas viejas → se asume `true`. */
   warehouse?: { id: string; name: string; usesSapLot?: boolean } | null;
   location?: { id: string; code: string } | null;
+  /** Remito que agrupa este movimiento. `totalLines` > 1 → la tanda salió con varios materiales. */
+  document?: { id: string; code: string; totalLines: number } | null;
   from?: { warehouseId?: string | null; warehouseName?: string | null; locationId?: string | null; locationCode?: string | null } | null;
   to?: { warehouseId?: string | null; warehouseName?: string | null; locationId?: string | null; locationCode?: string | null } | null;
 };
@@ -402,6 +404,12 @@ export async function editMovementMetadata(
     driver?: string;
     destination?: string;
     documentoMaterial?: string;
+    /**
+     * Copia el Documento Material al resto de las líneas del remito. Por
+     * defecto se edita solo esta línea: SAP puede devolver un documento
+     * distinto por material de la misma tanda.
+     */
+    applyDocumentoMaterialToDocument?: boolean;
     notes?: string;
     sapLot?: string;
     fechaVencimiento?: string;

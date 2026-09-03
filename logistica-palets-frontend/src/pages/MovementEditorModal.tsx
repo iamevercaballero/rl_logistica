@@ -57,6 +57,11 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
   const [driver, setDriver] = useState(movement.driver ?? "");
   const [destination, setDestination] = useState(movement.destination ?? "");
   const [documentoMaterial, setDocumentoMaterial] = useState(movement.documentoMaterial ?? "");
+  // El Documento Material se corrige por material. Solo cuando la tanda salió
+  // con un único documento de SAP se marca esto para copiarlo a las demás
+  // líneas del mismo remito.
+  const [documentoMaterialTodoElRemito, setDocumentoMaterialTodoElRemito] = useState(false);
+  const remitoMultilinea = isExit && (movement.document?.totalLines ?? 0) > 1;
   const [notes, setNotes] = useState(movement.notes ?? "");
   const [sapLot, setSapLot] = useState(movement.sapLot ?? "");
   const [fechaVencimiento, setFechaVencimiento] = useState("");
@@ -167,6 +172,11 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
     if (destination.trim() !== (movement.destination ?? "")) metaPayload.destination = destination.trim();
     if (isExit && documentoMaterial.trim() !== (movement.documentoMaterial ?? "").trim()) {
       metaPayload.documentoMaterial = documentoMaterial.trim();
+    }
+    // Copiar al remito vale también sin tocar el campo: alinea a las hermanas
+    // con el número que esta línea ya tenía.
+    if (remitoMultilinea && documentoMaterialTodoElRemito && documentoMaterial.trim()) {
+      metaPayload.applyDocumentoMaterialToDocument = true;
     }
     if (notes.trim() !== (movement.notes ?? "")) metaPayload.notes = notes.trim();
     if (sapLot.trim() !== (movement.sapLot ?? "")) metaPayload.sapLot = sapLot.trim();
@@ -483,9 +493,39 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                     placeholder="Pendiente"
                     maxLength={80}
                   />
+                  {remitoMultilinea && (
+                    <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+                      Se guarda solo para este material — el remito {movement.document?.code} salió
+                      con {movement.document?.totalLines} materiales.
+                    </div>
+                  )}
                 </div>
               )}
             </div>
+            {remitoMultilinea && (
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginTop: 8,
+                  fontSize: 12,
+                  cursor: documentoMaterial.trim() ? "pointer" : "not-allowed",
+                  opacity: documentoMaterial.trim() ? 1 : 0.5,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={documentoMaterialTodoElRemito && !!documentoMaterial.trim()}
+                  disabled={!documentoMaterial.trim()}
+                  onChange={(e) => setDocumentoMaterialTodoElRemito(e.target.checked)}
+                />
+                <span>
+                  Usar este Documento Material en los {movement.document?.totalLines} materiales del
+                  remito {movement.document?.code} (SAP devolvió uno solo para toda la tanda)
+                </span>
+              </label>
+            )}
             <div style={{ marginTop: 8 }}>
               <label style={labelStyle}>Observaciones</label>
               <textarea

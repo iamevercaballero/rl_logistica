@@ -90,6 +90,19 @@ tienen consecuencias que conviene conocer antes de desplegar —una corta las
 sesiones abiertas, otra debe correr *antes* que el código nuevo o deja módulos
 enteros con 403— y todas están explicadas en `DEPLOY.md`.
 
+> **En desarrollo no se aplican solas.** Si tu `.env` tiene
+> `DB_MIGRATIONS_RUN=false` —lo más común en una máquina de trabajo—, cada
+> migración nueva que aparezca en `src/migrations/` (la tuya o la de otra rama
+> que acabás de traer) se queda pendiente hasta que la corras a mano. El
+> síntoma es un 500 con `column "..." does not exist` en cuanto el código
+> intenta usar una columna que la migración iba a crear — pasó exactamente así
+> con la de RL-M-09. Antes de asumir que hay un bug, corré:
+>
+> ```bash
+> cd logistica-palets-backend && npm run migration:show    # marca [ ] lo pendiente
+> DB_HOST=localhost DB_PORT=5433 npm run migration:run
+> ```
+
 ## Documentación
 
 | Archivo | Para qué |

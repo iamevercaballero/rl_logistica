@@ -15,9 +15,19 @@ interface Props {
   onUploaded?: () => void;
   /** Modo diferido: en vez de subir, entrega el archivo al padre (p.ej. remito aún no confirmado). */
   onCollect?: (file: File, name: string, category: AttachmentCategory) => void;
-  /** Restringe las categorías disponibles (ej: en Transporte no aplican REMITO/PALLET). */
+  /**
+   * Restringe las categorías disponibles y hace aparecer el selector para elegir
+   * entre ellas. Sin esta prop no hay selector: todo adjunto se guarda como
+   * "OTRO" (el backend ya lo hace por default) y el operador sólo pone un nombre.
+   *
+   * El selector genérico de 4 categorías (MIC/Factura/Remito, Camión/Transporte,
+   * Pallet/Mercadería, Otro) no aportaba nada en el caso general: un paso más
+   * para elegir una etiqueta que después nadie filtraba ni mostraba. Donde sí
+   * cumple una función —Transporte, que elige la foto de portada del vehículo
+   * buscando la que tiene categoría CAMION— sigue pasando esta prop.
+   */
   categories?: AttachmentCategory[];
-  /** Categoría seleccionada por defecto. */
+  /** Categoría seleccionada por defecto (sólo tiene efecto junto con `categories`). */
   defaultCategory?: AttachmentCategory;
 }
 
@@ -30,7 +40,8 @@ export default function AttachmentUploader({ entityType, entityId, onUploaded, o
 
   const availableCategories = categories
     ? ATTACHMENT_CATEGORIES.filter((c) => categories.includes(c.value))
-    : ATTACHMENT_CATEGORIES;
+    : [];
+  const showCategoryPicker = availableCategories.length > 0;
 
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState("");
@@ -100,7 +111,7 @@ export default function AttachmentUploader({ entityType, entityId, onUploaded, o
         <div style={{ fontSize: 10, fontWeight: 700, color: "var(--danger)", textTransform: "uppercase", marginBottom: 3 }}>Nombre del archivo *</div>
         <input
           className="input"
-          placeholder="Ej: MIC/Factura/Remito firmado"
+          placeholder="Ej: Remito firmado"
           value={name}
           onChange={(e) => setName(e.target.value)}
           maxLength={200}
@@ -108,28 +119,30 @@ export default function AttachmentUploader({ entityType, entityId, onUploaded, o
         />
       </div>
 
-      {/* Categoría */}
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(availableCategories.length, 4)}, 1fr)`, gap: 6 }}>
-        {availableCategories.map((c) => (
-          <button
-            key={c.value}
-            type="button"
-            onClick={() => setCategory(c.value)}
-            style={{
-              padding: "6px 4px",
-              borderRadius: 6,
-              border: `1.5px solid ${category === c.value ? "var(--primary)" : "var(--border)"}`,
-              background: category === c.value ? "var(--primary-light)" : "var(--bg)",
-              cursor: "pointer",
-              fontSize: 12,
-              textAlign: "center",
-              fontWeight: category === c.value ? 700 : 400,
-            }}
-          >
-            <div>{c.label}</div>
-          </button>
-        ))}
-      </div>
+      {/* Categoría — sólo cuando el caller la restringe a propósito (ver Transportes) */}
+      {showCategoryPicker && (
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(availableCategories.length, 4)}, 1fr)`, gap: 6 }}>
+          {availableCategories.map((c) => (
+            <button
+              key={c.value}
+              type="button"
+              onClick={() => setCategory(c.value)}
+              style={{
+                padding: "6px 4px",
+                borderRadius: 6,
+                border: `1.5px solid ${category === c.value ? "var(--primary)" : "var(--border)"}`,
+                background: category === c.value ? "var(--primary-light)" : "var(--bg)",
+                cursor: "pointer",
+                fontSize: 12,
+                textAlign: "center",
+                fontWeight: category === c.value ? 700 : 400,
+              }}
+            >
+              <div>{c.label}</div>
+            </button>
+          ))}
+        </div>
+      )}
 
       {error && <div style={{ color: "var(--danger)", fontSize: 13 }}>{error}</div>}
 

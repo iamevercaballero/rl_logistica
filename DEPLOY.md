@@ -26,6 +26,11 @@ El documento tiene tres partes:
 | **II — Migraciones** | Al actualizar una instalación que ya existe (staging hoy, producción mañana). Qué hace cada migración pendiente y qué exige. |
 | **III — Cambios de comportamiento** | Lo que cambia para quien opera el sistema, sin migración de por medio. |
 
+> **Producción ya está en línea** (Hostinger, São Paulo, septiembre 2026). Para
+> operar la instancia desplegada —updates, backups, incidentes— ver
+> [`OPERACION.md`](OPERACION.md). Este documento queda como el procedimiento de
+> referencia para un despliegue nuevo (staging, o rearmar producción).
+
 ---
 
 ## Antes de empezar — tres cosas que dependen de una persona

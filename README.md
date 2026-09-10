@@ -109,11 +109,14 @@ enteros con 403— y todas están explicadas en `DEPLOY.md`.
 |---|---|
 | `DEPLOY.md` | Puesta en producción: túnel, secretos, migraciones con su orden, backups |
 | `DEPLOY_STAGING_LOCAL.md` | Ensayo del despliegue en local |
+| `OPERACION.md` | Operar la instancia de producción: acceso, updates, backups, incidentes |
 | `GUIA-OPERATIVA.md` | Uso del sistema desde el lado del depósito |
 | `auditoria/` | Informes de auditoría y los scripts que los generaron |
 
 ## Estado
 
-El sistema todavía no está desplegado en un VPS. `DEPLOY.md` tiene el
-procedimiento completo y marca lo que queda pendiente del lado de
-infraestructura: backups verificados y monitoreo externo.
+Desplegado en producción desde **septiembre de 2026** (Hostinger, São Paulo) en
+`https://app.rl-logistica.com`, detrás de un Cloudflare Tunnel. Backups diarios
+cifrados con copia off-site en Cloudflare R2, restore probado, y monitoreo
+externo del backup y del `/api/health`. El día a día está en `OPERACION.md`;
+`DEPLOY.md` queda como el procedimiento para un despliegue nuevo.

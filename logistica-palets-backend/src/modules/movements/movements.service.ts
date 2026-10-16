@@ -2777,6 +2777,17 @@ export class MovementsService {
      *  que exista y esté activo, porque el servicio también se llama de otros
      *  lados. Si no viene, lo resuelve `resolveInitialStockWarehouse`. */
     warehouseId?: string,
+    /**
+     * Rol de quien pide la carga. Hay que pasarlo: `create` arma el usuario
+     * del chequeo de acceso como `{ userId, role: requesterRole ?? '' }`, y con
+     * el rol vacío `hasGlobalScope` da false y se cae al chequeo de
+     * `user_warehouses`. Un ADMIN tiene alcance global **por su rol**, no por
+     * asignaciones —normalmente no tiene ninguna—, así que sin esto la carga
+     * entera fallaba con "No tenés acceso a este depósito", material por
+     * material y en silencio: el try/catch de abajo lo convertía en 98 filas
+     * con `status: 'ERROR'` en vez de un error a la vista.
+     */
+    requesterRole?: string,
   ): Promise<StockLotSnapshotResult> {
     const table = await readUploadedTable(buffer);
     const raw = table.rows;
@@ -3074,6 +3085,7 @@ export class MovementsService {
             })),
           },
           userId,
+          requesterRole,
         );
         summary.adjusted++;
         if (base.isNewProduct) summary.newProducts++;

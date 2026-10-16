@@ -25,6 +25,8 @@ import { DocumentEvent } from '../src/modules/uploads/entities/document-event.en
 import { Location } from '../src/modules/locations/entities/location.entity';
 import { Movement } from '../src/modules/movements/entities/movement.entity';
 import { Warehouse } from '../src/modules/warehouses/entities/warehouse.entity';
+import { UserWarehouse } from '../src/modules/warehouses/entities/user-warehouse.entity';
+import { User } from '../src/modules/users/entities/user.entity';
 import type { EventsGateway } from '../src/modules/events/events.gateway';
 import type { CacheService } from '../src/modules/cache/cache.service';
 import {
@@ -199,6 +201,57 @@ describe('varios depósitos activos', () => {
         UNA_FILA, TEST_USER_ID, true, '00000000-0000-0000-0000-0000000000ff',
       ),
     ).rejects.toThrow(/no existe/);
+  });
+});
+
+describe('acceso al depósito de quien carga', () => {
+  /** Deja al usuario de prueba como un ADMIN real: alcance por rol, sin asignaciones. */
+  async function volverAdminSinAsignaciones(): Promise<void> {
+    await ds.getRepository(User).update({ id: TEST_USER_ID }, { role: 'ADMIN' });
+    await ds.getRepository(UserWarehouse).delete({ userId: TEST_USER_ID });
+  }
+
+  /**
+   * La forma que tiene esto en producción: la ruta es ADMIN, y un ADMIN tiene
+   * alcance global **por su rol**, sin una sola fila en `user_warehouses`.
+   *
+   * `create` arma el usuario del chequeo como `{ userId, role: requesterRole ?? '' }`.
+   * Si el snapshot no le pasa el rol, `hasGlobalScope('')` da false, se cae al
+   * chequeo de asignaciones y la carga entera se rechaza — material por
+   * material, y tragada por el try/catch como `status: 'ERROR'`, así que el
+   * resultado dice "98 errores" en vez de fallar a la vista.
+   *
+   * Los demás tests de este archivo le asignan el depósito al usuario, que es
+   * exactamente lo que impedía ver este agujero.
+   */
+  it('un ADMIN sin asignaciones carga igual: su alcance es el rol', async () => {
+    await volverAdminSinAsignaciones();
+
+    const res = await movements.stockSnapshotFromLotList(
+      UNA_FILA, TEST_USER_ID, true, base.warehouse.id, 'ADMIN',
+    );
+
+    expect(res.summary).toMatchObject({ adjusted: 1, errors: 0 });
+    expect(await ds.getRepository(Movement).count()).toBe(1);
+  });
+
+  /**
+   * La contracara, que fija por qué el rol tiene que viajar: sin él, el mismo
+   * ADMIN es rechazado. No es el comportamiento deseable —es la dependencia
+   * real de `create`—, y este caso existe para que no se pierda de nuevo si
+   * alguien limpia el parámetro por considerarlo redundante.
+   */
+  it('sin el rol, el mismo ADMIN queda sin acceso', async () => {
+    await volverAdminSinAsignaciones();
+
+    const res = await movements.stockSnapshotFromLotList(
+      UNA_FILA, TEST_USER_ID, true, base.warehouse.id,
+    );
+
+    expect(res.summary.adjusted).toBe(0);
+    expect(res.summary.errors).toBe(1);
+    expect(res.products[0].error).toMatch(/acceso a este depósito/);
+    expect(await ds.getRepository(Movement).count()).toBe(0);
   });
 });
 

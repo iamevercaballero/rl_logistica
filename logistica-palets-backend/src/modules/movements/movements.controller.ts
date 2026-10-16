@@ -137,6 +137,7 @@ export class MovementsController {
       req.user.userId,
       commit === 'true',
       warehouseId,
+      req.user.role,
     );
   }
 

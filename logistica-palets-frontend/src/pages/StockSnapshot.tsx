@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useAuth } from "../auth/AuthContext";
+import { useWarehouse } from "../contexts/WarehouseContext";
 import {
   stockSnapshotFromLots,
   revertStockSnapshot,
@@ -61,6 +62,14 @@ export default function StockSnapshotPage() {
   const [lotFile, setLotFile] = useState<File | null>(null);
   const [result, setResult] = useState<StockLotSnapshotResult | null>(null);
 
+  // Depósito destino: arranca en el activo de la sesión, pero es una elección
+  // propia de esta pantalla. El stock entero de la carga queda en el depósito
+  // que se elija acá, así que no se hereda en silencio del selector global.
+  const { allowedWarehouses, activeWarehouseId } = useWarehouse();
+  const [warehouseId, setWarehouseId] = useState<string | null>(null);
+  const targetWarehouseId = warehouseId ?? activeWarehouseId ?? null;
+  const targetWarehouse = allowedWarehouses.find((w) => w.id === targetWarehouseId) ?? null;
+
   const [statusFilter, setStatusFilter] = useState<StockSnapshotProductStatus | "ALL">("ALL");
   const [revertResult, setRevertResult] = useState<StockSnapshotRevertResult | null>(null);
 
@@ -83,7 +92,7 @@ export default function StockSnapshotPage() {
   });
 
   const previewMut = useMutation({
-    mutationFn: () => stockSnapshotFromLots(lotFile!, false),
+    mutationFn: () => stockSnapshotFromLots(lotFile!, false, targetWarehouseId ?? undefined),
     onSuccess: (res) => {
       setResult(res);
       toast.success("Vista previa calculada. Revisá el resultado antes de confirmar.");
@@ -91,7 +100,7 @@ export default function StockSnapshotPage() {
     onError: (err) => toast.error(getFriendlyApiError(err)),
   });
   const commitMut = useMutation({
-    mutationFn: () => stockSnapshotFromLots(lotFile!, true),
+    mutationFn: () => stockSnapshotFromLots(lotFile!, true, targetWarehouseId ?? undefined),
     onSuccess: (res) => {
       setResult(res);
       toast.success(`Stock inicial cargado: ${res.summary.adjusted} materiales ajustados (${res.summary.newProducts} nuevos).`);
@@ -113,7 +122,10 @@ export default function StockSnapshotPage() {
     );
   }
 
-  const canPreview = !!lotFile && !previewMut.isPending && !commitMut.isPending;
+  // Sin depósito no se calcula ni la vista previa: el backend lo exige cuando
+  // hay más de uno activo, y un ensayo que no dice dónde va a caer el stock no
+  // sirve para decidir.
+  const canPreview = !!lotFile && !!targetWarehouseId && !previewMut.isPending && !commitMut.isPending;
   const canCommit = !!result && !result.committed && result.summary.adjusted > 0 && !commitMut.isPending;
 
   function handleCommit() {
@@ -121,8 +133,14 @@ export default function StockSnapshotPage() {
     const newProductsNote = result.summary.newProducts > 0
       ? ` (${result.summary.newProducts} productos nuevos se crearán en el catálogo)`
       : "";
-    if (!window.confirm(`Se van a crear ${result.summary.adjusted} movimientos de ajuste de stock inicial${newProductsNote}. ¿Confirmás?`)) return;
-    if (!window.confirm("Confirmación final: esto modifica el stock real del sistema. ¿Continuar?")) return;
+    // El depósito va en la confirmación porque es lo irreversible en cuanto
+    // el depósito empieza a operar: después de eso la carga ya no se revierte.
+    const destino = result.warehouse?.name ?? targetWarehouse?.name ?? "(sin determinar)";
+    if (!window.confirm(
+      `Se van a crear ${result.summary.adjusted} movimientos de ajuste de stock inicial${newProductsNote}, ` +
+      `en el depósito "${destino}" (ubicación STOCK-INICIAL). ¿Confirmás?`,
+    )) return;
+    if (!window.confirm(`Confirmación final: esto modifica el stock real de "${destino}". ¿Continuar?`)) return;
     commitMut.mutate();
   }
 
@@ -143,6 +161,40 @@ export default function StockSnapshotPage() {
         listan como error. Cada lote genera su palet lógico en la ubicación temporal <code>STOCK-INICIAL</code>,
         pendiente de ubicar. Si un material no existe en el catálogo, se crea automáticamente.
       </p>
+
+      {/* Las columnas que acepta no estaban escritas en ninguna parte: el
+          operador subía la planilla del cliente y la vista previa le devolvía
+          cero filas sin decir qué le faltaba. */}
+      <div className="card" style={{ marginBottom: 20 }}>
+        <h3 style={{ fontWeight: 700, marginBottom: 10 }}>Columnas que lee</h3>
+        <p style={{ fontSize: 13, color: "var(--muted)", marginTop: 0, marginBottom: 12 }}>
+          Se lee la <strong>primera hoja</strong> del archivo. Los encabezados se buscan solos (no hace
+          falta que estén en la fila 1) y no distinguen mayúsculas ni tildes. Las columnas que no figuran
+          acá se ignoran.
+        </p>
+        <table className="table" style={{ fontSize: 12.5 }}>
+          <thead>
+            <tr><th>Columna</th><th>Nombres aceptados</th><th>¿Obligatoria?</th></tr>
+          </thead>
+          <tbody>
+            {[
+              ["Código de material", "CODIGO · COD · CODIGO MATERIAL", "Sí"],
+              ["Lote de proveedor", "LOTE PROVEEDOR · LOTE DE PROVEEDOR", "Sí — es la clave del lote"],
+              ["Cantidad", "CANTIDAD · STOCK · STOCK LU", "Sí"],
+              ["Descripción", "DESCRIPCION · MATERIAL · MATERIA", "Sólo si el material es nuevo"],
+              ["Unidad de medida", "UM · UMB · UNIDAD DE MEDIDA", "No (queda sin unidad)"],
+              ["Fecha de vencimiento", "FECHA DE VENCIMIENTO · VENCIMIENTO", "No (el lote no entra al FEFO por fecha)"],
+              ["Lote SAP", "LOTE SAP · LOTE · LOTE INTERNO", "No (informativo)"],
+            ].map(([campo, alias, obligatoria]) => (
+              <tr key={campo}>
+                <td style={{ fontWeight: 600 }}>{campo}</td>
+                <td style={{ color: "var(--muted)" }}>{alias}</td>
+                <td>{obligatoria}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       <div className="card" style={{ marginBottom: 20, borderColor: "var(--badge-exit-border)" }}>
         <h3 style={{ fontWeight: 700, marginBottom: 8, color: "var(--danger)" }}>Revertir carga anterior</h3>
@@ -182,8 +234,36 @@ export default function StockSnapshotPage() {
       </div>
 
       <div className="card" style={{ marginBottom: 20 }}>
-        <h3 style={{ fontWeight: 700, marginBottom: 16 }}>Archivo</h3>
+        <h3 style={{ fontWeight: 700, marginBottom: 16 }}>Archivo y destino</h3>
         <FilePicker label="Planilla de stock por lote" file={lotFile} onChange={setLotFile} />
+
+        {/* Elegir el depósito acá y no heredarlo del selector global: todo el
+            inventario de la carga queda en este depósito, y en cuanto empieza
+            a operar la carga ya no se puede revertir. */}
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", marginBottom: 4 }}>
+            Depósito destino
+          </div>
+          <select
+            value={targetWarehouseId ?? ""}
+            onChange={(e) => setWarehouseId(e.target.value || null)}
+            style={{
+              width: "100%", padding: "9px 12px", borderRadius: "var(--radius)",
+              border: "1px solid var(--border)", background: "var(--bg)",
+              color: "var(--text)", fontSize: 14,
+            }}
+          >
+            <option value="">— Elegí el depósito —</option>
+            {allowedWarehouses.map((w) => (
+              <option key={w.id} value={w.id}>{w.name}</option>
+            ))}
+          </select>
+          <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "6px 0 0" }}>
+            {targetWarehouse
+              ? <>El stock queda en la ubicación <code>STOCK-INICIAL</code> de <strong>{targetWarehouse.name}</strong>, pendiente de ubicar.</>
+              : "Hace falta elegirlo para calcular la vista previa."}
+          </p>
+        </div>
 
         <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
           <button className="btn btn--primary" disabled={!canPreview} onClick={() => previewMut.mutate()}>
@@ -206,6 +286,39 @@ export default function StockSnapshotPage() {
             <h3 style={{ fontWeight: 700, marginBottom: 14 }}>
               {result.committed ? "Resultado" : "Vista previa"}
             </h3>
+
+            {/* Se lee siempre la PRIMERA hoja del libro. Cuando la carga sale
+                corta, la causa casi siempre es que esa hoja no era la del
+                stock — así que decir qué se leyó ahorra abrir el Excel a
+                adivinar. Las columnas ignoradas delatan el otro caso: un
+                encabezado que el importador no reconoce. */}
+            <div
+              style={{
+                marginBottom: 14, padding: "8px 12px", borderRadius: "var(--radius)",
+                background: "var(--bg)", border: "1px solid var(--border)", fontSize: 12.5,
+                color: "var(--muted)",
+              }}
+            >
+              Leído de la hoja <strong style={{ color: "var(--text)" }}>{result.source.sheetName}</strong>,
+              con los encabezados en la fila <strong style={{ color: "var(--text)" }}>{result.source.headerRow}</strong>.
+              {result.source.ignoredHeaders.length > 0 && (
+                <>
+                  {" "}Columnas ignoradas:{" "}
+                  <span style={{ color: "var(--text)" }}>
+                    {result.source.ignoredHeaders.join(", ")}
+                  </span>.
+                </>
+              )}
+              {result.warehouse && (
+                <>
+                  <br />
+                  {result.committed ? "Cargado en" : "Se carga en"}{" "}
+                  <strong style={{ color: "var(--text)" }}>{result.warehouse.name}</strong>
+                  {" "}→ ubicación <code>STOCK-INICIAL</code>.
+                </>
+              )}
+            </div>
+
             <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 12 }}>
               {[
                 { label: "Materiales", value: result.totals.materials, tone: "var(--primary-text)" },

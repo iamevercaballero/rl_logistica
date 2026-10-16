@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DataSource, EntityManager, In, IsNull } from 'typeorm';
-import { readUploadedRows } from '../../common/spreadsheet';
+import { readUploadedTable, rowNumberOf } from '../../common/spreadsheet';
 import { CreateMovementDto } from './dto/create-movement.dto';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { AdjustmentRequest } from '../adjustments/entities/adjustment-request.entity';
@@ -2769,19 +2769,60 @@ export class MovementsService {
    * lógico en una ubicación temporal (`STOCK-INICIAL`) pendiente de ubicar. Eso
    * mantiene la igualdad Stock = Lotes = Palets desde el primer día.
    */
-  async stockSnapshotFromLotList(buffer: Buffer, userId: string, commit: boolean): Promise<StockLotSnapshotResult> {
-    const raw = await readUploadedRows(buffer);
+  async stockSnapshotFromLotList(
+    buffer: Buffer,
+    userId: string,
+    commit: boolean,
+    /** Depósito elegido. El controlador ya validó el acceso; acá se revalida
+     *  que exista y esté activo, porque el servicio también se llama de otros
+     *  lados. Si no viene, lo resuelve `resolveInitialStockWarehouse`. */
+    warehouseId?: string,
+  ): Promise<StockLotSnapshotResult> {
+    const table = await readUploadedTable(buffer);
+    const raw = table.rows;
 
-    const CODE_ALIASES = ['codigo', 'codigo material'];
-    const DESC_ALIASES = ['material', 'descripcion'];
-    const UM_ALIASES = ['umb', 'um', 'unidad de medida'];
-    const QTY_ALIASES = ['stock lu', 'stock', 'cantidad'];
-    const FECHA_VTO_ALIASES = ['fecha de vto', 'fecha vencimiento', 'fecha de vencimiento'];
+    const CODE_ALIASES = ['codigo', 'codigo material', 'cod', 'codigo de material'];
+    // `materia` está porque así viene la columna en la planilla de frescura del
+    // cliente (CONTROL DE FRESCURA). Sin el alias, la descripción llegaba vacía
+    // y todo material nuevo se rechazaba con "sin descripción".
+    const DESC_ALIASES = ['material', 'materia', 'descripcion', 'descripcion material', 'desc'];
+    const UM_ALIASES = ['umb', 'um', 'unidad', 'unidad de medida'];
+    const QTY_ALIASES = ['stock lu', 'stock', 'cantidad', 'cantidad actual'];
+    const FECHA_VTO_ALIASES = ['fecha de vto', 'fecha vencimiento', 'fecha de vencimiento', 'vencimiento'];
     const SUPPLIER_LOT_ALIASES = ['lote de proveedor', 'lote proveedor'];
     const LOT_ALIASES = ['lote', 'lote interno', 'lote sap'];
 
     const normalize = (value: string): string =>
       value.normalize('NFD').replace(new RegExp('[̀-ͯ]', 'g'), '').trim().toLowerCase();
+
+    const KNOWN_ALIASES = new Set([
+      ...CODE_ALIASES, ...DESC_ALIASES, ...UM_ALIASES, ...QTY_ALIASES,
+      ...FECHA_VTO_ALIASES, ...SUPPLIER_LOT_ALIASES, ...LOT_ALIASES,
+    ]);
+    const source = {
+      sheetName: table.sheetName,
+      headerRow: table.headerRow,
+      headers: table.headers,
+      ignoredHeaders: table.headers.filter((h) => !KNOWN_ALIASES.has(normalize(h))),
+    };
+
+    /**
+     * Un archivo del que no salió ninguna fila no es una carga de cero
+     * materiales: es un archivo que no se pudo leer. Antes esto devolvía un
+     * resultado con todo en cero y la pantalla decía "vista previa calculada",
+     * sin una sola pista de qué pasó. El caso real es siempre el mismo —la
+     * primera hoja del libro no es la del stock— así que el mensaje nombra la
+     * hoja que se leyó y los encabezados que encontró.
+     */
+    if (raw.length === 0) {
+      const detalle = table.headers.length
+        ? `Encontré los encabezados ${table.headers.map((h) => `"${h}"`).join(', ')} en la fila ${table.headerRow}, pero ninguna fila con datos debajo.`
+        : 'No encontré ninguna fila de encabezados.';
+      throw new BadRequestException(
+        `No se leyó ninguna fila de datos de la hoja "${table.sheetName}". ${detalle} ` +
+          'Se lee siempre la PRIMERA hoja del archivo: dejá la hoja del stock como primera, o subí un archivo con esa única hoja.',
+      );
+    }
 
     /**
      * Cantidad del Excel, a la escala de la base. `parseQuantity` acepta coma o
@@ -2812,7 +2853,10 @@ export class MovementsService {
     const parsed: ParsedRow[] = [];
 
     raw.forEach((entry, index) => {
-      const rowNumber = index + 2; // fila 1 = encabezado
+      // Fila real de la planilla, no la posición en el array. Con el encabezado
+      // en la fila 6 —como vienen las planillas del depósito— decirle al
+      // operador "fila 2" lo manda a buscar el dato donde no está.
+      const rowNumber = rowNumberOf(entry, index + table.headerRow + 1);
       let code = '';
       let description = '';
       let unitOfMeasure = '';
@@ -2837,7 +2881,13 @@ export class MovementsService {
       // ── Errores: la fila no se puede importar ──────────────────────────────
       if (!code) return addIssue('ERROR', rowNumber, 'Código de material vacío');
       if (!/\d/.test(code)) return addIssue('ERROR', rowNumber, 'Código de material inválido (no contiene dígitos)', code);
-      if (!lotCode) return addIssue('ERROR', rowNumber, 'Lote de proveedor vacío — es la clave del lote', code);
+      // Un cero en la celda del lote llega como el número 0, y `String(0)` es
+      // "0": pasaba el control de vacío y creaba un lote llamado "0", que no
+      // identifica nada y además fusiona entre sí todas las filas del material
+      // que tengan ese cero. Es un dato faltante escrito con otro carácter.
+      if (!lotCode || /^0+$/.test(lotCode)) {
+        return addIssue('ERROR', rowNumber, 'Lote de proveedor vacío — es la clave del lote', code);
+      }
       if (qty === null) return addIssue('ERROR', rowNumber, 'Cantidad no numérica', code);
       if (qty <= 0) return addIssue('ERROR', rowNumber, `Cantidad inválida (${qty}): debe ser mayor a cero`, code);
 
@@ -2931,10 +2981,17 @@ export class MovementsService {
       errors: 0,
     };
 
+    // Depósito donde aterriza el stock. Se resuelve también en el ensayo, no
+    // sólo al confirmar: si hay una ambigüedad que el operador tiene que
+    // resolver, tiene que enterarse antes de apretar confirmar, no después.
+    const targetWarehouse = groups.size > 0
+      ? await this.resolveInitialStockWarehouse(warehouseId)
+      : null;
+
     // Ubicación temporal donde aterriza todo el stock inicial hasta que se
-    // ubique físicamente. Se resuelve una sola vez, y sólo si hay algo que cargar.
-    const initialLocationId = commit && groups.size > 0
-      ? await this.findOrCreateInitialStockLocation()
+    // ubique físicamente. Se crea una sola vez, y sólo al confirmar.
+    const initialLocationId = commit && targetWarehouse
+      ? await this.findOrCreateInitialStockLocation(targetWarehouse)
       : null;
 
     for (const [code, group] of groups) {
@@ -3035,6 +3092,8 @@ export class MovementsService {
     return {
       committed: commit,
       sourceRows: raw.length,
+      source,
+      warehouse: targetWarehouse ? { id: targetWarehouse.id, name: targetWarehouse.name } : null,
       totals: {
         materials: groups.size,
         lots: [...groups.values()].reduce((s, g) => s + g.lots.length, 0),
@@ -3057,27 +3116,71 @@ export class MovementsService {
    * invisible en el mapa del depósito. Con una ubicación temporal explícita el
    * pendiente de ubicar es consultable y se puede vaciar con transferencias.
    */
-  private async findOrCreateInitialStockLocation(): Promise<string> {
+  private async findOrCreateInitialStockLocation(warehouse: Warehouse): Promise<string> {
     const locationRepo = this.dataSource.getRepository(Location);
-    const existing = await locationRepo.findOne({ where: { code: INITIAL_STOCK_LOCATION_CODE } });
+    // Acotada al depósito. El índice único es `(warehouseId, code)`, así que
+    // cada depósito tiene su propia STOCK-INICIAL — buscar sólo por código
+    // devolvía la del primer depósito que la tuviera, y entonces elegir el
+    // depósito no servía de nada: el stock aterrizaba igual en el otro.
+    const existing = await locationRepo.findOne({
+      where: { code: INITIAL_STOCK_LOCATION_CODE, warehouse: { id: warehouse.id } },
+    });
     if (existing) return existing.id;
-
-    const warehouses = await this.dataSource.getRepository(Warehouse).find({ where: { active: true } });
-    if (warehouses.length === 0) {
-      throw new BadRequestException(
-        'No hay ningún depósito activo. Creá el depósito antes de cargar el inventario inicial.',
-      );
-    }
 
     const created = locationRepo.create({
       code: INITIAL_STOCK_LOCATION_CODE,
       type: 'TEMPORAL',
       zone: 'RECEPCION',
-      capacityPallets: null,
-      warehouse: warehouses[0],
+      // Sin capacidad: es staging hasta que se ubique, no una estantería.
+      // Mismo criterio que la zona de RECEPCIÓN.
+      capacityBases: null,
+      warehouse,
       active: true,
     });
     return (await locationRepo.save(created)).id;
+  }
+
+  /**
+   * Depósito donde se carga el inventario inicial.
+   *
+   * Antes era `warehouses[0]`: el primer depósito activo que devolviera la
+   * base, sin que nadie lo eligiera ni se enterara. Con un solo depósito da lo
+   * mismo; con dos, la carga entera podía caer en el equivocado y la única
+   * forma de notarlo era mirar el stock después — y revertir ya no se puede en
+   * cuanto el depósito empezó a operar.
+   *
+   * Con `warehouseId` explícito se usa ese. Sin él se acepta el único activo
+   * que haya, y si hay más de uno se rechaza la ambigüedad en vez de
+   * resolverla por sorteo: es la decisión con más consecuencias de la carga.
+   */
+  private async resolveInitialStockWarehouse(warehouseId?: string): Promise<Warehouse> {
+    const repo = this.dataSource.getRepository(Warehouse);
+
+    if (warehouseId) {
+      const elegido = await repo.findOne({ where: { id: warehouseId } });
+      if (!elegido) throw new NotFoundException('El depósito elegido no existe');
+      if (!elegido.active) {
+        throw new BadRequestException(
+          `El depósito ${elegido.name} está inactivo: no admite nuevas operaciones.`,
+        );
+      }
+      return elegido;
+    }
+
+    const activos = await repo.find({ where: { active: true }, order: { name: 'ASC' } });
+    if (activos.length === 0) {
+      throw new BadRequestException(
+        'No hay ningún depósito activo. Creá el depósito antes de cargar el inventario inicial.',
+      );
+    }
+    if (activos.length > 1) {
+      throw new BadRequestException(
+        `Hay ${activos.length} depósitos activos (${activos.map((w) => w.name).join(', ')}): ` +
+          'elegí en cuál se carga el inventario inicial. El stock entero queda en el depósito ' +
+          'que se elija, así que no se adivina.',
+      );
+    }
+    return activos[0];
   }
 
   /**
@@ -3366,6 +3469,25 @@ export interface StockLotSnapshotResult {
   committed: boolean;
   /** Filas de datos leídas del archivo (sin contar el encabezado). */
   sourceRows: number;
+  /**
+   * De dónde se leyeron esas filas. Se devuelve siempre para que una carga
+   * que salió corta se pueda explicar sin abrir el Excel: casi siempre es que
+   * la primera hoja del archivo no era la del stock.
+   */
+  source: {
+    sheetName: string;
+    headerRow: number;
+    headers: string[];
+    /** Encabezados que el importador no reconoce y por lo tanto ignora. */
+    ignoredHeaders: string[];
+  };
+  /**
+   * Depósito donde aterriza (o aterrizó) el stock, en la ubicación
+   * `STOCK-INICIAL` de ese depósito. Se informa también en el ensayo: es la
+   * decisión con más consecuencias de toda la carga. `null` cuando no hay nada
+   * que cargar.
+   */
+  warehouse: { id: string; name: string } | null;
   /** Cifras de la previsualización. */
   totals: {
     materials: number;

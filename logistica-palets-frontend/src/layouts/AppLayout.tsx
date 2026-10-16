@@ -336,6 +336,23 @@ export default function AppLayout() {
               Carga masiva
             </NavLink>
           )}
+          {/* La carga inicial de inventario existía como ruta pero no tenía
+              entrada acá: había que escribir /stock-inicial a mano para poder
+              arrancar un depósito, que es justo cuando nadie conoce todavía las
+              URLs del sistema. Mismo criterio que "Carga masiva": sólo ADMIN. */}
+          {user.role === "ADMIN" && (
+            <NavLink
+              to="/stock-snapshot"
+              onClick={() => handleNavClick("/stock-snapshot")}
+              className={({ isActive }) =>
+                `sidebar-link${isActive ? " sidebar-link--active" : ""}`
+              }
+              style={{ opacity: 0.7 }}
+            >
+              {Icons["seed"]}
+              Carga inicial
+            </NavLink>
+          )}
         </nav>
 
         <div className="sidebar-footer">

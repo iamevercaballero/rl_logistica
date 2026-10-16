@@ -1,6 +1,12 @@
 import { BadRequestException } from '@nestjs/common';
 import * as ExcelJS from 'exceljs';
-import { readUploadedRows, readUploadedSheet, sheetMatrix } from '../src/common/spreadsheet';
+import {
+  readUploadedRows,
+  readUploadedSheet,
+  readUploadedTable,
+  rowNumberOf,
+  sheetMatrix,
+} from '../src/common/spreadsheet';
 import { parseExcelDateCell } from '../src/common/date';
 import { parseQuantity } from '../src/common/quantity';
 
@@ -129,6 +135,145 @@ describe('readUploadedRows — Excel (.xlsx)', () => {
     expect(await readUploadedRows(buffer)).toEqual([
       { A: 3, B: 'CERVEZA 1L', C: 'ver ficha', D: '' },
     ]);
+  });
+});
+
+describe('readUploadedTable — dónde está el encabezado', () => {
+  /**
+   * Las planillas que manda el cliente no empiezan en la fila 1: traen un
+   * título, unas filas en blanco y el encabezado recién después (en la de
+   * frescura, en la sexta). Con la fila 1 fija, `headers` quedaba vacío, la
+   * importación devolvía cero filas y el operador no tenía forma de saber por
+   * qué: la pantalla decía "vista previa calculada" con todo en cero.
+   */
+  it('encuentra el encabezado aunque no esté en la fila 1', async () => {
+    const buffer = await xlsxBuffer([
+      [],
+      ['CONTROL DE FRESCURA'],
+      [],
+      ['Codigo', 'Descripcion', 'UMB'],
+      ['1001', 'CERVEZA 1L', 'UN'],
+    ]);
+
+    const table = await readUploadedTable(buffer);
+    expect(table.headerRow).toBe(4);
+    expect(table.headers).toEqual(['Codigo', 'Descripcion', 'UMB']);
+    expect(table.rows).toEqual([{ Codigo: '1001', Descripcion: 'CERVEZA 1L', UMB: 'UN' }]);
+  });
+
+  /**
+   * El caso que hace falta resolver con cuidado: exceljs le devuelve el valor
+   * del master a **todas** las celdas de un rango combinado, así que un título
+   * estirado sobre cuatro columnas parece una fila con cuatro celdas llenas y
+   * le ganaría al encabezado de verdad. Un encabezado de columna no se combina;
+   * un banner sí — por eso las celdas combinadas no cuentan.
+   */
+  it('no confunde un título combinado con el encabezado', async () => {
+    const buffer = await xlsxBuffer(
+      [
+        ['CONTROL DE FRESCURA'],
+        ['Codigo', 'Descripcion', 'UMB'],
+        ['1001', 'CERVEZA 1L', 'UN'],
+      ],
+      'Hoja1',
+      (ws) => {
+        ws.mergeCells('A1:D1');
+      },
+    );
+
+    const table = await readUploadedTable(buffer);
+    expect(table.headerRow).toBe(2);
+    expect(table.headers).toEqual(['Codigo', 'Descripcion', 'UMB']);
+    expect(table.rows.map((r) => r.Codigo)).toEqual(['1001']);
+  });
+
+  it('deja el encabezado en la fila 1 cuando ahí está, como siempre', async () => {
+    const table = await readUploadedTable(
+      await xlsxBuffer([
+        ['Codigo', 'Descripcion'],
+        ['1001', 'CERVEZA'],
+      ]),
+    );
+    expect(table.headerRow).toBe(1);
+  });
+
+  /**
+   * Una hoja de una sola columna no llega al mínimo de dos celdas que pide la
+   * detección. El fallback a la fila 1 mantiene ese caso leyéndose igual que
+   * antes, en vez de devolver cero filas.
+   */
+  it('vuelve a la fila 1 si ninguna fila califica como encabezado', async () => {
+    const table = await readUploadedTable(await xlsxBuffer([['Codigo'], ['1001'], ['1002']]));
+    expect(table.headerRow).toBe(1);
+    expect(table.rows).toEqual([{ Codigo: '1001' }, { Codigo: '1002' }]);
+  });
+
+  it('informa qué hoja leyó — siempre la primera del libro', async () => {
+    const wb = new ExcelJS.Workbook();
+    const primera = wb.addWorksheet('RESUMEN');
+    primera.addRow(['Codigo', 'Stock']);
+    primera.addRow(['1001', 5]);
+    const segunda = wb.addWorksheet('Entrada');
+    segunda.addRow(['Codigo', 'Stock']);
+    segunda.addRow(['9999', 99]);
+
+    const table = await readUploadedTable(Buffer.from(await wb.xlsx.writeBuffer()));
+    expect(table.sheetName).toBe('RESUMEN');
+    expect(table.rows).toEqual([{ Codigo: '1001', Stock: 5 }]);
+  });
+});
+
+describe('rowNumberOf — la fila que se le informa al operador', () => {
+  /**
+   * El número que viaja en el error tiene que ser el de la planilla, no la
+   * posición en el array. Con el encabezado en la fila 4, decirle "fila 2" lo
+   * manda a buscar el dato donde no está.
+   */
+  it('devuelve la fila real de la planilla, no el índice del array', async () => {
+    const buffer = await xlsxBuffer([
+      [],
+      ['CONTROL DE FRESCURA'],
+      [],
+      ['Codigo', 'Stock'],
+      ['1001', 10],
+      ['1002', 20],
+    ]);
+
+    const { rows } = await readUploadedTable(buffer);
+    expect(rows.map((r) => rowNumberOf(r, -1))).toEqual([5, 6]);
+  });
+
+  it('salta las filas vacías intercaladas sin perder la cuenta', async () => {
+    const buffer = await xlsxBuffer([
+      ['Codigo', 'Stock'],
+      ['1001', 10],
+      [],
+      ['1002', 20],
+    ]);
+
+    const { rows } = await readUploadedTable(buffer);
+    expect(rows.map((r) => rowNumberOf(r, -1))).toEqual([2, 4]);
+  });
+
+  /**
+   * El número de fila va en un Symbol no enumerable justamente para no
+   * aparecer como una columna más: los importadores recorren la fila con
+   * `Object.entries` para mapear encabezados contra sus alias.
+   */
+  it('no se cuela como una columna del archivo', async () => {
+    const buffer = await xlsxBuffer([
+      ['Codigo', 'Stock'],
+      ['1001', 10],
+    ]);
+
+    const [row] = await readUploadedTable(buffer).then((t) => t.rows);
+    expect(Object.keys(row)).toEqual(['Codigo', 'Stock']);
+    expect(Object.entries(row)).toHaveLength(2);
+    expect(JSON.parse(JSON.stringify(row))).toEqual({ Codigo: '1001', Stock: 10 });
+  });
+
+  it('usa el fallback para una fila que no salió del lector', () => {
+    expect(rowNumberOf({ Codigo: '1001' }, 42)).toBe(42);
   });
 });
 

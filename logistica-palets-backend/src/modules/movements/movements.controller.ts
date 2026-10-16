@@ -94,6 +94,11 @@ export class MovementsController {
    * lote SAP, vencimiento). Si un código no existe en el catálogo, se crea el
    * producto automáticamente (apilable por defecto). `commit=false` (default)
    * solo calcula y devuelve el resultado.
+   *
+   * `warehouseId` define en qué depósito aterriza el stock (ubicación
+   * `STOCK-INICIAL` de ese depósito). Es opcional sólo cuando hay un único
+   * depósito activo; con más de uno, omitirlo es un 400 — antes se tomaba el
+   * primero en silencio.
    */
   @Post('stock-snapshot/from-lots')
   @Roles('ADMIN')
@@ -115,14 +120,24 @@ export class MovementsController {
     ),
   )
   @RequirePermission('movements', 'create')
-  stockSnapshotFromLots(
+  async stockSnapshotFromLots(
     @UploadedFiles() files: { stock?: Express.Multer.File[] },
     @Query('commit') commit: string,
-    @Req() req: Request & { user: { userId: string } },
+    @Query('warehouseId', new ParseUUIDPipe({ optional: true })) warehouseId: string | undefined,
+    @Req() req: AuthedRequest,
   ) {
     const stock = files.stock?.[0];
     if (!stock) throw new BadRequestException('Se requiere el archivo de stock.');
-    return this.service.stockSnapshotFromLotList(stock.buffer, req.user.userId, commit === 'true');
+    // El depósito elegido es una autorización, no una preferencia: todo el
+    // inventario inicial queda ahí. Se valida igual que cualquier escritura
+    // (acceso del usuario + depósito activo) antes de leer una sola fila.
+    if (warehouseId) await this.access.assertWritableWarehouse(req.user, warehouseId);
+    return this.service.stockSnapshotFromLotList(
+      stock.buffer,
+      req.user.userId,
+      commit === 'true',
+      warehouseId,
+    );
   }
 
   /**

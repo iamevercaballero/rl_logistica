@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ILike, Repository } from 'typeorm';
-import { readUploadedRows } from '../../common/spreadsheet';
+import { readUploadedTable, rowNumberOf } from '../../common/spreadsheet';
 import { Product } from './entities/product.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -43,7 +43,12 @@ export interface BulkImportResult {
 /** Alias de encabezados aceptados por columna, ya normalizados (sin tildes, minúsculas). */
 const HEADER_ALIASES: Record<'code' | 'description' | 'unitOfMeasure' | 'stackable', string[]> = {
   code: ['codigo', 'cod', 'material', 'codigo material', 'codigo de material'],
-  description: ['descripcion', 'desc', 'descripcion material'],
+  // Ojo con el par `material` / `materia`: no es un typo que haya que unificar.
+  // `material` arriba es el **código** (así se llama la columna en los exports
+  // de SAP), y `materia` acá es la **descripción** (así viene en la planilla de
+  // frescura del cliente). Son dos columnas distintas de dos planillas
+  // distintas que por casualidad se escriben parecido.
+  description: ['descripcion', 'desc', 'descripcion material', 'materia'],
   unitOfMeasure: ['um', 'u.m.', 'unidad', 'unidad de medida'],
   stackable: ['apilable', 'stackable'],
 };
@@ -198,8 +203,17 @@ export class ProductsService {
    * mucho más caro que mirar la muestra antes.
    */
   async bulkImport(buffer: Buffer, commit = false): Promise<BulkImportResult> {
-    const rows = await readUploadedRows(buffer);
-    if (rows.length === 0) throw new BadRequestException('El archivo no contiene filas de datos.');
+    const table = await readUploadedTable(buffer);
+    const rows = table.rows;
+    if (rows.length === 0) {
+      // Se nombra la hoja y la fila del encabezado: el archivo del cliente trae
+      // varias hojas y se lee siempre la primera, así que "no contiene filas"
+      // casi nunca es cierto — es que la hoja leída no era la que se creía.
+      throw new BadRequestException(
+        `La hoja "${table.sheetName}" no contiene filas de datos. ` +
+          'Se lee siempre la PRIMERA hoja del archivo: dejá la hoja del catálogo como primera, o subí un archivo con esa única hoja.',
+      );
+    }
 
     const existingCodes = new Set((await this.productRepo.find({ select: ['code'] })).map((p) => p.code));
     const seenCodes = new Set<string>();
@@ -207,7 +221,8 @@ export class ProductsService {
     const candidates: Partial<Product>[] = [];
 
     rows.forEach((raw, index) => {
-      const rowNumber = index + 2; // fila 1 = encabezado
+      // Fila real de la planilla: el encabezado no está necesariamente en la 1.
+      const rowNumber = rowNumberOf(raw, index + table.headerRow + 1);
       const mapped = mapRow(raw);
 
       const codeRaw = String(mapped.code ?? '').trim();

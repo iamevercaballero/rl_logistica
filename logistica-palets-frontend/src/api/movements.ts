@@ -597,6 +597,22 @@ export type StockLotSnapshotResult = {
   };
   rowIssues: StockSnapshotRowIssue[];
   products: StockLotSnapshotProductResult[];
+  /**
+   * De dónde salieron esas filas. Se lee siempre la primera hoja del archivo,
+   * así que una carga que salió corta casi siempre se explica mirando esto.
+   */
+  source: {
+    sheetName: string;
+    headerRow: number;
+    headers: string[];
+    /** Encabezados que el importador no reconoce y por lo tanto ignora. */
+    ignoredHeaders: string[];
+  };
+  /**
+   * Depósito donde aterriza (o aterrizó) el stock, en su ubicación
+   * `STOCK-INICIAL`. `null` cuando no hay nada que cargar.
+   */
+  warehouse: { id: string; name: string } | null;
   /** Verificación Stock = Lotes = Palets. Sólo tras confirmar la carga. */
   integrity?: StockConsistencyReport;
   summary: {
@@ -612,11 +628,15 @@ export type StockLotSnapshotResult = {
 export async function stockSnapshotFromLots(
   stock: File,
   commit: boolean,
+  /** Depósito donde aterriza el stock. Obligatorio si hay más de uno activo. */
+  warehouseId?: string,
 ): Promise<StockLotSnapshotResult> {
   const form = new FormData();
   form.append("stock", stock);
+  const params = new URLSearchParams({ commit: commit ? "true" : "false" });
+  if (warehouseId) params.set("warehouseId", warehouseId);
   const { data } = await api.post<StockLotSnapshotResult>(
-    `/movements/stock-snapshot/from-lots?commit=${commit ? "true" : "false"}`,
+    `/movements/stock-snapshot/from-lots?${params}`,
     form,
     { headers: { "Content-Type": "multipart/form-data" }, timeout: 300000 },
   );

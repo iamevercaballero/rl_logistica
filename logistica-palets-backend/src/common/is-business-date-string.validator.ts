@@ -21,7 +21,22 @@ export function IsBusinessDateString(validationOptions?: ValidationOptions) {
       options: validationOptions,
       validator: {
         validate(value: unknown): boolean {
-          return typeof value === 'string' && DATE_ONLY.test(value);
+          if (typeof value !== 'string' || !DATE_ONLY.test(value)) return false;
+          // El formato no alcanza: "2029-02-30" lo cumple y no existe. Antes
+          // pasaba la validación y reventaba contra PostgreSQL
+          // (`date/time field value out of range`), que sale como un 500 y un
+          // "ocurrió un error inesperado" en vez de decir qué corregir.
+          //
+          // Se arma la fecha en UTC y se comprueba que los componentes vuelvan
+          // iguales: si el día no existe, JavaScript lo desborda al mes
+          // siguiente (30/02 → 02/03) y la comparación falla.
+          const [year, month, day] = value.split('-').map(Number);
+          const fecha = new Date(Date.UTC(year, month - 1, day));
+          return (
+            fecha.getUTCFullYear() === year &&
+            fecha.getUTCMonth() === month - 1 &&
+            fecha.getUTCDate() === day
+          );
         },
         defaultMessage(): string {
           return `$property debe ser una fecha calendario con formato YYYY-MM-DD`;

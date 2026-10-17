@@ -9,11 +9,29 @@ const FACTOR = 10 ** QUANTITY_SCALE;
 /** Mínimo positivo representable con `QUANTITY_SCALE` decimales — descarta 0 y negativos. */
 export const MIN_QUANTITY = 1 / FACTOR;
 
+/**
+ * Máximo que entra en `numeric(QUANTITY_PRECISION, QUANTITY_SCALE)`:
+ * 99.999.999.999,999.
+ *
+ * Sin este tope, una cantidad más grande pasaba toda la validación del DTO —es
+ * un número con tres decimales— y recién reventaba contra PostgreSQL con
+ * `numeric field overflow`, que sale como un 500 y un "ocurrió un error
+ * inesperado". El límite es de la columna, así que se declara acá, junto a la
+ * precisión que lo define, y no suelto en cada DTO.
+ */
+export const MAX_QUANTITY = 10 ** (QUANTITY_PRECISION - QUANTITY_SCALE) - MIN_QUANTITY;
+
 /** Opciones de `@IsNumber` para cantidades del inventario (hasta 3 decimales). */
 export const QUANTITY_NUMBER_OPTIONS = { maxDecimalPlaces: QUANTITY_SCALE } as const;
 
 /** Escala de `pallets.weightKg` / `locations.*` — `numeric(10,2)`. */
 export const WEIGHT_SCALE = 2;
+
+/** Precisión de esas columnas de peso. */
+export const WEIGHT_PRECISION = 10;
+
+/** Máximo que entra en `numeric(10,2)`: 99.999.999,99. Mismo motivo que `MAX_QUANTITY`. */
+export const MAX_WEIGHT = 10 ** (WEIGHT_PRECISION - WEIGHT_SCALE) - 1 / 10 ** WEIGHT_SCALE;
 
 /** Opciones de `@IsNumber` para pesos (hasta 2 decimales). */
 export const WEIGHT_NUMBER_OPTIONS = { maxDecimalPlaces: WEIGHT_SCALE } as const;

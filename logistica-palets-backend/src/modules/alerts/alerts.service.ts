@@ -6,6 +6,7 @@ import { AlertRule } from './entities/alert-rule.entity';
 import { CreateAlertRuleDto } from './dto/create-alert-rule.dto';
 import { EventsGateway } from '../events/events.gateway';
 import { businessDaysUntil, businessToday, rawDateColumnToString, shiftBusinessDate } from '../../common/date';
+import { formatQuantity } from '../../common/quantity';
 import type { WarehouseScope } from '../warehouses/warehouse-access.service';
 
 /* ── Active alert types ────────────────────────────────────────────────────── */
@@ -200,7 +201,13 @@ export class AlertsService {
         id: `expiry-${r.id}`,
         type: isCritical ? ('LOT_EXPIRING_CRITICAL' as const) : ('LOT_EXPIRING_WARNING' as const),
         severity: isCritical ? ('critical' as const) : ('warning' as const),
-        message: `Lote ${r.lotCode} (${r.productCode}) vence en ${daysLeft} día${daysLeft !== 1 ? 's' : ''} — ${r.stockActual} uds en stock`,
+        // `formatQuantity` y no `r.stockActual` pelado: `dataSource.query` no
+        // pasa por los transformers, así que la columna `numeric(14,3)` llega
+        // como el string "1690.000". Interpolado tal cual, un lote de 1.690
+        // unidades se anuncia como "1690.000 uds", que en formato local se lee
+        // como un millón seiscientos noventa mil. Es el mismo problema que el
+        // comentario de arriba describe para la fecha, en la otra columna.
+        message: `Lote ${r.lotCode} (${r.productCode}) vence en ${daysLeft} día${daysLeft !== 1 ? 's' : ''} — ${formatQuantity(Number(r.stockActual))} uds en stock`,
         data: {
           lotId: r.id,
           lotCode: r.lotCode,

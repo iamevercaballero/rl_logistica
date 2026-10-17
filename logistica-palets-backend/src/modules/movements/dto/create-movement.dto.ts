@@ -18,6 +18,8 @@ import { adjustmentReasons, movementTypes, MovementType } from '../entities/move
 import { IsBusinessDateString } from '../../../common/is-business-date-string.validator';
 import { NormalizeDecimal } from '../../../common/normalize-decimal.decorator';
 import {
+  MAX_QUANTITY,
+  MAX_WEIGHT,
   MIN_QUANTITY,
   QUANTITY_NUMBER_OPTIONS as QUANTITY_OPTIONS,
   WEIGHT_NUMBER_OPTIONS as WEIGHT_OPTIONS,
@@ -41,6 +43,7 @@ export class PalletItemDto {
   @NormalizeDecimal()
   @IsNumber(QUANTITY_OPTIONS)
   @Min(MIN_QUANTITY)
+  @Max(MAX_QUANTITY)
   quantity: number;
 
   @IsOptional()
@@ -74,6 +77,7 @@ export class PalletItemDto {
   @NormalizeDecimal()
   @IsNumber(WEIGHT_OPTIONS)
   @Min(0)
+  @Max(MAX_WEIGHT)
   weightKg?: number;
 
   /**
@@ -114,6 +118,7 @@ export class CreateMovementDto {
   @NormalizeDecimal()
   @IsNumber(QUANTITY_OPTIONS)
   @Min(MIN_QUANTITY)
+  @Max(MAX_QUANTITY)
   quantity?: number;
 
   /** Cantidad de palets físicos — es un conteo, siempre entero. */

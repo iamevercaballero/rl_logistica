@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsBoolean,
@@ -10,6 +11,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
   Min,
   ValidateIf,
@@ -18,7 +20,7 @@ import {
 import { documentTypes, DocumentType } from '../entities/logistics-document.entity';
 import { PalletItemDto } from './create-movement.dto';
 import { NormalizeDecimal } from '../../../common/normalize-decimal.decorator';
-import { MIN_QUANTITY, QUANTITY_NUMBER_OPTIONS } from '../../../common/quantity';
+import { MAX_QUANTITY, MIN_QUANTITY, QUANTITY_NUMBER_OPTIONS } from '../../../common/quantity';
 
 /**
  * Una línea del documento = un producto (con sus lotes/pallets).
@@ -34,6 +36,7 @@ export class CreateDocumentLineDto {
   @NormalizeDecimal()
   @IsNumber(QUANTITY_NUMBER_OPTIONS)
   @Min(MIN_QUANTITY)
+  @Max(MAX_QUANTITY)
   quantity?: number;
 
   /** Cantidad de palets físicos — es un conteo, siempre entero. */
@@ -55,6 +58,12 @@ export class CreateDocumentLineDto {
 
   /** Detalle palet a palet de esta línea. */
   @IsOptional()
+  // Mismo tope que `CreateMovementDto.palletItems`, y por el mismo motivo: cada
+  // palet abre su propio bloqueo pesimista dentro de la transacción, así que
+  // una sola petición con miles de ítems sostiene la tabla bloqueada. El tope
+  // vivía sólo en el endpoint de movimiento suelto; ésta es la ruta que usa la
+  // pantalla de entradas y salidas, y aceptaba cualquier cantidad.
+  @ArrayMaxSize(200)
   @ValidateNested({ each: true })
   @Type(() => PalletItemDto)
   palletItems?: PalletItemDto[];
@@ -140,6 +149,9 @@ export class CreateDocumentDto {
 
   @IsArray()
   @ArrayMinSize(1)
+  // Un remito real no pasa de unas decenas de líneas; el tope acota el trabajo
+  // que una sola petición puede encadenar dentro de la transacción.
+  @ArrayMaxSize(100)
   @ValidateNested({ each: true })
   @Type(() => CreateDocumentLineDto)
   lines: CreateDocumentLineDto[];

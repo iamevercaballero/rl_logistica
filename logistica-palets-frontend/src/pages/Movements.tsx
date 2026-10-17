@@ -495,6 +495,8 @@ export default function MovementsPage() {
 
   /** Qué palet tiene abierto el popover de ubicación en el desglose (uno solo a la vez). */
   const [locationPopoverPalletId, setLocationPopoverPalletId] = useState<string | null>(null);
+  /** Coordenadas del detalle de ubicación, calculadas desde el botón que lo abre. */
+  const [locationPopoverPos, setLocationPopoverPos] = useState<{ top: number; left: number } | null>(null);
 
   /** Cierra el popover de ubicación al clickear afuera — mismo criterio que HybridSearchInput. */
   useEffect(() => {
@@ -2330,8 +2332,15 @@ export default function MovementsPage() {
                                       <label
                                         key={p.id}
                                         style={{
-                                          display: "grid",
-                                          gridTemplateColumns: "auto auto 1fr auto auto",
+                                          display: "flex",
+                                          // Flex con wrap, no grilla: con el palet tildado la fila
+                                          // lleva seis bloques (checkbox, código, stock, "Sale" +
+                                          // cantidad, ubicación y paletas físicas) y una grilla de
+                                          // ancho fijo los aplasta en ventanas angostas — el stock
+                                          // quedaba partido en tres líneas. Así, cuando no entra,
+                                          // baja a dos renglones en vez de romper el texto.
+                                          flexWrap: "wrap",
+                                          rowGap: 4,
                                           alignItems: "center",
                                           gap: 10,
                                           padding: "7px 16px",
@@ -2357,7 +2366,7 @@ export default function MovementsPage() {
                                           {p.code}
                                         </span>
                                         {/* Cantidad stock actual */}
-                                        <span style={{ fontSize: 13, color: "var(--muted)" }}>
+                                        <span style={{ fontSize: 13, color: "var(--muted)", whiteSpace: "nowrap" }}>
                                           {fmtQty(p.quantity)} unid. stock
                                         </span>
                                         {/* Cuánto sale de ESTE palet. Editable: en una salida
@@ -2369,65 +2378,6 @@ export default function MovementsPage() {
                                             onClick={(e) => e.preventDefault()}
                                           >
                                             <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 700 }}>Sale</span>
-                                            <span style={{ position: "relative" }}>
-                                              <button
-                                                type="button"
-                                                data-location-popover-trigger
-                                                onClick={() => setLocationPopoverPalletId((cur) => (cur === p.id ? null : p.id))}
-                                                aria-label={`Dónde está el palet ${p.code}`}
-                                                aria-expanded={locationPopoverPalletId === p.id}
-                                                title="Dónde está este palet"
-                                                style={{
-                                                  display: "flex", alignItems: "center", justifyContent: "center",
-                                                  width: 22, height: 22, padding: 0, borderRadius: 5,
-                                                  border: "1px solid var(--border)",
-                                                  background: locationPopoverPalletId === p.id ? "var(--primary-light)" : "none",
-                                                  color: locationPopoverPalletId === p.id ? "var(--primary)" : "var(--muted)",
-                                                  cursor: "pointer",
-                                                }}
-                                              >
-                                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                                  <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
-                                                  <circle cx="12" cy="10" r="3" />
-                                                </svg>
-                                              </button>
-                                              {locationPopoverPalletId === p.id && (() => {
-                                                const loc = p.currentLocationId ? locationById[p.currentLocationId] : undefined;
-                                                const zone = zoneMeta(loc?.zone);
-                                                return (
-                                                  <div
-                                                    role="dialog"
-                                                    data-location-popover
-                                                    aria-label={`Ubicación del palet ${p.code}`}
-                                                    style={{
-                                                      position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 20,
-                                                      width: 210, background: "var(--panel)", border: "1.5px solid var(--border)",
-                                                      borderRadius: 8, boxShadow: "0 8px 24px rgba(0,0,0,.25)", padding: 10,
-                                                    }}
-                                                  >
-                                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 6 }}>
-                                                      <span style={{ fontSize: 11, fontWeight: 800, fontFamily: "monospace" }}>{p.code}</span>
-                                                      <button
-                                                        type="button"
-                                                        onClick={() => setLocationPopoverPalletId(null)}
-                                                        aria-label="Cerrar"
-                                                        style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--muted)", fontSize: 14, lineHeight: 1 }}
-                                                      >×</button>
-                                                    </div>
-                                                    {loc ? (
-                                                      <div style={{ fontSize: 12, display: "grid", gap: 2 }}>
-                                                        <span>Ubicación: <strong style={{ fontFamily: "monospace" }}>{loc.code}</strong></span>
-                                                        {zone && <span style={{ color: "var(--muted)" }}>Zona: {zone.label}</span>}
-                                                        {loc.aisle && <span style={{ color: "var(--muted)" }}>Sector: {loc.aisle}</span>}
-                                                        {loc.rack && <span style={{ color: "var(--muted)" }}>Subsector: {loc.rack}</span>}
-                                                      </div>
-                                                    ) : (
-                                                      <p style={{ fontSize: 12, color: "var(--muted)", margin: 0 }}>Sin ubicación registrada.</p>
-                                                    )}
-                                                  </div>
-                                                );
-                                              })()}
-                                            </span>
                                             <QuantityInput
                                               allowZero
                                               align="right"
@@ -2457,16 +2407,107 @@ export default function MovementsPage() {
                                             )}
                                           </span>
                                         )}
-                                        {!isSelected && p.currentLocationId && (
-                                          <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "monospace", justifySelf: "end" }}>
-                                            {locationMap[p.currentLocationId] ?? p.currentLocationId.slice(0, 8)}
+                                        {/* La ubicación se muestra SIEMPRE, seleccionado o no.
+                                            Antes sólo aparecía sin seleccionar: al tildar el palet
+                                            para despacharlo, el dato desaparecía y había que ir a
+                                            buscarlo al botón de detalle — justo cuando el operador
+                                            está decidiendo de dónde saca la mercadería. */}
+                                        {p.currentLocationId && (
+                                          <span style={{ display: "flex", alignItems: "center", gap: 5, marginLeft: "auto" }} onClick={(e) => e.preventDefault()}>
+                                            <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "monospace" }}>
+                                              {locationMap[p.currentLocationId] ?? p.currentLocationId.slice(0, 8)}
+                                            </span>
+                                            <span style={{ position: "relative" }}>
+                                              <button
+                                                type="button"
+                                                data-location-popover-trigger
+                                                onClick={(e) => {
+                                                  const abriendo = locationPopoverPalletId !== p.id;
+                                                  if (abriendo) {
+                                                    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                                                    // Debajo del botón, y si no entra, encima: el
+                                                    // detalle mide ~90 px y las últimas filas quedan
+                                                    // cerca del borde inferior de la ventana.
+                                                    const abajo = r.bottom + 4;
+                                                    const cabeAbajo = abajo + 96 <= window.innerHeight;
+                                                    setLocationPopoverPos({
+                                                      top: cabeAbajo ? abajo : Math.max(8, r.top - 96),
+                                                      left: Math.min(r.left, window.innerWidth - 218),
+                                                    });
+                                                  }
+                                                  setLocationPopoverPalletId((cur) => (cur === p.id ? null : p.id));
+                                                }}
+                                                aria-label={`Dónde está el palet ${p.code}`}
+                                                aria-expanded={locationPopoverPalletId === p.id}
+                                                title="Dónde está este palet"
+                                                style={{
+                                                  display: "flex", alignItems: "center", justifyContent: "center",
+                                                  width: 22, height: 22, padding: 0, borderRadius: 5,
+                                                  border: "1px solid var(--border)",
+                                                  background: locationPopoverPalletId === p.id ? "var(--primary-light)" : "none",
+                                                  color: locationPopoverPalletId === p.id ? "var(--primary)" : "var(--muted)",
+                                                  cursor: "pointer",
+                                                }}
+                                              >
+                                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                                  <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                                                  <circle cx="12" cy="10" r="3" />
+                                                </svg>
+                                              </button>
+                                              {locationPopoverPalletId === p.id && (() => {
+                                                const loc = p.currentLocationId ? locationById[p.currentLocationId] : undefined;
+                                                const zone = zoneMeta(loc?.zone);
+                                                return (
+                                                  <div
+                                                    role="dialog"
+                                                    data-location-popover
+                                                    aria-label={`Ubicación del palet ${p.code}`}
+                                                    /* `fixed` y no `absolute`: la tarjeta del lote
+                                                       lleva `overflow: hidden` por su borderRadius, y
+                                                       un `absolute` igual queda recortado por ella —
+                                                       el detalle se abría fuera de la tarjeta y se
+                                                       veían apenas unos píxeles. Con `fixed` escapa
+                                                       del recorte, al precio de posicionarlo desde el
+                                                       botón, que es lo que hace `locationPopoverPos`. */
+                                                    style={{
+                                                      position: "fixed",
+                                                      top: locationPopoverPos?.top ?? 0,
+                                                      left: locationPopoverPos?.left ?? 0,
+                                                      zIndex: 60,
+                                                      width: 210, background: "var(--panel)", border: "1.5px solid var(--border)",
+                                                      borderRadius: 8, boxShadow: "0 8px 24px rgba(0,0,0,.25)", padding: 10,
+                                                    }}
+                                                  >
+                                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 6 }}>
+                                                      <span style={{ fontSize: 11, fontWeight: 800, fontFamily: "monospace" }}>{p.code}</span>
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => setLocationPopoverPalletId(null)}
+                                                        aria-label="Cerrar"
+                                                        style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--muted)", fontSize: 14, lineHeight: 1 }}
+                                                      >×</button>
+                                                    </div>
+                                                    {loc ? (
+                                                      <div style={{ fontSize: 12, display: "grid", gap: 2 }}>
+                                                        <span>Ubicación: <strong style={{ fontFamily: "monospace" }}>{loc.code}</strong></span>
+                                                        {zone && <span style={{ color: "var(--muted)" }}>Zona: {zone.label}</span>}
+                                                        {loc.aisle && <span style={{ color: "var(--muted)" }}>Sector: {loc.aisle}</span>}
+                                                        {loc.rack && <span style={{ color: "var(--muted)" }}>Subsector: {loc.rack}</span>}
+                                                      </div>
+                                                    ) : (
+                                                      <p style={{ fontSize: 12, color: "var(--muted)", margin: 0 }}>Sin ubicación registrada.</p>
+                                                    )}
+                                                  </div>
+                                                );
+                                              })()}
+                                            </span>
                                           </span>
                                         )}
                                         {/* Paletas físicas con las que sale este palet. Opcional:
                                             en blanco, la salida se registra como siempre. */}
                                         {isSelected && (
                                           <span
-                                            style={{ display: "flex", alignItems: "center", gap: 5, justifySelf: "end" }}
+                                            style={{ display: "flex", alignItems: "center", gap: 5 }}
                                             onClick={(e) => e.preventDefault()}
                                             title="Paletas físicas con las que se despacha este palet. Solo informativo: no cambia el stock ni el descuento. En blanco = 1."
                                           >

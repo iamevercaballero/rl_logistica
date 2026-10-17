@@ -1,5 +1,6 @@
 import { api } from "./client";
 import type { LotPallet } from "./pallets";
+import type { Paginado } from "./products";
 
 export type Lot = {
   id: string;
@@ -35,6 +36,27 @@ export async function listLots(productId?: string, sapLot?: string, includePalle
       ...(sapLot ? { sapLot } : {}),
       ...(includePallets ? { includePallets: "true" } : {}),
       ...(warehouseId ? { warehouseId } : {}),
+    },
+  });
+  return data;
+}
+
+/**
+ * Lotes de a una página. El backend pagina sólo si recibe `page` o `limit`;
+ * sin eso devuelve todo, que es lo que siguen usando los selectores.
+ */
+export async function listLotsPage(
+  page: number,
+  limit = 50,
+  filtros: { productId?: string; sapLot?: string; warehouseId?: string } = {},
+): Promise<Paginado<Lot>> {
+  const { data } = await api.get<Paginado<Lot>>("/lots", {
+    params: {
+      page,
+      limit,
+      ...(filtros.productId ? { productId: filtros.productId } : {}),
+      ...(filtros.sapLot ? { sapLot: filtros.sapLot } : {}),
+      ...(filtros.warehouseId ? { warehouseId: filtros.warehouseId } : {}),
     },
   });
   return data;

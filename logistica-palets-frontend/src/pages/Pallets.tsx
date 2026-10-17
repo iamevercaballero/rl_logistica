@@ -18,6 +18,8 @@ import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { fmtDateLong, fmtDateTimeLong } from "../utils/dateFormat";
 import LocationPicker from "../components/LocationPicker";
+import { Paginador } from "../components/Paginador";
+import { usePaginacionLocal } from "../hooks/usePaginacionLocal";
 
 /* ── Constants ───────────────────────────────────────────────────────────── */
 
@@ -680,6 +682,9 @@ export default function PalletsPage() {
     return result;
   }, [allPallets, statusFilter, productFilter, locationFilter, search]);
 
+  // Render de a 50 filas: la tabla metía la lista entera en el DOM.
+  const { visibles: filasVisibles, info: paginaInfo, setPagina } = usePaginacionLocal(items);
+
   const locationOpts: LocationOpt[] = locations.map((l) => ({
     id: l.id,
     code: l.code,
@@ -910,7 +915,7 @@ export default function PalletsPage() {
                 </tr>
               </thead>
               <tbody>
-                {items.map((item) => (
+                {filasVisibles.map((item) => (
                   <tr
                     key={item.id}
                     style={{ cursor: "pointer" }}
@@ -994,6 +999,8 @@ export default function PalletsPage() {
           </div>
         )
       )}
+
+      <Paginador info={paginaInfo} onPagina={setPagina} etiqueta="palets" />
     </div>
   );
 }

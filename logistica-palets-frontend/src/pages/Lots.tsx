@@ -9,6 +9,8 @@ import { useAuth } from "../auth/AuthContext";
 import { canDelete, canUpdate } from "../auth/rbac";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
+import { Paginador } from "../components/Paginador";
+import { usePaginacionLocal } from "../hooks/usePaginacionLocal";
 import { daysUntil, fmtDateShort, formatDateOnly } from "../utils/dateFormat";
 
 function ChevronIcon({ open }: { open: boolean }) {
@@ -257,6 +259,9 @@ export default function LotsPage() {
     return true;
   }), [items, filterProductId, filterSapLot]);
 
+  // Render de a 50 filas: la tabla metía la lista entera en el DOM.
+  const { visibles: filasVisibles, info: paginaInfo, setPagina } = usePaginacionLocal(filtered);
+
   const updateMut = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: Parameters<typeof updateLot>[1] }) =>
       updateLot(id, payload),
@@ -475,7 +480,7 @@ export default function LotsPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((item) => {
+                {filasVisibles.map((item) => {
                   const isOpen = expandedLotId === item.id;
                   return (
                     <Fragment key={item.id}>
@@ -574,6 +579,8 @@ export default function LotsPage() {
           </div>
         )
       )}
+
+      <Paginador info={paginaInfo} onPagina={setPagina} etiqueta="lotes" />
     </div>
   );
 }

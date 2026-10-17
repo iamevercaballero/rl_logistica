@@ -1,5 +1,6 @@
 import { api } from "./client";
 import type { VoidStatus } from "./movements";
+import type { Paginado } from "./products";
 
 export type LotPallet = {
   id: string;
@@ -56,6 +57,27 @@ export async function listPallets(filters?: {
   if (filters?.search)      params.search      = filters.search;
   if (filters?.warehouseId) params.warehouseId = filters.warehouseId;
   const { data } = await api.get<LotPallet[]>("/pallets", { params });
+  return data;
+}
+
+/** Palets de a una página. Ver `listLotsPage` sobre por qué es opcional. */
+export async function listPalletsPage(
+  page: number,
+  limit = 50,
+  filters: {
+    lotId?: string;
+    status?: string;
+    productId?: string;
+    locationId?: string;
+    search?: string;
+    warehouseId?: string;
+  } = {},
+): Promise<Paginado<LotPallet>> {
+  const params: Record<string, string | number> = { page, limit };
+  for (const [clave, valor] of Object.entries(filters)) {
+    if (valor) params[clave] = valor;
+  }
+  const { data } = await api.get<Paginado<LotPallet>>("/pallets", { params });
   return data;
 }
 

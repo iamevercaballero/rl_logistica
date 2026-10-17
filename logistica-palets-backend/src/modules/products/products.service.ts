@@ -2,6 +2,13 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectRepository } from '@nestjs/typeorm';
 import { ILike, Repository } from 'typeorm';
 import { readUploadedTable, rowNumberOf } from '../../common/spreadsheet';
+import {
+  pageBounds,
+  paginated,
+  wantsPagination,
+  type Paginated,
+  type PageQueryDto,
+} from '../../common/pagination';
 import { Product } from './entities/product.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -93,16 +100,31 @@ export class ProductsService {
     return this.productRepo.save(product);
   }
 
-  findAll(search?: string) {
-    if (search?.trim()) {
-      const q = `%${search.trim()}%`;
-      return this.productRepo.find({
-        where: [{ code: ILike(q) }, { description: ILike(q) }],
-        order: { code: 'ASC' },
-        take: 50,
-      });
+  /**
+   * Catálogo, con paginación **opcional**: sin `page` ni `limit` devuelve el
+   * arreglo completo como siempre, porque varias pantallas lo necesitan entero
+   * para armar un mapa por id (ver `common/pagination.ts`).
+   */
+  async findAll(search?: string, pagina: PageQueryDto = {}): Promise<Product[] | Paginated<Product>> {
+    const termino = search?.trim();
+    const where = termino
+      ? [{ code: ILike(`%${termino}%`) }, { description: ILike(`%${termino}%`) }]
+      : undefined;
+
+    if (!wantsPagination(pagina)) {
+      // La búsqueda sin paginar sigue acotada a 50: alimenta los selectores de
+      // materiales, que muestran unas pocas coincidencias mientras se tipea.
+      return this.productRepo.find({ where, order: { code: 'ASC' }, ...(termino ? { take: 50 } : {}) });
     }
-    return this.productRepo.find({ order: { code: 'ASC' } });
+
+    const { limit, skip } = pageBounds(pagina);
+    const [data, total] = await this.productRepo.findAndCount({
+      where,
+      order: { code: 'ASC' },
+      skip,
+      take: limit,
+    });
+    return paginated(data, total, pagina);
   }
 
   async findOne(id: string) {

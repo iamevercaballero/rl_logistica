@@ -29,6 +29,7 @@ import { RolesGuard } from '../auth/roles/roles.guard';
 import { Roles } from '../auth/roles/roles.decorator';
 import { PermissionGuard } from '../permissions/guards/permission.guard';
 import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PalletsQueryDto } from './dto/pallets-query.dto';
 
 class QuickTransferDto {
   @IsUUID()
@@ -56,18 +57,12 @@ export class PalletsController {
   @Get()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
   @RequirePermission('pallets', 'read')
-  async findAll(
-    @Req() req: AuthedRequest,
-    @Query('lotId') lotId?: string,
-    @Query('status') status?: string,
-    @Query('productId') productId?: string,
-    @Query('locationId') locationId?: string,
-    @Query('search') search?: string,
-    @Query('warehouseId', OptionalUuid) warehouseId?: string,
-  ) {
+  async findAll(@Req() req: AuthedRequest, @Query() query: PalletsQueryDto) {
+    const { lotId, status, productId, locationId, search } = query;
     return this.service.findAll(
       { lotId, status, productId, locationId, search },
-      await this.scopeOf(req, warehouseId),
+      await this.scopeOf(req, query.warehouseId),
+      query,
     );
   }
 

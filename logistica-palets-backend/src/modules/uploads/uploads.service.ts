@@ -7,12 +7,15 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
-import { createReadStream, existsSync, mkdirSync, unlinkSync } from 'fs';
+import { closeSync, createReadStream, existsSync, mkdirSync, openSync, readSync, unlinkSync } from 'fs';
 import { join, resolve, sep } from 'path';
 import { Attachment, AttachmentCategory, AttachmentEntityType } from './entities/attachment.entity';
 import { DocumentEvent, DocumentEventType } from './entities/document-event.entity';
 import { contextoActual } from '../../common/request-context';
 import {
+  FIRMA_BYTES,
+  contentMatchesExtension,
+  CONTENT_MISMATCH_MESSAGE,
   attachmentMimeType,
   MAX_ATTACHMENT_SIZE,
   UNSUPPORTED_ATTACHMENT_MESSAGE,
@@ -60,6 +63,54 @@ export class UploadsService {
     }
   }
 
+  /** Primeros bytes del archivo, para cotejar la firma contra la extensión. */
+  private leerCabecera(path: string): Buffer {
+    const buffer = Buffer.alloc(FIRMA_BYTES);
+    let fd: number | undefined;
+    try {
+      fd = openSync(path, 'r');
+      const leidos = readSync(fd, buffer, 0, FIRMA_BYTES, 0);
+      return buffer.subarray(0, leidos);
+    } catch {
+      // Si no se puede leer, no se inventa una firma válida: devolver vacío
+      // hace que el cotejo falle y el archivo se descarte.
+      return Buffer.alloc(0);
+    } finally {
+      if (fd !== undefined) {
+        try { closeSync(fd); } catch { /* ya cerrado */ }
+      }
+    }
+  }
+
+  /**
+   * Tabla donde vive cada tipo de entidad adjuntable. Si se agrega un tipo a
+   * `attachmentEntityTypes` sin agregarlo acá, TypeScript lo marca.
+   */
+  private static readonly TABLA_POR_ENTIDAD: Record<AttachmentEntityType, string> = {
+    MOVEMENT: 'movements',
+    DOCUMENT: 'logistics_documents',
+    ADJUSTMENT: 'adjustment_requests',
+    VEHICLE: 'transports',
+  };
+
+  private async assertEntidadExiste(
+    entityType: AttachmentEntityType,
+    entityId: string,
+    pathDelArchivo?: string,
+  ): Promise<void> {
+    const tabla = UploadsService.TABLA_POR_ENTIDAD[entityType];
+    const [fila] = (await this.attachRepo.manager.query(
+      `SELECT 1 AS existe FROM "${tabla}" WHERE id = $1 LIMIT 1`,
+      [entityId],
+    )) as Array<{ existe: number }>;
+    if (!fila) {
+      this.descartarArchivo(pathDelArchivo);
+      throw new NotFoundException(
+        `No existe el registro al que se quiere adjuntar el archivo (${entityType}).`,
+      );
+    }
+  }
+
   async saveAttachment(
     file: Express.Multer.File,
     dto: {
@@ -94,6 +145,20 @@ export class UploadsService {
       this.descartarArchivo(file.path);
       throw new BadRequestException('El nombre del archivo es obligatorio.');
     }
+
+    // Tercer candado: que el contenido se parezca a lo que dice la extensión.
+    // Sin esto entraba un ejecutable renombrado a `.pdf`, y se guardaba con
+    // `mimeType: application/pdf` — quien lo descargaba creyendo que era el
+    // remito escaneado recibía un `.exe`.
+    if (!contentMatchesExtension(this.leerCabecera(file.path), file.originalname)) {
+      this.descartarArchivo(file.path);
+      throw new BadRequestException(CONTENT_MISMATCH_MESSAGE);
+    }
+
+    // Que la entidad exista. Antes se insertaba la fila con cualquier
+    // `entityId`: el adjunto quedaba colgado de un remito inexistente, sin
+    // forma de llegar a él desde ninguna pantalla y sin que nadie lo notara.
+    await this.assertEntidadExiste(dto.entityType, dto.entityId, file.path);
 
     const attachment = this.attachRepo.create({
       name: dto.name.trim(),

@@ -26,6 +26,7 @@ import { RolesGuard } from '../auth/roles/roles.guard';
 import { Roles } from '../auth/roles/roles.decorator';
 import { PermissionGuard } from '../permissions/guards/permission.guard';
 import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { LotsQueryDto } from './dto/lots-query.dto';
 
 type AuthedRequest = Request & { user: AccessUser };
 const OptionalUuid = new ParseUUIDPipe({ optional: true });
@@ -46,18 +47,13 @@ export class LotsController {
   @Get()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
   @RequirePermission('lots', 'read')
-  async findAll(
-    @Req() req: AuthedRequest,
-    @Query('productId') productId?: string,
-    @Query('sapLot') sapLot?: string,
-    @Query('includePallets') includePallets?: string,
-    @Query('warehouseId', OptionalUuid) warehouseId?: string,
-  ) {
+  async findAll(@Req() req: AuthedRequest, @Query() query: LotsQueryDto) {
     return this.service.findAll(
-      productId,
-      sapLot,
-      includePallets === 'true',
-      await this.scopeOf(req, warehouseId),
+      query.productId,
+      query.sapLot,
+      query.includePallets === 'true',
+      await this.scopeOf(req, query.warehouseId),
+      query,
     );
   }
 

@@ -24,9 +24,10 @@ import {
   isInlineSafe,
   MAX_ATTACHMENT_SIZE,
 } from '../src/modules/uploads/attachment-types';
-import { createTestDataSource, resetDb } from './test-datasource';
+import { createTestDataSource, resetDb, seedBasics, TEST_USER_ID } from './test-datasource';
+import { Movement } from '../src/modules/movements/entities/movement.entity';
 
-const USER_ID = '00000000-0000-0000-0000-0000000000aa';
+const USER_ID = TEST_USER_ID;
 const ENTITY_ID = '00000000-0000-0000-0000-0000000000bb';
 
 let ds: DataSource;
@@ -40,9 +41,34 @@ let tmp: string;
  * sale el `filePath` relativo que guarda el adjunto. Con un archivo en el temp
  * del sistema el path quedaría absoluto y `streamFile` lo rechazaría, con razón.
  */
+/**
+ * Bytes con los que arranca cada formato, para que el archivo de prueba se
+ * parezca al que dice ser. El servicio coteja la firma contra la extensión —un
+ * ejecutable renombrado a `.pdf` se rechaza—, así que un contenido de relleno
+ * haría fallar los casos que no prueban eso.
+ */
+const FIRMA_POR_EXTENSION: Record<string, Buffer> = {
+  '.pdf': Buffer.from('%PDF-1.4'),
+  '.jpg': Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+  '.jpeg': Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+  '.png': Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  '.webp': Buffer.from('RIFF....WEBP'),
+  '.docx': Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+  '.xlsx': Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+  '.doc': Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
+  '.xls': Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
+};
+
+function contenidoCoherente(originalName: string): Buffer {
+  const ext = (originalName.match(/\.[^.]+$/)?.[0] ?? '').toLowerCase();
+  const firma = FIRMA_POR_EXTENSION[ext];
+  const relleno = Buffer.from(' contenido de prueba');
+  return firma ? Buffer.concat([firma, relleno]) : relleno;
+}
+
 function fakeFile(originalName: string, opts: { mimetype?: string; size?: number } = {}) {
   const path = join(tmp, `stored-${Math.random().toString(36).slice(2)}`);
-  writeFileSync(path, 'contenido de prueba');
+  writeFileSync(path, contenidoCoherente(originalName));
   return {
     originalname: originalName,
     // Lo que declara el cliente. Deliberadamente mentiroso en varios tests.
@@ -69,6 +95,24 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await resetDb(ds);
+  // Un movimiento real al que colgar los adjuntos: el servicio ahora verifica
+  // que la entidad exista antes de guardar la fila, para que no queden
+  // adjuntos huerfanos apuntando a un remito que no esta.
+  const base = await seedBasics(ds);
+  const repo = ds.getRepository(Movement);
+  const movimiento = await repo.save(repo.create({
+    id: ENTITY_ID,
+    type: 'ENTRY',
+    date: new Date(),
+    productId: base.product.id,
+    quantity: 1,
+    warehouseId: base.warehouse.id,
+    locationId: base.location.id,
+    createdById: TEST_USER_ID,
+    status: 'NORMAL',
+    voidStatus: 'NONE',
+  }));
+  expect(movimiento.id).toBe(ENTITY_ID);
 });
 
 describe('lista blanca de tipos', () => {

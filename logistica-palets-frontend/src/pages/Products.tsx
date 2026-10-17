@@ -4,7 +4,7 @@ import {
   bulkImportProducts,
   createProduct,
   deleteProduct,
-  listProducts,
+  listProductsPage,
   updateProduct,
   type BulkImportResult,
   type Product,
@@ -13,6 +13,7 @@ import { useAuth } from "../auth/AuthContext";
 import { canCreate, canDelete, canUpdate } from "../auth/rbac";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
+import { Paginador } from "../components/Paginador";
 
 const UNITS_OF_MEASURE = [
   { value: "UN", label: "UN — Unidad" },
@@ -84,10 +85,18 @@ export default function ProductsPage() {
     return "";
   }, [description]);
 
-  const { data: items = [], isLoading, isError, refetch } = useQuery({
-    queryKey: ["products", search],
-    queryFn: () => listProducts(search || undefined),
+  // Paginado: el catálogo llegó a 2.100 materiales y la tabla los metía todos
+  // en el DOM de una sola vez. Al cambiar la búsqueda se vuelve a la página 1,
+  // si no el operador queda mirando una página vacía del resultado nuevo.
+  const [pagina, setPagina] = useState(1);
+  useEffect(() => { setPagina(1); }, [search]);
+
+  const { data: pageData, isLoading, isError, refetch, isFetching } = useQuery({
+    queryKey: ["products", "page", pagina, search],
+    queryFn: () => listProductsPage(pagina, 50, search || undefined),
+    placeholderData: (anterior) => anterior,
   });
+  const items = pageData?.data ?? [];
 
   const createMut = useMutation({
     mutationFn: createProduct,
@@ -401,6 +410,15 @@ export default function ProductsPage() {
           </table>
         )
       ) : null}
+
+      {pageData && (
+        <Paginador
+          info={pageData}
+          onPagina={setPagina}
+          cargando={isFetching}
+          etiqueta="materiales"
+        />
+      )}
 
       {/* Leyenda explicativa de atributos logísticos */}
       <div style={{ marginTop: 12, display: "flex", gap: 18, flexWrap: "wrap", fontSize: 12, color: "var(--muted)" }}>

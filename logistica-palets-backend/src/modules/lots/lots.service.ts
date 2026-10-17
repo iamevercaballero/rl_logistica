@@ -9,6 +9,13 @@ import { CreateLotDto } from './dto/create-lot.dto';
 import { UpdateLotDto } from './dto/update-lot.dto';
 import type { WarehouseScope } from '../warehouses/warehouse-access.service';
 import { dropSapLotIfUnused, sapLotNotAllowedMessage } from '../products/uses-sap-lot';
+import {
+  pageBounds,
+  paginated,
+  wantsPagination,
+  type Paginated,
+  type PageQueryDto,
+} from '../../common/pagination';
 
 /**
  * Normaliza el código de lote para evitar duplicados por diferencias de
@@ -18,6 +25,18 @@ import { dropSapLotIfUnused, sapLotNotAllowedMessage } from '../products/uses-sa
 export function normalizeLotCode(code: string): string {
   return (code ?? '').trim().replace(/\s+/g, ' ').toUpperCase();
 }
+
+/**
+ * Una fila del listado de lotes: el lote más los agregados de palets que la
+ * pantalla necesita, y los palets embebidos cuando se piden.
+ */
+export type LotListItem = Lot & {
+  stockActual: number;
+  availablePalletsCount: number;
+  exitedPalletsCount: number;
+  totalPalletsCount: number;
+  pallets?: Pallet[];
+};
 
 @Injectable()
 export class LotsService {
@@ -70,7 +89,34 @@ export class LotsService {
    * aparece si tiene pallets vivos ahí, y `stockActual` se informa como el
    * stock de ese depósito, no el total del lote en toda la operación.
    */
-  async findAll(productId?: string, sapLot?: string, includePallets = false, scope: WarehouseScope = null) {
+  /**
+   * Lotes, con paginación **opcional** (ver `common/pagination.ts`): sin `page`
+   * ni `limit` devuelve todo, como hasta ahora.
+   *
+   * La página se recorta sobre los lotes, antes de los agregados de palets: así
+   * los conteos y el `IN (:...lotIds)` trabajan sólo sobre las filas que se van
+   * a devolver, en vez de sobre el listado entero.
+   */
+  async findAll(
+    productId?: string,
+    sapLot?: string,
+    includePallets?: boolean,
+    scope?: WarehouseScope,
+  ): Promise<LotListItem[]>;
+  async findAll(
+    productId: string | undefined,
+    sapLot: string | undefined,
+    includePallets: boolean,
+    scope: WarehouseScope,
+    pagina: PageQueryDto,
+  ): Promise<LotListItem[] | Paginated<LotListItem>>;
+  async findAll(
+    productId?: string,
+    sapLot?: string,
+    includePallets = false,
+    scope: WarehouseScope = null,
+    pagina: PageQueryDto = {},
+  ): Promise<LotListItem[] | Paginated<LotListItem>> {
     const qb = this.lotRepo
       .createQueryBuilder('lot')
       .leftJoinAndSelect('lot.product', 'product')
@@ -91,8 +137,16 @@ export class LotsService {
       );
     }
 
-    const lots = await qb.getMany();
-    if (lots.length === 0) return [];
+    const paginar = wantsPagination(pagina);
+    let total = 0;
+    let lots: Lot[];
+    if (paginar) {
+      const { limit, skip } = pageBounds(pagina);
+      [lots, total] = await qb.skip(skip).take(limit).getManyAndCount();
+    } else {
+      lots = await qb.getMany();
+    }
+    if (lots.length === 0) return paginar ? paginated([], total, pagina) : [];
 
     // Conteos agregados de pallets por lote (siempre incluidos — son baratos)
     const lotIds = lots.map((l) => l.id);
@@ -133,7 +187,7 @@ export class LotsService {
       }
     }
 
-    return lots.map((lot) => {
+    const filas: LotListItem[] = lots.map((lot) => {
       const c = countsByLot.get(lot.id);
       return {
         ...lot,
@@ -145,6 +199,8 @@ export class LotsService {
         ...(includePallets ? { pallets: palletsByLot?.get(lot.id) ?? [] } : {}),
       };
     });
+
+    return paginar ? paginated(filas, total, pagina) : filas;
   }
 
   /**

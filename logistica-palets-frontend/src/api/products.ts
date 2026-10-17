@@ -60,6 +60,31 @@ export async function listProducts(search?: string): Promise<Product[]> {
   return data;
 }
 
+/** Un listado paginado tal como lo devuelve el backend. */
+export type Paginado<T> = {
+  data: T[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
+/**
+ * Catálogo de a una página. El backend pagina sólo si se le mandan `page` o
+ * `limit`; sin eso devuelve todo, que es lo que siguen usando las pantallas
+ * que arman un mapa por id (Lotes, Reportes, el selector de materiales).
+ */
+export async function listProductsPage(
+  page: number,
+  limit = 50,
+  search?: string,
+): Promise<Paginado<Product>> {
+  const { data } = await api.get<Paginado<Product>>("/products", {
+    params: { page, limit, ...(search ? { search } : {}) },
+  });
+  return data;
+}
+
 export async function searchProducts(q: string): Promise<Product[]> {
   if (!q.trim()) return [];
   const { data } = await api.get<Product[]>("/products", { params: { search: q } });

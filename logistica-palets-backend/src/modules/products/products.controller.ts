@@ -24,6 +24,7 @@ import { RolesGuard } from '../auth/roles/roles.guard';
 import { Roles } from '../auth/roles/roles.decorator';
 import { PermissionGuard } from '../permissions/guards/permission.guard';
 import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { ProductsQueryDto } from './dto/products-query.dto';
 
 const IMPORT_EXTENSIONS = ['.xlsx', '.csv'];
 
@@ -35,8 +36,8 @@ export class ProductsController {
   @Get()
   @Roles('ADMIN', 'MANAGER', 'OPERATOR', 'AUDITOR')
   @RequirePermission('products', 'read')
-  findAll(@Query('search') search?: string) {
-    return this.productsService.findAll(search);
+  findAll(@Query() query: ProductsQueryDto) {
+    return this.productsService.findAll(query.search, query);
   }
 
   @Get('alerts/stock-minimo')

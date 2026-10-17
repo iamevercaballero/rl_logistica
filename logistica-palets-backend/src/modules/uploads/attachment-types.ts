@@ -62,6 +62,48 @@ export function isInlineSafe(mimeType: string): boolean {
   return mimeType.startsWith('image/');
 }
 
+/**
+ * Bytes con los que arranca cada formato. Varias extensiones comparten firma
+ * —`.docx`/`.xlsx` son ZIP, `.doc`/`.xls` son contenedores OLE2— y eso está
+ * bien: lo que se descarta es el archivo cuyo contenido no se parece en nada a
+ * lo que dice la extensión.
+ */
+const FIRMAS: Readonly<Record<string, readonly number[][]>> = {
+  '.pdf': [[0x25, 0x50, 0x44, 0x46]], // %PDF
+  '.jpg': [[0xff, 0xd8, 0xff]],
+  '.jpeg': [[0xff, 0xd8, 0xff]],
+  '.png': [[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]],
+  '.webp': [[0x52, 0x49, 0x46, 0x46]], // RIFF (el "WEBP" va en el byte 8)
+  '.doc': [[0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]], // OLE2
+  '.xls': [[0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]],
+  '.docx': [[0x50, 0x4b]], // PK (ZIP)
+  '.xlsx': [[0x50, 0x4b]],
+};
+
+/** Bytes que hay que leer del archivo para poder decidir. */
+export const FIRMA_BYTES = 12;
+
+/**
+ * `true` si el contenido se condice con la extensión declarada.
+ *
+ * La validación por extensión sola deja pasar un ejecutable renombrado a
+ * `.pdf`: se guardaba con `mimeType: application/pdf` y el operador que lo
+ * descargaba recibía un `.exe`. Es el mismo criterio que `common/spreadsheet.ts`
+ * ya aplica al leer planillas subidas, donde mira la firma antes de parsear.
+ *
+ * `.heic` no está en la tabla: su firma vive en el byte 4 (`ftyp`) con varias
+ * marcas posibles, así que se acepta sin comprobar el contenido en vez de
+ * rechazar fotos legítimas de un iPhone.
+ */
+export function contentMatchesExtension(header: Buffer, originalName: string): boolean {
+  const firmas = FIRMAS[attachmentExtension(originalName)];
+  if (!firmas) return true; // extensión sin firma conocida (.heic): no se juzga
+  return firmas.some((firma) => firma.every((byte, i) => header[i] === byte));
+}
+
+export const CONTENT_MISMATCH_MESSAGE =
+  'El contenido del archivo no coincide con su extensión. Verificá que no esté renombrado o dañado.';
+
 /** Mensaje único para el rechazo por tipo, para que diga siempre lo mismo. */
 export const UNSUPPORTED_ATTACHMENT_MESSAGE =
   `Formato no admitido. Se aceptan: ${ALLOWED_ATTACHMENT_EXTENSIONS.join(', ')}.`;

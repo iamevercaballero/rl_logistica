@@ -16,6 +16,13 @@ import { Movement } from '../movements/entities/movement.entity';
 import { MovementDetail } from '../movements/entities/movement-detail.entity';
 import { PilasService } from '../pilas/pilas.service';
 import { quantitiesEqual, roundQuantity } from '../../common/quantity';
+import {
+  pageBounds,
+  paginated,
+  wantsPagination,
+  type Paginated,
+  type PageQueryDto,
+} from '../../common/pagination';
 
 export interface EnrichedPallet {
   id: string;
@@ -44,6 +51,15 @@ export interface EnrichedPallet {
   locationCode: string | null;
   warehouseId: string | null;
   warehouseName: string | null;
+}
+
+/** Filtros del listado de palets. */
+export interface PalletFilters {
+  lotId?: string;
+  status?: string;
+  productId?: string;
+  locationId?: string;
+  search?: string;
 }
 
 @Injectable()
@@ -98,13 +114,22 @@ export class PalletsService {
     return this.palletRepo.save(pallet);
   }
 
-  async findAll(filters: {
-    lotId?: string;
-    status?: string;
-    productId?: string;
-    locationId?: string;
-    search?: string;
-  } = {}, scope: WarehouseScope = null): Promise<EnrichedPallet[]> {
+  /**
+   * Sobrecargas para que el tipo siga la forma real: sin `pagina` el resultado
+   * es el arreglo de siempre, y sólo quien pide paginar recibe la unión. Sin
+   * esto, cada llamador existente tenía que estrechar el tipo para usar `.map`.
+   */
+  async findAll(filters?: PalletFilters, scope?: WarehouseScope): Promise<EnrichedPallet[]>;
+  async findAll(
+    filters: PalletFilters,
+    scope: WarehouseScope,
+    pagina: PageQueryDto,
+  ): Promise<EnrichedPallet[] | Paginated<EnrichedPallet>>;
+  async findAll(
+    filters: PalletFilters = {},
+    scope: WarehouseScope = null,
+    pagina: PageQueryDto = {},
+  ): Promise<EnrichedPallet[] | Paginated<EnrichedPallet>> {
     const { lotId, status, productId, locationId, search } = filters;
 
     // Construir el WHERE dinámicamente: solo se agregan condiciones de los
@@ -146,7 +171,32 @@ export class PalletsService {
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    return this.dataSource.query<EnrichedPallet[]>(
+    // Con paginación hace falta el total sin recortar, y se pide aparte: el
+    // `COUNT(*) OVER ()` en la misma consulta devolvería el total repetido en
+    // cada fila y obliga a leerlo de una fila cualquiera.
+    const paginar = wantsPagination(pagina);
+    let total = 0;
+    let recorte = '';
+    if (paginar) {
+      const { limit, skip } = pageBounds(pagina);
+      const [{ n }] = await this.dataSource.query<{ n: number }[]>(
+        `
+        SELECT COUNT(*)::int AS n
+        FROM pallets p
+        JOIN lots     l   ON l.id  = p."lotId"
+        JOIN products pr  ON pr.id = l."productId"
+        LEFT JOIN locations  loc ON loc.id = p."currentLocationId"
+        LEFT JOIN warehouses w   ON w.id   = loc."warehouseId"
+        ${whereClause}
+        `,
+        params,
+      );
+      total = n;
+      params.push(limit, skip);
+      recorte = `LIMIT $${params.length - 1} OFFSET $${params.length}`;
+    }
+
+    const filas = await this.dataSource.query<EnrichedPallet[]>(
       `
       SELECT
         p.id,
@@ -176,9 +226,12 @@ export class PalletsService {
       LEFT JOIN warehouses w   ON w.id   = loc."warehouseId"
       ${whereClause}
       ORDER BY p.code ASC
+      ${recorte}
       `,
       params,
     );
+
+    return paginar ? paginated(filas, total, pagina) : filas;
   }
 
   async kpis(scope: WarehouseScope = null) {

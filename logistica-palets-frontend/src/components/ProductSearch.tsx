@@ -102,26 +102,46 @@ export default function ProductSearch({ value, onChange, placeholder = "Buscar m
           {loading && (
             <div style={{ padding: "10px 14px", color: "var(--muted)", fontSize: 13 }}>Buscando...</div>
           )}
-          {!loading && results.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onMouseDown={() => handleSelect(p)}
-              style={{
-                display: "block", width: "100%", textAlign: "left", padding: "9px 14px",
-                background: "none", border: "none", cursor: "pointer", borderBottom: "1px solid var(--border)",
-                transition: "background .12s",
-              }}
-              onMouseEnter={e => (e.currentTarget.style.background = "var(--primary-light)")}
-              onMouseLeave={e => (e.currentTarget.style.background = "none")}
-            >
-              <span style={{ fontWeight: 700, fontSize: 13 }}>{p.code}</span>
-              <span style={{ color: "var(--muted)", fontSize: 12, marginLeft: 8 }}>{p.description}</span>
-              {p.unitOfMeasure && (
-                <span style={{ float: "right", fontSize: 11, color: "var(--primary)", fontWeight: 600 }}>{p.unitOfMeasure}</span>
-              )}
-            </button>
-          ))}
+          {/* Un material dado de baja se muestra, pero no se puede elegir.
+              Antes salía igual que uno activo: se lo seleccionaba, se llenaba
+              el remito entero y recién al confirmar aparecía "Material
+              inexistente o inactivo". Esconderlo sería peor — quien busca un
+              código que sabe que existe y no obtiene nada cree que falla la
+              búsqueda. Mismo criterio que los lotes pendientes de regularizar
+              en la pantalla de Salida: se ven, se explican y no se tildan. */}
+          {!loading && results.map((p) => {
+            const deBaja = p.active === false;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                disabled={deBaja}
+                title={deBaja ? "Material dado de baja: no admite movimientos" : undefined}
+                onMouseDown={() => !deBaja && handleSelect(p)}
+                style={{
+                  display: "block", width: "100%", textAlign: "left", padding: "9px 14px",
+                  background: "none", border: "none",
+                  cursor: deBaja ? "not-allowed" : "pointer",
+                  opacity: deBaja ? 0.55 : 1,
+                  borderBottom: "1px solid var(--border)",
+                  transition: "background .12s",
+                }}
+                onMouseEnter={e => { if (!deBaja) e.currentTarget.style.background = "var(--primary-light)"; }}
+                onMouseLeave={e => (e.currentTarget.style.background = "none")}
+              >
+                <span style={{ fontWeight: 700, fontSize: 13 }}>{p.code}</span>
+                <span style={{ color: "var(--muted)", fontSize: 12, marginLeft: 8 }}>{p.description}</span>
+                {deBaja && (
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "var(--danger)", marginLeft: 8, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                    dado de baja
+                  </span>
+                )}
+                {p.unitOfMeasure && (
+                  <span style={{ float: "right", fontSize: 11, color: "var(--primary)", fontWeight: 600 }}>{p.unitOfMeasure}</span>
+                )}
+              </button>
+            );
+          })}
           {!loading && results.length === 0 && (
             <div style={{ padding: "10px 14px", color: "var(--muted)", fontSize: 13 }}>Sin resultados</div>
           )}

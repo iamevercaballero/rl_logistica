@@ -1,6 +1,37 @@
 import { Entity, PrimaryGeneratedColumn, Column, Index } from 'typeorm';
 import { numericTransformer } from '../../../common/numeric.transformer';
 
+export const palletStatuses = [
+  'AVAILABLE',
+  'PARTIAL',
+  'BLOCKED',
+  'DAMAGED',
+  'IN_TRANSIT',
+  'EMPTY',
+  'EXITED',
+] as const;
+
+export type PalletStatus = (typeof palletStatuses)[number];
+
+/**
+ * Estados de un palet que todavía es stock operable: se puede despachar y se
+ * puede mover.
+ *
+ * `PARTIAL` cuenta. Un palet abierto —al que ya se le sacó algo— sigue
+ * teniendo saldo en el piso; excluirlo deja stock que el sistema muestra pero
+ * no deja tocar.
+ *
+ * Existe como constante porque el criterio estaba escrito a mano en cada
+ * consulta y se desincronizó: el motor de salida aceptaba `AVAILABLE` y
+ * `PARTIAL`, pero la pantalla que ofrece los lotes y el selector de
+ * transferencias pedían sólo `AVAILABLE`. Resultado: tras la primera salida
+ * parcial, el palet desaparecía de ambas pantallas y su saldo quedaba
+ * inalcanzable, aunque el motor lo habría despachado sin problema. Se nota
+ * sobre todo con el stock inicial, donde hay un solo palet por lote y la
+ * primera salida parcial deja el lote entero sin nada seleccionable.
+ */
+export const OPERABLE_PALLET_STATUSES = ['AVAILABLE', 'PARTIAL'] as const;
+
 @Index('idx_pallet_current_location', ['currentLocationId'])
 @Index('idx_pallet_lot', ['lotId'])
 @Index('idx_pallet_status', ['status'])

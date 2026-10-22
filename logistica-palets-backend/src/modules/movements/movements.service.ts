@@ -28,7 +28,7 @@ import { User } from '../users/entities/user.entity';
 import { Stock } from '../stocks/entities/stock.entity';
 import { Lot } from '../lots/entities/lot.entity';
 import { normalizeLotCode } from '../lots/lots.service';
-import { Pallet } from '../pallets/entities/pallet.entity';
+import { OPERABLE_PALLET_STATUSES, Pallet } from '../pallets/entities/pallet.entity';
 import { DeepPartial } from 'typeorm/common/DeepPartial';
 import { EventsGateway } from '../events/events.gateway';
 import { CacheService } from '../cache/cache.service';
@@ -2670,9 +2670,9 @@ export class MovementsService {
       // El join a locations es incondicional: un pallet sin ubicación no
       // pertenece a ningún depósito y no puede entrar en una salida acotada.
       .innerJoin('locations', 'loc', 'loc.id = pallet."currentLocationId"')
-      // AVAILABLE y PARTIAL: el auto-FEFO también consume de pallets ya abiertos
-      // (los más viejos), no solo de los intactos. Excluye BLOCKED/DAMAGED/EXITED/EMPTY.
-      .where('pallet.status IN (:...statuses)', { statuses: ['AVAILABLE', 'PARTIAL'] })
+      // El auto-FEFO también consume de pallets ya abiertos (los más viejos), no
+      // solo de los intactos. Excluye BLOCKED/DAMAGED/EXITED/EMPTY.
+      .where('pallet.status IN (:...statuses)', { statuses: [...OPERABLE_PALLET_STATUSES] })
       .andWhere('pallet.quantity > 0')
       .andWhere('lot."productId" = :productId', { productId })
       .andWhere("lot.status != 'PENDING_REGULARIZATION'")

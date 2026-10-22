@@ -431,7 +431,10 @@ export default function MovementsPage() {
   // depósito de la operación es el activo, no hay estado que pueda divergir").
   const transferProductPalletsQ = useQuery({
     queryKey: ["pallets", "by-product", transferProduct?.id, activeWarehouseId],
-    queryFn: () => listPallets({ productId: transferProduct!.id, status: "AVAILABLE", warehouseId: activeWarehouseId }),
+    // AVAILABLE y PARTIAL: un palet ya abierto sigue estando en el piso y se
+    // puede mover. Con sólo AVAILABLE, después de una salida parcial dejaba de
+    // aparecer acá y su saldo quedaba sin forma de reubicarse.
+    queryFn: () => listPallets({ productId: transferProduct!.id, status: "AVAILABLE,PARTIAL", warehouseId: activeWarehouseId }),
     enabled: isTransfer && !!transferProduct && !!activeWarehouseId,
     staleTime: 10_000,
   });

@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Lot, LOT_STATUS_ARCHIVED } from './entities/lot.entity';
 import { Product } from '../products/entities/product.entity';
-import { Pallet } from '../pallets/entities/pallet.entity';
+import { OPERABLE_PALLET_STATUSES, Pallet } from '../pallets/entities/pallet.entity';
 import { formatQuantity, quantitiesEqual, quantityDelta, roundQuantity } from '../../common/quantity';
 import { CreateLotDto } from './dto/create-lot.dto';
 import { UpdateLotDto } from './dto/update-lot.dto';
@@ -228,7 +228,11 @@ export class LotsService {
     const palletsQb = this.palletRepo
       .createQueryBuilder('p')
       .where('p.lotId IN (:...lotIds)', { lotIds })
-      .andWhere("p.status = 'AVAILABLE'")
+      // Mismo criterio que `autoFefoExit`: un palet abierto sigue siendo stock
+      // despachable. Con sólo AVAILABLE, la primera salida parcial lo sacaba de
+      // esta pantalla y su saldo quedaba inalcanzable.
+      .andWhere('p.status IN (:...operables)', { operables: [...OPERABLE_PALLET_STATUSES] })
+      .andWhere('p.quantity > 0')
       .orderBy('p.code', 'ASC');
 
     if (locationId) {

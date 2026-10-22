@@ -143,8 +143,12 @@ export class PalletsService {
       conditions.push(`p."lotId"::text = $${params.length}`);
     }
     if (status) {
-      params.push(status);
-      conditions.push(`p.status = $${params.length}`);
+      // Se admite una lista separada por comas ("AVAILABLE,PARTIAL"): el
+      // selector de transferencias necesita los dos estados operables, y antes
+      // pedía sólo AVAILABLE — un palet ya abierto no se podía mover.
+      const estados = status.split(',').map((e) => e.trim().toUpperCase()).filter(Boolean);
+      params.push(estados);
+      conditions.push(`p.status = ANY($${params.length}::text[])`);
     }
     if (productId) {
       params.push(productId);

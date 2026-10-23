@@ -36,15 +36,20 @@ export class DestinationsController {
     return this.service.create(dto);
   }
 
+  /*
+   * Mismo criterio que proveedores: editar y dar de baja el catálogo es de
+   * supervisión y la plantilla de OPERATOR no lo trae, pero el rol deja pasar
+   * para que otorgarlo por persona sirva de algo.
+   */
   @Patch(':id')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   @RequirePermission('destinations', 'update')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateDestinationDto) {
     return this.service.update(id, dto);
   }
 
   @Patch(':id/deactivate')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   @RequirePermission('destinations', 'remove')
   deactivate(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.deactivate(id);

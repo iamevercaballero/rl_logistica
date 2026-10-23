@@ -71,23 +71,30 @@ export class WarehousesController {
     return this.service.findOne(id);
   }
 
+  /*
+   * El rol deja pasar a OPERATOR y decide el permiso fino. Acá además había una
+   * contradicción: `ROLE_PERMISSIONS_SEED` ya le da a OPERATOR
+   * `warehouses:create` y `warehouses:update` por defecto, así que la pestaña
+   * Permisos los mostraba TILDADOS y al usarlos daba 403 — el `@Roles` los
+   * cortaba antes. Ahora la plantilla y la ruta dicen lo mismo.
+   */
   @Post()
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   @RequirePermission('warehouses', 'create')
   create(@Body() dto: CreateWarehouseDto) {
     return this.service.create(dto);
   }
 
   @Patch(':id')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   @RequirePermission('warehouses', 'update')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateWarehouseDto) {
     return this.service.update(id, dto);
   }
 
-  /** Baja de depósito: operación de catálogo maestro, no de piso. */
+  /** Baja de depósito: operación de catálogo maestro, no de piso — la plantilla de OPERATOR no la trae. */
   @Delete(':id')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   @RequirePermission('warehouses', 'remove')
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.remove(id);

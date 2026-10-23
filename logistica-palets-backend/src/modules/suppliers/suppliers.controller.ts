@@ -36,8 +36,13 @@ export class SuppliersController {
     return this.service.create(dto);
   }
 
+  /*
+   * Editar y dar de baja el catálogo es de supervisión, así que la plantilla de
+   * OPERATOR no lo trae. El rol deja pasar igual para que, si un admin se lo
+   * otorga a una persona en la pestaña Permisos, el tilde realmente funcione.
+   */
   @Patch(':id')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   @RequirePermission('suppliers', 'update')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateSupplierDto) {
     return this.service.update(id, dto);
@@ -45,7 +50,7 @@ export class SuppliersController {
 
   /** Baja lógica — el histórico de remitos conserva el nombre copiado. */
   @Patch(':id/deactivate')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   @RequirePermission('suppliers', 'remove')
   deactivate(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.deactivate(id);

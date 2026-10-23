@@ -97,9 +97,13 @@ export class ProductsController {
     return this.productsService.update(id, dto);
   }
 
-  /** Baja de material: operación de catálogo maestro, no de piso. */
+  /**
+   * Baja de material: operación de catálogo maestro, no de piso. Por eso la
+   * plantilla de OPERATOR no la trae — pero el rol deja pasar para que
+   * otorgarla a una persona en la pestaña Permisos sirva de algo.
+   */
   @Delete(':id')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   @RequirePermission('products', 'remove')
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.productsService.remove(id);

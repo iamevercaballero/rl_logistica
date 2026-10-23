@@ -41,9 +41,15 @@ export class AlertsController {
     return this.svc.getActiveAlerts(warehouseIds);
   }
 
+  /*
+   * La configuración de reglas es de supervisión y la plantilla de OPERATOR no
+   * trae `alerts:create/update/remove`. El rol deja pasar para que otorgarlos
+   * por persona funcione — y `GET rules` también, porque si no, alguien con el
+   * permiso de editar reglas no podría ni verlas (la pantalla quedaba en 403).
+   */
   /** List all configured alert rules. */
   @Get('rules')
-  @Roles('ADMIN', 'MANAGER', 'AUDITOR')
+  @Roles('ADMIN', 'MANAGER', 'AUDITOR', 'OPERATOR')
   @RequirePermission('alerts', 'read')
   listRules() {
     return this.svc.listRules();
@@ -51,7 +57,7 @@ export class AlertsController {
 
   /** Create a new stock-level alert rule. */
   @Post('rules')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   @RequirePermission('alerts', 'create')
   createRule(@Body() dto: CreateAlertRuleDto) {
     return this.svc.createRule(dto);
@@ -59,7 +65,7 @@ export class AlertsController {
 
   /** Update an existing rule (enable/disable, change threshold). */
   @Patch('rules/:id')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   @RequirePermission('alerts', 'update')
   updateRule(@Param('id', ParseUUIDPipe) id: string, @Body() dto: Partial<CreateAlertRuleDto>) {
     return this.svc.updateRule(id, dto);
@@ -67,7 +73,7 @@ export class AlertsController {
 
   /** Delete a rule permanently. */
   @Delete('rules/:id')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   @RequirePermission('alerts', 'remove')
   removeRule(@Param('id', ParseUUIDPipe) id: string) {
     return this.svc.removeRule(id);

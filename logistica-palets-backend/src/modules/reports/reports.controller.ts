@@ -78,8 +78,13 @@ export class ReportsController {
     return this.service.dailyStock(query, await this.scopeOf(req, query.warehouseId));
   }
 
+  /**
+   * Carga del corte de stock de SAP — la única escritura del módulo. La
+   * plantilla de OPERATOR no trae `reports:create`; el rol deja pasar para que
+   * otorgarlo por persona funcione.
+   */
   @Post('sap-stock')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   @RequirePermission('reports', 'create')
   async upsertSapStock(@Body() dto: UpsertSapStockDto, @Req() req: AuthedRequest) {
     // Escritura: el depósito del snapshot debe ser uno al que el usuario accede.

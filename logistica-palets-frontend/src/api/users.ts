@@ -93,6 +93,15 @@ export type UserPermissionsResponse = {
   roleDefaults: EffectivePermissions;
   overrides: UserPermissionOverride[];
   effective: EffectivePermissions;
+  /**
+   * Techo del rol: qué `module:action` puede llegar a ejercer alguien con ese
+   * rol, según los `@Roles()` reales de las rutas del backend. Los que no están
+   * acá no sirven de nada aunque se tilden — la pantalla los deshabilita.
+   *
+   * `undefined` = backend viejo que todavía no lo manda (ventana de despliegue):
+   * en ese caso se asume que todo es alcanzable, que es como se comportaba antes.
+   */
+  reachable?: EffectivePermissions;
 };
 
 export type PermissionOverrideInput = { module: string; action: string; effect: PermissionEffect };

@@ -74,6 +74,20 @@ function PermissionsForm({ userId, role, data, readOnly }: {
   const [checked, setChecked] = useState<CheckedMap>(() => toCheckedMap(data.effective));
   const [touched, setTouched] = useState(false);
 
+  /**
+   * ¿Tildar esto sirve de algo para este rol?
+   *
+   * El backend aplica dos candados: la lista blanca de roles de la ruta
+   * (`@Roles`) y después el permiso fino. El grueso manda, así que un permiso
+   * otorgado sobre una ruta que no admite el rol no hace nada: el usuario
+   * recibe "No tenés permisos para realizar esta acción" con el permiso puesto.
+   * Esta pantalla ofrecía esos tildes igual. Ahora los muestra deshabilitados,
+   * con el techo que informa el propio backend (`reachable`) — no una lista
+   * paralela acá, que es lo que se había desincronizado.
+   */
+  const alcanzable = (module: string, action: PermissionAction) =>
+    !data.reachable || (data.reachable[module] ?? []).includes(action);
+
   const saveMut = useMutation({
     mutationFn: () => {
       const overrides: PermissionOverrideInput[] = [];
@@ -111,12 +125,15 @@ function PermissionsForm({ userId, role, data, readOnly }: {
   });
 
   function toggle(module: string, action: PermissionAction) {
-    if (readOnly) return;
+    if (readOnly || !alcanzable(module, action)) return;
     setChecked((prev) => ({ ...prev, [key(module, action)]: !prev[key(module, action)] }));
     setTouched(true);
   }
 
   const hasOverrides = data.overrides.length > 0;
+  const hayNoAplicables = PERMISSION_CATEGORIES.some((c) =>
+    c.modules.some((m) => m.actions.some((a) => !alcanzable(m.key, a))),
+  );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -147,6 +164,14 @@ function PermissionsForm({ userId, role, data, readOnly }: {
         </p>
       )}
 
+      {hayNoAplicables && (
+        <p style={{ margin: 0, fontSize: 13, color: "var(--muted)", background: "var(--panel-hi)", padding: "10px 12px", borderRadius: 8 }}>
+          Los permisos <span style={{ textDecoration: "line-through", opacity: 0.6 }}>tachados</span> no están
+          disponibles para el rol <strong>{role}</strong>: esa operación está reservada a otros roles, así que
+          otorgarlos acá no cambiaría nada. Para habilitarlos hay que cambiarle el rol al usuario.
+        </p>
+      )}
+
       {PERMISSION_CATEGORIES.map((category) => (
         <div key={category.key}>
           <h4 style={{ fontSize: 13, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: "var(--muted)", margin: "0 0 10px" }}>
@@ -164,18 +189,37 @@ function PermissionsForm({ userId, role, data, readOnly }: {
                     {mod.actions.map((action) => {
                       const isChecked = !!checked[key(mod.key, action)];
                       const isOverride = isChecked !== roleHas.has(action);
+                      const noAplica = !alcanzable(mod.key, action);
+                      const bloqueado = readOnly || noAplica;
                       return (
-                        <label key={action} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, cursor: readOnly ? "default" : "pointer" }}>
+                        <label
+                          key={action}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 5,
+                            fontSize: 12.5,
+                            cursor: bloqueado ? "default" : "pointer",
+                            opacity: noAplica ? 0.45 : 1,
+                          }}
+                          title={noAplica ? `El rol ${role} no tiene acceso a esta operación: tildarlo no cambiaría nada.` : undefined}
+                        >
                           <input
                             type="checkbox"
                             checked={isChecked}
                             onChange={() => toggle(mod.key, action)}
-                            disabled={readOnly}
+                            disabled={bloqueado}
                           />
-                          <span style={{ color: isOverride ? "var(--primary-text)" : undefined, fontWeight: isOverride ? 700 : 400 }}>
+                          <span
+                            style={{
+                              color: isOverride && !noAplica ? "var(--primary-text)" : undefined,
+                              fontWeight: isOverride && !noAplica ? 700 : 400,
+                              textDecoration: noAplica ? "line-through" : undefined,
+                            }}
+                          >
                             {ACTION_LABELS[action]}
                           </span>
-                          {isOverride && <span title="Distinto del permiso por defecto del rol" style={{ color: "var(--primary)" }}>●</span>}
+                          {isOverride && !noAplica && <span title="Distinto del permiso por defecto del rol" style={{ color: "var(--primary)" }}>●</span>}
                         </label>
                       );
                     })}

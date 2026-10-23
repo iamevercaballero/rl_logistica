@@ -79,22 +79,32 @@ export class LotsController {
     return this.service.findOne(id);
   }
 
+  /*
+   * Alta, edición y baja de lotes: el rol deja pasar a OPERATOR y decide el
+   * permiso fino. Por defecto la plantilla de OPERATOR no trae `lots:*` de
+   * escritura, así que esto no habilita a nadie por sí solo — habilita que
+   * tildarlo en la pestaña Permisos sirva para algo. Antes el `@Roles` lo
+   * cortaba antes de mirar el permiso y el tilde quedaba muerto.
+   *
+   * Las variantes de mantenimiento (`:id/reconcile`, `reconcile-all`) siguen
+   * siendo ADMIN/MANAGER: recalculan stock en masa, no son edición de ficha.
+   */
   @Post()
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   @RequirePermission('lots', 'create')
   create(@Body() dto: CreateLotDto) {
     return this.service.create(dto);
   }
 
   @Patch(':id')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   @RequirePermission('lots', 'update')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateLotDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(':id')
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN', 'MANAGER', 'OPERATOR')
   @RequirePermission('lots', 'remove')
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.remove(id);

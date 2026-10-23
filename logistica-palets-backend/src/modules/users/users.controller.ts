@@ -9,6 +9,7 @@ import type { UserRole } from './entities/user.entity';
 import { WarehouseAccessService } from '../warehouses/warehouse-access.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import { SetUserPermissionsDto } from '../permissions/dto/set-user-permission.dto';
+import { RoleCeilingService } from '../permissions/role-ceiling.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles/roles.guard';
 import { Roles } from '../auth/roles/roles.decorator';
@@ -23,6 +24,7 @@ export class UsersController {
   constructor(
     private readonly service: UsersService,
     private readonly warehouseAccess: WarehouseAccessService,
+    private readonly roleCeiling: RoleCeilingService,
     private readonly permissions: PermissionsService,
   ) {}
 
@@ -65,7 +67,14 @@ export class UsersController {
 
   // ── Permisos ───────────────────────────────────────────────────────────────
 
-  /** Plantilla del rol, overrides propios y permisos efectivos — para la pestaña Permisos. */
+  /**
+   * Plantilla del rol, overrides propios y permisos efectivos — para la pestaña Permisos.
+   *
+   * `reachable` es el techo del rol: qué `module:action` puede llegar a ejercer
+   * según los `@Roles()` de las rutas. Va en la respuesta para que la pantalla
+   * deshabilite los tildes que no harían nada en vez de ofrecerlos y dejar que
+   * el usuario choque con un 403 sin explicación (ver `RoleCeilingService`).
+   */
   @Get(':id/permissions')
   @Roles('ADMIN', 'MANAGER')
   @RequirePermission('users', 'read')
@@ -77,7 +86,7 @@ export class UsersController {
       this.permissions.getUserOverrides(id),
       this.permissions.getEffectivePermissions(id, role),
     ]);
-    return { role, roleDefaults, overrides, effective };
+    return { role, roleDefaults, overrides, effective, reachable: this.roleCeiling.forRole(role) };
   }
 
   /**

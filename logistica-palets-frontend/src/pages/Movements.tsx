@@ -37,7 +37,7 @@ import { getFriendlyApiError } from "../utils/apiError";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { useClaveIdempotencia } from "../api/idempotency";
 import { useAuth } from "../auth/AuthContext";
-import { canCreate } from "../auth/rbac";
+import { can } from "../auth/permissions";
 import SearchableSelect from "../design-system/SearchableSelect";
 import ExpandableText from "../design-system/ExpandableText";
 import DocumentPreviewModal from "../components/DocumentPreviewModal";
@@ -280,7 +280,7 @@ export default function MovementsPage() {
 
   // Permisos: OPERATOR/MANAGER/ADMIN operan; AUDITOR es solo lectura (ve historial).
   const { user } = useAuth();
-  const canOperate = user ? canCreate("movements", user.role) : false;
+  const canOperate = can(user, "movements", "create");
   /** Solo supervisión puede poner el remito a nombre de otra persona. */
   const canReassignEncargado = user?.role === "ADMIN" || user?.role === "MANAGER";
 

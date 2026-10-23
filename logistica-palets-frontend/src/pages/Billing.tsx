@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../auth/AuthContext";
-import { canCreate } from "../auth/rbac";
+import { can } from "../auth/permissions";
 import type {
   AfectacionIVA, CondicionPago, CreateFacturaPayload, CreateItemPayload,
   EstadoFactura, Factura, TipoDE,
@@ -74,8 +74,7 @@ export default function BillingPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
-  const role = user?.role ?? "AUDITOR";
-  const allowCreate = canCreate("billing", role);
+  const allowCreate = can(user, "billing", "create");
 
   const [tab, setTab] = useState<Tab>("facturas");
 

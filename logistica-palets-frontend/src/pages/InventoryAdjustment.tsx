@@ -37,7 +37,7 @@ import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { useClaveIdempotencia } from "../api/idempotency";
 import { useAuth } from "../auth/AuthContext";
-import { canApprove } from "../auth/rbac";
+import { can } from "../auth/permissions";
 
 // ── Tipos locales ────────────────────────────────────────────────────────────
 
@@ -98,7 +98,7 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
   const { toast } = useToast();
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const userCanApprove = user ? canApprove(user.role) : false;
+  const userCanApprove = can(user, "adjustments", "approve");
 
   // Cabecera de la sesión de carga (una vez por tanda de conteo)
   const [reason, setReason] = useState("DIFERENCIA_INVENTARIO");

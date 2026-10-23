@@ -1,13 +1,19 @@
 export type Role = "ADMIN" | "MANAGER" | "OPERATOR" | "AUDITOR";
 export type ModuleKey =
+  | "dashboard"
   | "products"
   | "lots"
   | "warehouses"
   | "locations"
   | "pallets"
   | "movements"
+  | "adjustments"
   | "bitacora"
   | "transports"
+  | "suppliers"
+  | "destinations"
+  | "attachments"
+  | "alerts"
   | "reports"
   | "billing"
   | "users";
@@ -22,6 +28,12 @@ type ModulePermissions = {
 };
 
 export const PERMS: Record<ModuleKey, ModulePermissions> = {
+  dashboard: {
+    read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
+    create: [],
+    update: [],
+    remove: [],
+  },
   products: {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
     create: ["ADMIN", "MANAGER", "OPERATOR"],
@@ -67,11 +79,46 @@ export const PERMS: Record<ModuleKey, ModulePermissions> = {
     remove: [],
     approve: ["ADMIN", "MANAGER"],
   },
+  adjustments: {
+    read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
+    create: ["ADMIN", "MANAGER", "OPERATOR"],
+    update: ["ADMIN", "MANAGER", "OPERATOR"],
+    remove: [],
+    // Segregación de funciones: el operador carga la diferencia, no la aprueba.
+    approve: ["ADMIN", "MANAGER"],
+  },
   bitacora: {
     read:   ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
     create: [],
     update: [],
     remove: [],
+  },
+  suppliers: {
+    read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
+    // El operador da de alta un proveedor sobre la marcha al cargar una entrada;
+    // editarlo o darlo de baja es de supervisión.
+    create: ["ADMIN", "MANAGER", "OPERATOR"],
+    update: ["ADMIN", "MANAGER"],
+    remove: ["ADMIN", "MANAGER"],
+  },
+  destinations: {
+    read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
+    create: ["ADMIN", "MANAGER", "OPERATOR"],
+    update: ["ADMIN", "MANAGER"],
+    remove: ["ADMIN", "MANAGER"],
+  },
+  attachments: {
+    read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
+    // Subir es de piso, borrar no.
+    create: ["ADMIN", "MANAGER", "OPERATOR"],
+    update: [],
+    remove: ["ADMIN", "MANAGER"],
+  },
+  alerts: {
+    read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
+    create: ["ADMIN", "MANAGER"],
+    update: ["ADMIN", "MANAGER"],
+    remove: ["ADMIN", "MANAGER"],
   },
   transports: {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
@@ -81,7 +128,8 @@ export const PERMS: Record<ModuleKey, ModulePermissions> = {
   },
   reports: {
     read: ["ADMIN", "MANAGER", "OPERATOR", "AUDITOR"],
-    create: [],
+    // La carga del corte de stock de SAP — la única escritura del módulo.
+    create: ["ADMIN", "MANAGER"],
     update: [],
     remove: [],
   },
@@ -103,6 +151,16 @@ export const PERMS: Record<ModuleKey, ModulePermissions> = {
   },
 };
 
+/*
+ * Estos helpers miran SOLO el rol: no conocen los permisos puntuales que un
+ * admin otorga desde la pestaña Permisos. Las pantallas tienen que usar
+ * `can(user, module, action)` de `permissions.ts`, que parte de los permisos
+ * efectivos de `/auth/me` y cae acá únicamente cuando todavía no llegaron.
+ *
+ * Quedó claro con un caso real: a un operador se le tildó "Lotes → Editar", el
+ * backend ya lo aceptaba, y el botón de editar seguía sin aparecer porque la
+ * pantalla preguntaba `canUpdate("lots", role)` — que ignora el permiso.
+ */
 export function canRead(module: ModuleKey, role: Role) {
   return PERMS[module].read.includes(role);
 }

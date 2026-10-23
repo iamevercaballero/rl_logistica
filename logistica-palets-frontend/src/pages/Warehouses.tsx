@@ -22,7 +22,7 @@ import {
 import { listPallets } from "../api/pallets";
 import { softDeleteMessage } from "../api/softDelete";
 import { useAuth } from "../auth/AuthContext";
-import { canCreate, canDelete } from "../auth/rbac";
+import { can } from "../auth/permissions";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { formatDateOnly } from "../utils/dateFormat";
@@ -43,13 +43,14 @@ function cellStyle(l: LayoutLocation): React.CSSProperties {
 
 export default function WarehousesPage() {
   const { user } = useAuth();
-  const role = user?.role;
-  const allowCreate = role ? canCreate("warehouses", role) : false;
-  const allowDelete = role ? canDelete("warehouses", role) : false;
+  // Permisos efectivos (rol + excepciones de la pestaña Permisos), no el rol pelado.
+  const allowCreate = can(user, "warehouses", "create");
+  const allowDelete = can(user, "warehouses", "remove");
   // Administrar estructura (generar, crear, desactivar, eliminar ubicaciones)
-  // es ADMIN/MANAGER: el localizador de stock no la expone.
-  const allowStructure = role ? canCreate("locations", role) : false;
-  const allowStructureDelete = role ? canDelete("locations", role) : false;
+  // vive acá, no en el localizador de stock. Por defecto es de supervisión,
+  // pero se puede otorgar por persona desde la pestaña Permisos.
+  const allowStructure = can(user, "locations", "create");
+  const allowStructureDelete = can(user, "locations", "remove");
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const nameId = useId();

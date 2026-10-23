@@ -13,7 +13,7 @@ import {
   type PalletHistoryEvent,
 } from "../api/pallets";
 import { useAuth } from "../auth/AuthContext";
-import { canCreate, canDelete } from "../auth/rbac";
+import { can } from "../auth/permissions";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { fmtDateLong, fmtDateTimeLong } from "../utils/dateFormat";
@@ -581,9 +581,9 @@ function InfoRow({ label, value }: { label: string; value: ReactNode }) {
 
 export default function PalletsPage() {
   const { user } = useAuth();
-  const role = user?.role;
-  const allowTransfer = role ? canCreate("pallets", role) : false;
-  const allowReconcile = role ? canDelete("pallets", role) : false; // ADMIN/MANAGER
+  // Permisos efectivos (rol + excepciones de la pestaña Permisos), no el rol pelado.
+  const allowTransfer = can(user, "pallets", "create");
+  const allowReconcile = can(user, "pallets", "remove"); // por defecto ADMIN/MANAGER
   const { toast } = useToast();
   const queryClient = useQueryClient();
 

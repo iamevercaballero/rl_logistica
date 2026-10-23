@@ -22,7 +22,7 @@ import {
 } from "../api/attachments";
 import AttachmentUploader from "../components/AttachmentUploader";
 import { useAuth } from "../auth/AuthContext";
-import { canCreate, canDelete } from "../auth/rbac";
+import { can } from "../auth/permissions";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { formatParaguayPhone, isValidParaguayPhone } from "../utils/phone";
@@ -69,9 +69,9 @@ type Tab = "ficha" | "choferes" | "docs" | "historial" | "inspecciones";
 
 export default function TransportsPage() {
   const { user } = useAuth();
-  const role = user?.role;
-  const allowCreate = role ? canCreate("transports", role) : false;
-  const allowDelete = role ? canDelete("transports", role) : false;
+  // Permisos efectivos (rol + excepciones de la pestaña Permisos), no el rol pelado.
+  const allowCreate = can(user, "transports", "create");
+  const allowDelete = can(user, "transports", "remove");
   const allowEdit = allowCreate;
   const { toast } = useToast();
   const queryClient = useQueryClient();

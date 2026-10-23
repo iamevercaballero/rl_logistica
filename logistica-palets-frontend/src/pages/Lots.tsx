@@ -6,7 +6,7 @@ import { getAllPalletsByLot, type LotPallet } from "../api/pallets";
 import { listLocations } from "../api/locations";
 import { useActiveWarehouseId } from "../contexts/WarehouseContext";
 import { useAuth } from "../auth/AuthContext";
-import { canDelete, canUpdate } from "../auth/rbac";
+import { can } from "../auth/permissions";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { Paginador } from "../components/Paginador";
@@ -207,9 +207,10 @@ type EditForm = {
 
 export default function LotsPage() {
   const { user } = useAuth();
-  const role = user?.role;
-  const allowEdit = role ? canUpdate("lots", role) : false;
-  const allowDelete = role ? canDelete("lots", role) : false;
+  // Permisos efectivos, no el rol pelado: así un operador al que le tildaron
+  // "Lotes → Editar" ve el botón (ver `auth/permissions.ts`).
+  const allowEdit = can(user, "lots", "update");
+  const allowDelete = can(user, "lots", "remove");
   const { toast } = useToast();
   const queryClient = useQueryClient();
 

@@ -15,7 +15,7 @@ import LocationPicker from "../components/LocationPicker";
 import WarehouseMap, { MapLegend } from "../components/WarehouseMap";
 import { fmtQty } from "../utils/number";
 import { useAuth } from "../auth/AuthContext";
-import { canUpdate } from "../auth/rbac";
+import { can } from "../auth/permissions";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { daysUntil, fmtDate, fmtDateTime } from "../utils/dateFormat";
@@ -80,7 +80,8 @@ function LocationDrawer({
   onTransferred: () => void;
 }) {
   const { user } = useAuth();
-  const allowTransfer = user?.role ? canUpdate("pallets", user.role) : false;
+  // Permisos efectivos (rol + excepciones de la pestaña Permisos), no el rol pelado.
+  const allowTransfer = can(user, "pallets", "update");
   const { toast } = useToast();
   const queryClient = useQueryClient();
 

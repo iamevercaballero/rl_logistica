@@ -10,7 +10,7 @@ import {
   type Product,
 } from "../api/products";
 import { useAuth } from "../auth/AuthContext";
-import { canCreate, canDelete, canUpdate } from "../auth/rbac";
+import { can } from "../auth/permissions";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { Paginador } from "../components/Paginador";
@@ -41,10 +41,10 @@ const UNITS_OF_MEASURE = [
 
 export default function ProductsPage() {
   const { user } = useAuth();
-  const role = user?.role;
-  const allowCreate = role ? canCreate("products", role) : false;
-  const allowUpdate = role ? canUpdate("products", role) : false;
-  const allowDelete = role ? canDelete("products", role) : false;
+  // Permisos efectivos (rol + excepciones de la pestaña Permisos), no el rol pelado.
+  const allowCreate = can(user, "products", "create");
+  const allowUpdate = can(user, "products", "update");
+  const allowDelete = can(user, "products", "remove");
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const codeId = useId();

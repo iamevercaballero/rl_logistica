@@ -11,7 +11,7 @@ import { useToast } from "../design-system/toast";
 import QuantityInput from "../design-system/QuantityInput";
 import { getFriendlyApiError } from "../utils/apiError";
 import { formatDateTimePY } from "../utils/dateFormat";
-import { fmtQty, parseQtyInput, quantitiesEqual, quantityDelta, roundQty, sumQuantities, toQtyPayload } from "../utils/quantity";
+import { fmtQty, parseQtyInput, quantitiesEqual, quantityDelta, roundQty, sumQuantities, toQtyPayload, toWeightPayload, WEIGHT_DECIMALS, PESO_LABEL } from "../utils/quantity";
 
 interface Props {
   movement: Movement;
@@ -219,7 +219,8 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
             setFormError(`Indicá el peso del pallet ${p.code} o dejá el valor anterior.`);
             return;
           }
-          const w = toQtyPayload(rawWeight);
+          // Con la escala del peso (`numeric(10,2)`), no con la del inventario.
+          const w = toWeightPayload(rawWeight);
           if (w === null || w < 0) {
             setFormError(`Peso inválido en el pallet ${p.code}.`);
             return;
@@ -722,6 +723,9 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                                   ) : (
                                     <QuantityInput
                                       allowZero
+                                      decimals={WEIGHT_DECIMALS}
+                                      label={PESO_LABEL}
+                                      showError
                                       placeholder="—"
                                       value={edit.weights[p.id] ?? ""}
                                       onChange={(v) => updateLotWeight(l, p.id, v)}

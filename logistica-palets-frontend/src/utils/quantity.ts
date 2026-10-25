@@ -3,6 +3,19 @@ import { fmtQty, fmtQtyFixed } from "./number";
 /** Decimales de las columnas `numeric(14,3)` del inventario. */
 export const QUANTITY_DECIMALS = 3;
 
+/**
+ * Decimales de `pallets.weightKg` — `numeric(10,2)`, dos, no tres.
+ *
+ * El campo de peso reusa `QuantityInput`, que por defecto valida con la escala
+ * del inventario. Con tres decimales la pantalla lo daba por bueno, lo mandaba
+ * y el backend lo rechazaba con un mensaje en inglés que no decía qué arreglar
+ * ("weightKg must be a number conforming to the specified constraints"). Se
+ * notaba sobre todo tipeando el peso con la coma como separador de miles:
+ * "12,345" se lee como 12,345 kg —coma decimal, convención es-PY— y son tres
+ * decimales, así que reventaba; con punto ("12.345" → 12.345 kg) pasaba.
+ */
+export const WEIGHT_DECIMALS = 2;
+
 const FACTOR = 10 ** QUANTITY_DECIMALS;
 
 /** Mínimo positivo representable con 3 decimales. */
@@ -140,6 +153,44 @@ type QtyRule = {
   allowZero?: boolean;
   /** El campo es obligatorio: vacío es error (una vez que dejó de escribir). */
   required?: boolean;
+  /** Decimales admitidos. Por defecto la escala del inventario; el peso usa `WEIGHT_DECIMALS`. */
+  decimals?: number;
+  /** Textos de los mensajes. Por defecto los de cantidad; el peso pasa `PESO_LABEL`. */
+  label?: QtyLabel;
+};
+
+/**
+ * Los mensajes del campo, para que digan "El peso…" donde corresponde en vez
+ * de "La cantidad…". Van completos y no armados por pedazos: en castellano el
+ * adjetivo concuerda con el sustantivo ("inválida" / "inválido") y una
+ * plantilla con huecos termina escribiendo "El peso es inválida".
+ */
+export type QtyLabel = {
+  vacio: string;
+  invalido: string;
+  cero: string;
+  decimales: (n: number) => string;
+  min: (v: string) => string;
+  max: (v: string) => string;
+};
+
+const LABEL_CANTIDAD: QtyLabel = {
+  vacio: "Ingresá una cantidad.",
+  invalido: "Cantidad inválida.",
+  cero: "La cantidad debe ser mayor a cero.",
+  decimales: (n) => `Máximo ${n} ${n === 1 ? "decimal" : "decimales"}.`,
+  min: (v) => `La cantidad mínima es ${v}.`,
+  max: (v) => `La cantidad máxima es ${v}.`,
+};
+
+/** Mismos mensajes, redactados para el peso del palet. */
+export const PESO_LABEL: QtyLabel = {
+  vacio: "Ingresá el peso.",
+  invalido: "Peso inválido.",
+  cero: "El peso debe ser mayor a cero.",
+  decimales: (n) => `El peso admite hasta ${n} ${n === 1 ? "decimal" : "decimales"}.`,
+  min: (v) => `El peso mínimo es ${v}.`,
+  max: (v) => `El peso máximo es ${v}.`,
 };
 
 /**
@@ -147,18 +198,27 @@ type QtyRule = {
  * Tolerante: mientras `isIncompleteQtyInput` no exige nada.
  */
 export function qtyInputError(raw: string, rule: QtyRule = {}): string | null {
-  const { min = rule.allowZero ? 0 : MIN_QUANTITY, max, allowZero, required } = rule;
+  const {
+    min = rule.allowZero ? 0 : MIN_QUANTITY,
+    max,
+    allowZero,
+    required,
+    decimals = QUANTITY_DECIMALS,
+    label = LABEL_CANTIDAD,
+  } = rule;
 
-  if (isIncompleteQtyInput(raw)) return required && raw.trim() === "" ? "Ingresá una cantidad." : null;
+  if (isIncompleteQtyInput(raw)) return required && raw.trim() === "" ? label.vacio : null;
 
   const value = parseQtyInput(raw);
-  if (value === null) return "Cantidad inválida.";
+  if (value === null) return label.invalido;
 
-  if (countQtyDecimals(raw) > QUANTITY_DECIMALS) return `Máximo ${QUANTITY_DECIMALS} decimales.`;
+  // Antes que el resto: un exceso de decimales es lo que el backend rechaza, y
+  // decirlo acá evita que el operador lo descubra recién al confirmar.
+  if (countQtyDecimals(raw) > decimals) return label.decimales(decimals);
 
-  if (!allowZero && value === 0) return "La cantidad debe ser mayor a cero.";
-  if (value < min) return `La cantidad mínima es ${fmtQty(min)}.`;
-  if (max !== undefined && roundQty(value - max) > 0) return `La cantidad máxima es ${fmtQty(max)}.`;
+  if (!allowZero && value === 0) return label.cero;
+  if (value < min) return label.min(fmtQty(min));
+  if (max !== undefined && roundQty(value - max) > 0) return label.max(fmtQty(max));
 
   return null;
 }
@@ -167,6 +227,18 @@ export function qtyInputError(raw: string, rule: QtyRule = {}): string | null {
 export function toQtyPayload(raw: string | number | null | undefined): number | null {
   const value = parseQtyInput(raw);
   return value === null ? null : roundQty(value);
+}
+
+/**
+ * Peso listo para enviar: redondeado a `numeric(10,2)`, la escala real de la
+ * columna. Sin esto se enviaba con la escala del inventario (3 decimales) y el
+ * backend lo rechazaba.
+ */
+export function toWeightPayload(raw: string | number | null | undefined): number | null {
+  const value = parseQtyInput(raw);
+  if (value === null) return null;
+  const factor = 10 ** WEIGHT_DECIMALS;
+  return Math.round(value * factor) / factor;
 }
 
 /**

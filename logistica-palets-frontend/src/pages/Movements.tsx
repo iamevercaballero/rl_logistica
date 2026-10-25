@@ -45,7 +45,7 @@ import type { DocumentPreview, PreviewLine } from "./documentPreviewModel";
 import HybridSearchInput from "../design-system/HybridSearchInput";
 import QuantityInput from "../design-system/QuantityInput";
 import { daysUntil, formatDateOnly, formatDateTimePY, todayInputValue } from "../utils/dateFormat";
-import { distributeQty, fmtQty, parseQtyInput, quantityDelta, roundQty, sumQuantities, toQtyPayload } from "../utils/quantity";
+import { distributeQty, fmtQty, parseQtyInput, quantityDelta, roundQty, sumQuantities, toQtyPayload, toWeightPayload, WEIGHT_DECIMALS, PESO_LABEL } from "../utils/quantity";
 import { entryLotQuantity, responsibleFieldLabel, sapLotApplies, sapLotForProduct, showsExternalDocumentNumber } from "./movementFormModel";
 import {
   deselectPalletForExit,
@@ -1030,7 +1030,10 @@ export default function MovementsPage() {
           return g.palletLines.map((l) => ({
             ...base,
             quantity: toQtyPayload(l.qty) ?? 0,
-            weightKg: l.weightKg ? toQtyPayload(l.weightKg) ?? undefined : undefined,
+            // El peso va con SU escala (`numeric(10,2)`), no con la del
+            // inventario: redondearlo a 3 decimales lo hacía rebotar en el
+            // backend con un mensaje en inglés.
+            weightKg: l.weightKg ? toWeightPayload(l.weightKg) ?? undefined : undefined,
             locationId: l.locationId || undefined,
           }));
         }
@@ -3044,6 +3047,9 @@ export default function MovementsPage() {
                           <QuantityInput
                             id={`lot-weight-${group.id}`}
                             allowZero
+                            decimals={WEIGHT_DECIMALS}
+                            label={PESO_LABEL}
+                            showError
                             placeholder="Ej: 850"
                             value={group.bulkWeightKg}
                             onChange={(v) => updateGroup(group.id, "bulkWeightKg", v)}
@@ -3127,6 +3133,7 @@ export default function MovementsPage() {
                                   <td style={{ textAlign: "right" }}>
                                     <QuantityInput
                                       allowZero align="right" placeholder="—" value={line.weightKg}
+                                      decimals={WEIGHT_DECIMALS} label={PESO_LABEL} showError
                                       onChange={(v) => updatePalletLine(group.id, lineIdx, { weightKg: v })}
                                       style={{ fontSize: 12, padding: "3px 6px", width: 90 }}
                                       aria-label={`Peso del pallet ${lineIdx + 1} del lote ${group.lotCode}`}

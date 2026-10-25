@@ -17,6 +17,11 @@ export function NormalizeDecimal(): PropertyDecorator {
   return Transform(
     ({ value }) => {
       if (value === undefined || value === null || typeof value === 'number') return value;
+      // Campo que el operador dejó vacío: es "no lo cargó", no "cargó algo
+      // inválido". Sin esto llegaba como `''` y `@IsOptional` no lo saltaba, así
+      // que un peso vacío respondía "must not be greater than 99999999.99" —un
+      // mensaje que no tiene nada que ver con lo que pasó—.
+      if (typeof value === 'string' && value.trim() === '') return undefined;
       const parsed = parseQuantity(value);
       return parsed ?? value;
     },

@@ -7,6 +7,7 @@ import {
   QUANTITY_DECIMALS,
   qtyInputError,
   roundQty,
+  type QtyLabel,
 } from "../../utils/quantity";
 
 export type QuantityInputProps = {
@@ -22,6 +23,15 @@ export type QuantityInputProps = {
   allowZero?: boolean;
   /** El campo es obligatorio: vacío pasa a ser error al salir. */
   required?: boolean;
+  /**
+   * Decimales admitidos. Por defecto la escala del inventario
+   * (`numeric(14,3)`). El peso del palet es `numeric(10,2)` y tiene que pasar
+   * `WEIGHT_DECIMALS`: con el default, la pantalla daba por bueno un peso de
+   * tres decimales que el backend después rechazaba en inglés.
+   */
+  decimals?: number;
+  /** Textos de los mensajes de error. Por defecto los de cantidad; el peso pasa `PESO_LABEL`. */
+  label?: QtyLabel;
   disabled?: boolean;
   readOnly?: boolean;
   placeholder?: string;
@@ -66,6 +76,8 @@ const QuantityInput = forwardRef<HTMLInputElement, QuantityInputProps>(function 
     max,
     allowZero,
     required,
+    decimals = QUANTITY_DECIMALS,
+    label,
     disabled,
     readOnly,
     placeholder,
@@ -85,7 +97,7 @@ const QuantityInput = forwardRef<HTMLInputElement, QuantityInputProps>(function 
   const autoId = useId();
   const errorId = `${id ?? autoId}-error`;
 
-  const rule = { min, max, allowZero, required };
+  const rule = { min, max, allowZero, required, decimals, label };
   const ownError = readOnly || disabled ? null : qtyInputError(value, rule);
   const isInvalid = invalid || (ownError !== null && !isIncompleteQtyInput(value));
 
@@ -103,7 +115,7 @@ const QuantityInput = forwardRef<HTMLInputElement, QuantityInputProps>(function 
     // Sólo canoniza si parsea limpio y no excede la escala — un valor con más
     // decimales de la cuenta se deja como está para que el operador lo corrija
     // (canonizarlo lo redondearía en silencio).
-    if (parsed === null || countQtyDecimals(trimmed) > QUANTITY_DECIMALS) return;
+    if (parsed === null || countQtyDecimals(trimmed) > decimals) return;
     const canonical = fmtQty(roundQty(parsed));
     if (canonical !== value) onChange(canonical);
   };

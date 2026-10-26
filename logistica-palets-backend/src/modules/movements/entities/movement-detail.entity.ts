@@ -42,4 +42,16 @@ export class MovementDetail {
    */
   @Column({ type: 'int', nullable: true })
   dispatchedPallets?: number | null;
+
+  /**
+   * SALIDA: Documento Material SAP de ESTE lote.
+   *
+   * Vive acá y no sólo en el movimiento porque un movimiento es un producto
+   * entero: dos lotes del mismo material pueden salir contra documentos
+   * distintos. El movimiento conserva el valor como resumen —el común a todos
+   * sus lotes, o `null` si difieren— para que el buscador y los reportes de
+   * siempre sigan funcionando.
+   */
+  @Column({ type: 'varchar', length: 80, nullable: true })
+  documentoMaterial?: string | null;
 }

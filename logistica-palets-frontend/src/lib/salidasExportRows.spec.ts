@@ -85,3 +85,52 @@ describe("exportación de salidas", () => {
     expect(csv).not.toContain(`"'`);
   });
 });
+
+/**
+ * Documento Material por lote.
+ *
+ * El export escribe una fila por lote. Cuando los lotes de una salida van
+ * contra documentos distintos, el del movimiento queda en `null` —es el
+ * resumen, y sólo tiene valor si todos coinciden—, así que leer de ahí haría
+ * salir todas las filas como "Pendiente".
+ */
+describe("documento material por lote", () => {
+  const conLotes = (lotsDetail: Array<{ lotCode: string; documentoMaterial?: string | null }>, doc?: string | null) => ({
+    ...movement(doc),
+    lotsDetail: lotsDetail.map((l) => ({ pallets: 1, quantity: 10, sapLot: null, ...l })),
+  }) as Movement;
+
+  it("cada fila lleva el documento de su propio lote", () => {
+    const rows = buildSalidasExportRows([
+      conLotes([
+        { lotCode: "L-UNO", documentoMaterial: "4900111" },
+        { lotCode: "L-DOS", documentoMaterial: "4900222" },
+      ], null),
+    ]);
+
+    expect(rows.map((r) => [r.lote, r.documentoMaterial])).toEqual([
+      ["L-UNO", "4900111"],
+      ["L-DOS", "4900222"],
+    ]);
+  });
+
+  it("el lote al que le falta sale como pendiente, sin arrastrar al otro", () => {
+    const rows = buildSalidasExportRows([
+      conLotes([
+        { lotCode: "L-UNO", documentoMaterial: "4900111" },
+        { lotCode: "L-DOS", documentoMaterial: null },
+      ], null),
+    ]);
+
+    expect(rows[0].documentoMaterial).toBe("4900111");
+    expect(rows[1].documentoMaterial).toBe(DOCUMENTO_MATERIAL_PENDING);
+  });
+
+  it("un movimiento viejo, sin el dato por lote, cae al del movimiento", () => {
+    const rows = buildSalidasExportRows([
+      conLotes([{ lotCode: "L-VIEJO", documentoMaterial: null }], "4900333"),
+    ]);
+
+    expect(rows[0].documentoMaterial).toBe("4900333");
+  });
+});

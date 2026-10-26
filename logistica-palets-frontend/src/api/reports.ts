@@ -52,7 +52,14 @@ export type ReportMovementRow = {
   lotCode?: string | null;       // single code, OR comma-separated when multi-lot palletItems
   sapLot?: string | null;        // same
   lotCount?: number;             // 0, 1, or N (N>1 = multi-lot)
-  lotsDetail?: Array<{ lotCode: string; sapLot?: string | null; pallets: number; quantity: number }> | null;
+  lotsDetail?: Array<{
+    lotCode: string;
+    sapLot?: string | null;
+    pallets: number;
+    quantity: number;
+    /** SALIDA: Documento Material SAP de ESTE lote (puede diferir entre lotes del mismo movimiento). */
+    documentoMaterial?: string | null;
+  }> | null;
   status?: 'NORMAL' | 'PENDING_REGULARIZATION';
   voidStatus?: VoidStatus;
   adjustmentReason?: string | null;

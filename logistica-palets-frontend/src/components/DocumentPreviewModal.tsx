@@ -26,6 +26,21 @@ export type DocumentPreviewModalProps = {
   onBack: () => void;
 };
 
+/**
+ * Documento Material de la cabecera.
+ *
+ * El dato es por lote, así que un único número arriba sólo es cierto cuando
+ * todos coinciden. Si difieren se dice "Varios" y se remite al detalle, en vez
+ * de mostrar el de Datos Logísticos como si aplicara a todo el remito.
+ */
+function documentoMaterialResumen(preview: DocumentPreview): string | undefined {
+  const porLote = preview.lines.flatMap((line) => line.lots.map((lot) => lot.documentoMaterial?.trim() || ""));
+  if (porLote.length === 0) return preview.documentoMaterial;
+  const distintos = new Set(porLote);
+  if (distintos.size === 1) return [...distintos][0] || undefined;
+  return "Varios — ver el detalle por lote";
+}
+
 function Row({ label, value }: { label: string; value?: string | null }) {
   if (!value?.trim()) return null;
   return (
@@ -83,7 +98,7 @@ export default function DocumentPreviewModal({
           <Row label={isEntry ? "Proveedor" : "Destino"} value={isEntry ? preview.supplier : preview.destination} />
           <Row label={isEntry ? "Depósito" : "Origen"} value={preview.warehouseName} />
           <Row label="MIC/Factura/Remito" value={preview.documentNumber} />
-          <Row label="Documento Material" value={preview.documentoMaterial} />
+          <Row label="Documento Material" value={documentoMaterialResumen(preview)} />
           <Row label={isEntry ? "Encargado de recepción" : "Encargado de envío"} value={preview.responsibleName} />
         </section>
 
@@ -124,6 +139,14 @@ export default function DocumentPreviewModal({
                           {lot.lotCode}
                           {lot.sapLot && (
                             <span style={{ color: "var(--primary-text)", marginLeft: 6 }}>SAP {lot.sapLot}</span>
+                          )}
+                          {/* El Documento Material es por lote: mostrarlo acá es la única
+                              forma de revisar antes de confirmar que cada uno quedó con el
+                              suyo. La fila de arriba sólo sirve cuando coinciden todos. */}
+                          {lot.documentoMaterial && (
+                            <span style={{ color: "var(--muted)", marginLeft: 6 }}>
+                              Doc. {lot.documentoMaterial}
+                            </span>
                           )}
                         </div>
                       ))}

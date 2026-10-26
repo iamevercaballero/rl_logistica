@@ -29,6 +29,15 @@ export type PalletItem = {
    * Opcional e informativo — no cambia cuánto se descuenta ni de dónde.
    */
   dispatchedPallets?: number;
+  /**
+   * SALIDA: Documento Material SAP del lote al que pertenece este palet.
+   *
+   * Va por palet porque es lo que el backend persiste en el detalle, pero la
+   * pantalla lo carga una vez por lote: dos lotes de la misma salida pueden ir
+   * contra documentos distintos, y el campo de Datos Logísticos sólo alcanza
+   * para el caso en que todos coinciden.
+   */
+  documentoMaterial?: string;
   /** Sector-Subsector de este pallet. Si se omite, hereda el de la línea. */
   locationId?: string;
 };
@@ -58,7 +67,14 @@ export type Movement = {
   lotCode?: string | null;     // si lotCount > 1 viene concatenado con ", "
   sapLot?: string | null;
   lotCount?: number;           // 0 / 1 / N
-  lotsDetail?: Array<{ lotCode: string; sapLot?: string | null; pallets: number; quantity: number }> | null;
+  lotsDetail?: Array<{
+    lotCode: string;
+    sapLot?: string | null;
+    pallets: number;
+    quantity: number;
+    /** SALIDA: Documento Material SAP de ESTE lote (puede diferir entre lotes del mismo movimiento). */
+    documentoMaterial?: string | null;
+  }> | null;
   adjustmentReason?: string | null;
   adjustmentCategory?: string | null;
   encargado?: { id: string; username: string; fullName?: string | null } | null;
@@ -444,6 +460,8 @@ export type MovementLotBreakdown = {
   fechaVencimiento?: string | null;
   fechaFabricacion?: string | null;
   proveedor?: string | null;
+  /** SALIDA: Documento Material SAP de este lote (puede diferir entre lotes del mismo movimiento). */
+  documentoMaterial?: string | null;
   quantity: number;
   availableQty: number;
   pallets: {

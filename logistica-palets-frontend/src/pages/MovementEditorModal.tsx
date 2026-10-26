@@ -77,6 +77,8 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
     staleTime: 15_000,
   });
   const lots = lotsQ.data?.lots ?? [];
+  /** Documentos Material distintos entre los lotes de este movimiento, si los hay. */
+  const documentosPorLote = [...new Set(lots.map((l) => l.documentoMaterial?.trim() || ""))];
 
   // Ediciones por lote: datos del lote + nueva cantidad por pallet + agregado
   const [lotEdits, setLotEdits] = useState<Record<string, LotEdit>>({});
@@ -494,6 +496,16 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                     placeholder="Pendiente"
                     maxLength={80}
                   />
+                  {/* El documento se carga por lote. Si los de este movimiento no
+                      coinciden hay que decirlo: guardar acá los iguala a todos, y
+                      eso borraría la distinción sin que se note. */}
+                  {documentosPorLote.length > 1 && (
+                    <div style={{ fontSize: 11, color: "var(--warning, var(--muted))", marginTop: 4, fontWeight: 600 }}>
+                      Los lotes de este material salieron con documentos distintos
+                      ({documentosPorLote.map((d) => d || "sin documento").join(", ")}).
+                      Lo que guardes acá va a quedar en todos.
+                    </div>
+                  )}
                   {remitoMultilinea && (
                     <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
                       Se guarda solo para este material — el remito {movement.document?.code} salió

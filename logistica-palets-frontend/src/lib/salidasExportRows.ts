@@ -31,8 +31,8 @@ export function buildSalidasExportRows(data: Movement[]): SalidaExportRow[] {
           sapLot: movement.sapLot ?? null,
           pallets: movement.pallets ?? null,
           quantity: movement.quantity,
+          documentoMaterial: movement.documentoMaterial ?? null,
         }];
-    const documentoMaterial = movement.documentoMaterial?.trim() || DOCUMENTO_MATERIAL_PENDING;
     // Un lote SAP legado (de antes de que el depósito o el material se
     // reconfiguraran) no debe salir en el export como si siguiera vigente —
     // misma regla que en la etiqueta de pallet y en la pantalla del reporte.
@@ -43,7 +43,13 @@ export function buildSalidasExportRows(data: Movement[]): SalidaExportRow[] {
       material: `${movement.material.code} - ${movement.material.description}`,
       lote: lot.lotCode ?? "-",
       sapLot: showSapLot ? (lot.sapLot ?? "-") : "-",
-      documentoMaterial,
+      // El documento es de ESTE lote: dos lotes de la misma salida pueden ir
+      // contra documentos distintos, y en ese caso el del movimiento es `null`
+      // (es el resumen, y sólo tiene valor cuando todos coinciden). Se cae a él
+      // para los movimientos viejos, que no tienen el dato en el detalle.
+      documentoMaterial: lot.documentoMaterial?.trim()
+        || movement.documentoMaterial?.trim()
+        || DOCUMENTO_MATERIAL_PENDING,
       quantity: lot.quantity,
       unit: movement.material.unitOfMeasure ?? "",
       pallets: lot.pallets ?? "-",

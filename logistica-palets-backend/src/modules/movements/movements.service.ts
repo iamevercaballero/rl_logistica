@@ -64,6 +64,29 @@ const conteoDeLotesDelMovimiento =
       FROM movement_details md INNER JOIN lots dl ON dl.id = md."lotId"
      WHERE md."movementId" = movement.id)`;
 
+/**
+ * Desglose por lote del movimiento, en JSON.
+ *
+ * Lo consume el export de Salidas, que escribe una fila por lote. Incluye el
+ * Documento Material de cada uno: el del movimiento es sólo un resumen y queda
+ * `null` cuando sus lotes difieren, así que sin esto esas filas saldrían todas
+ * como "Pendiente".
+ */
+const detalleDeLotesDelMovimiento =
+  `(SELECT JSON_AGG(lot_row ORDER BY lot_row."lotCode")
+      FROM (
+        SELECT
+          dl2."lotCode"                                                                 AS "lotCode",
+          dl2."sapLot"                                                                  AS "sapLot",
+          COUNT(DISTINCT md2."palletId") FILTER (WHERE md2."palletId" IS NOT NULL)::int AS "pallets",
+          SUM(md2.quantity)::float8                                                     AS "quantity",
+          MIN(md2."documentoMaterial")                                                  AS "documentoMaterial"
+        FROM movement_details md2
+        INNER JOIN lots dl2 ON dl2.id = md2."lotId"
+        WHERE md2."movementId" = movement.id
+        GROUP BY dl2.id, dl2."lotCode", dl2."sapLot"
+      ) lot_row)`;
+
 import {
   distributeQuantity,
   formatQuantity,
@@ -943,6 +966,11 @@ export class MovementsService {
               // es informativo — no interviene en el descuento de stock ni de
               // palets, que ya se resolvió arriba con la lógica de siempre.
               dispatchedPallets: dto.type === 'EXIT' ? item.dispatchedPallets ?? null : null,
+              // Documento Material de ESTE lote. Si el ítem no lo trae, hereda
+              // el del remito — que es el caso común, todos contra el mismo.
+              documentoMaterial: dto.type === 'EXIT'
+                ? item.documentoMaterial?.trim() || dto.documentoMaterial?.trim() || null
+                : null,
             });
             await manager.save(detail);
             // TRANSFER only moves pallets between locations; lot.stockActual must NOT change
@@ -956,6 +984,18 @@ export class MovementsService {
         if (!dto.pallets) {
           movement.pallets = dto.palletItems.length;
           await manager.save(movement);
+        }
+
+        // El movimiento conserva el Documento Material como resumen de sus
+        // lotes: el valor común, o `null` si difieren. Así el buscador y los
+        // reportes que leen el movimiento siguen andando, y "difieren" se
+        // distingue de "falta" mirando el detalle (ver `documentoMaterialStatus`).
+        if (dto.type === 'EXIT') {
+          const resumen = await this.resumirDocumentoMaterial(manager, movement.id);
+          if ((movement.documentoMaterial?.trim() || null) !== resumen) {
+            movement.documentoMaterial = resumen;
+            await manager.save(movement);
+          }
         }
 
       } else if (dto.lotId) {
@@ -1253,9 +1293,10 @@ export class MovementsService {
     if (query.from) qb.andWhere('d.date >= :from', { from: this.toStartDate(query.from) });
     if (query.to) qb.andWhere('d.date <= :to', { to: this.toEndDate(query.to) });
     if (query.search) {
-      // El Documento Material se busca también línea por línea: la cabecera
-      // solo lo guarda mientras todas coincidan (ver syncDocumentoMaterialCabecera),
-      // así que sin este EXISTS un remito con un documento SAP por material
+      // El Documento Material se busca también línea por línea Y lote por lote:
+      // la cabecera y el movimiento sólo lo guardan mientras todos sus hijos
+      // coincidan (ver syncDocumentoMaterialCabecera y resumirDocumentoMaterial),
+      // así que sin estos EXISTS un remito con un documento distinto por lote
       // sería imposible de encontrar por ese número.
       qb.andWhere(
         `(d.code ILIKE :s OR d.documentNumber ILIKE :s OR d.supplier ILIKE :s OR d.destination ILIKE :s
@@ -1263,6 +1304,11 @@ export class MovementsService {
           OR EXISTS (
             SELECT 1 FROM movements m
             WHERE m."documentId" = d.id AND m."documentoMaterial" ILIKE :s
+          )
+          OR EXISTS (
+            SELECT 1 FROM movements m2
+             INNER JOIN movement_details md2 ON md2."movementId" = m2.id
+             WHERE m2."documentId" = d.id AND md2."documentoMaterial" ILIKE :s
           ))`,
         { s: `%${query.search}%` },
       );
@@ -1522,6 +1568,7 @@ export class MovementsService {
           if (siblingOld === documentoMaterialValue) continue;
           sibling.documentoMaterial = documentoMaterialValue;
           await manager.save(sibling);
+          await manager.update(MovementDetail, { movementId: sibling.id }, { documentoMaterial: documentoMaterialValue });
           logs.push({
             movementId: sibling.id,
             field: 'documentoMaterial',
@@ -1531,6 +1578,14 @@ export class MovementsService {
             reason: dto.reason,
           });
         }
+      }
+
+      // El documento vive por lote: editarlo en el movimiento es "ponéselo a
+      // todos sus lotes". Sin esto, el resumen del movimiento diría una cosa y
+      // el detalle otra, y el filtro Pendiente/Completado —que mira el
+      // detalle— seguiría viendo la salida como incompleta.
+      if (documentoMaterialChanged) {
+        await manager.update(MovementDetail, { movementId: id }, { documentoMaterial: documentoMaterialValue });
       }
 
       // Propagar cambios a los lotes asociados
@@ -1620,6 +1675,23 @@ export class MovementsService {
     await manager.save(document);
   }
 
+  /**
+   * Documento Material del movimiento visto desde sus lotes: el valor común a
+   * todos, o `null` si difieren (o si alguno no lo tiene).
+   *
+   * El movimiento guarda este resumen para que el buscador y los reportes que
+   * leen `movements."documentoMaterial"` sigan andando sin saber del detalle.
+   * Que `null` signifique tanto "falta" como "difieren" no molesta: lo único
+   * que necesita distinguirlos es el filtro Pendiente/Completado, y ese mira el
+   * detalle directamente.
+   */
+  private async resumirDocumentoMaterial(manager: EntityManager, movementId: string): Promise<string | null> {
+    const details = await manager.find(MovementDetail, { where: { movementId } });
+    if (details.length === 0) return null;
+    const valores = new Set(details.map((d) => d.documentoMaterial?.trim() || null));
+    return valores.size === 1 ? [...valores][0] : null;
+  }
+
   /** Desglose por lote de un movimiento: cantidades y estado actual de sus pallets (para edición). */
   async getLotsBreakdown(id: string, user?: AccessUser) {
     if (user) await this.assertMovementAccess(user, id);
@@ -1663,6 +1735,11 @@ export class MovementsService {
       const availableQty = sumQuantities(
         lotPallets.filter((p) => p.status !== 'EXITED').map((p) => p.currentQuantity),
       );
+      // Documento Material de este lote dentro del movimiento. Es un valor por
+      // lote, así que se toma del detalle; si los palets del lote no coinciden
+      // entre sí (no debería pasar: la pantalla carga uno por lote) se informa
+      // `null` antes que elegir uno al azar.
+      const documentosDelLote = new Set(lotDetails.map((d) => d.documentoMaterial?.trim() || null));
       return {
         lotId: lot.id,
         lotCode: lot.lotCode,
@@ -1670,6 +1747,7 @@ export class MovementsService {
         fechaVencimiento: lot.fechaVencimiento ?? null,
         fechaFabricacion: lot.fechaFabricacion ?? null,
         proveedor: lot.proveedor ?? null,
+        documentoMaterial: documentosDelLote.size === 1 ? [...documentosDelLote][0] : null,
         quantity,
         availableQty,
         pallets: lotPallets,
@@ -2191,6 +2269,7 @@ export class MovementsService {
         `COALESCE(lot."lotCode", ${lotesDelMovimiento('lotCode')}) AS "lotCode"`,
         `COALESCE(lot."sapLot", ${lotesDelMovimiento('sapLot')}) AS "sapLot"`,
         `COALESCE(NULLIF(${conteoDeLotesDelMovimiento}, 0), CASE WHEN lot.id IS NOT NULL THEN 1 ELSE 0 END) AS "lotCount"`,
+        `${detalleDeLotesDelMovimiento} AS "lotsDetail"`,
         'product.id AS "productId"',
         'product.code AS "productCode"',
         'product.description AS "productDescription"',
@@ -2236,12 +2315,32 @@ export class MovementsService {
     if (query.productId) qb.andWhere('movement."productId" = :productId', { productId: query.productId });
     if (query.type?.length) qb.andWhere('movement.type IN (:...types)', { types: query.type });
     if (query.status) qb.andWhere('movement.status = :status', { status: query.status });
+    // Pendiente / completado mira el DETALLE, no el resumen del movimiento: el
+    // documento es por lote, así que una salida cuenta como pendiente si le
+    // falta a alguno de sus lotes, y como completada sólo si lo tienen todos.
+    // Mirar `movement."documentoMaterial"` daría pendiente a una salida con
+    // todos sus lotes cargados pero con documentos distintos —el resumen ahí es
+    // `null`—, que es justamente lo contrario de lo que se busca.
+    const sinDocumentoEnAlgunLote = `EXISTS (
+      SELECT 1 FROM movement_details md
+      WHERE md."movementId" = movement.id
+        AND NULLIF(TRIM(md."documentoMaterial"), '') IS NULL
+    )`;
+    // Un movimiento sin detalle (carga a granel, sin palets) sigue decidiéndose
+    // por su propio campo: no hay lotes donde mirar.
+    const sinDetalle = `NOT EXISTS (SELECT 1 FROM movement_details md WHERE md."movementId" = movement.id)`;
     if (query.documentoMaterialStatus === 'PENDING') {
       qb.andWhere('movement.type = :documentoMaterialType', { documentoMaterialType: 'EXIT' });
-      qb.andWhere('NULLIF(TRIM(movement."documentoMaterial"), \'\') IS NULL');
+      qb.andWhere(`(
+        ${sinDocumentoEnAlgunLote}
+        OR (${sinDetalle} AND NULLIF(TRIM(movement."documentoMaterial"), '') IS NULL)
+      )`);
     } else if (query.documentoMaterialStatus === 'COMPLETED') {
       qb.andWhere('movement.type = :documentoMaterialType', { documentoMaterialType: 'EXIT' });
-      qb.andWhere('NULLIF(TRIM(movement."documentoMaterial"), \'\') IS NOT NULL');
+      qb.andWhere(`(
+        NOT ${sinDocumentoEnAlgunLote}
+        AND (NOT ${sinDetalle} OR NULLIF(TRIM(movement."documentoMaterial"), '') IS NOT NULL)
+      )`);
     }
     if (query.dateFrom) qb.andWhere('movement.date >= :dateFrom', { dateFrom: this.toStartDate(query.dateFrom) });
     if (query.dateTo) qb.andWhere('movement.date <= :dateTo', { dateTo: this.toEndDate(query.dateTo) });
@@ -2253,6 +2352,11 @@ export class MovementsService {
           OR LOWER(COALESCE(movement.supplier, '')) LIKE :search
           OR LOWER(COALESCE(movement.destination, '')) LIKE :search
           OR LOWER(COALESCE(movement."documentoMaterial", '')) LIKE :search
+          OR EXISTS (
+            SELECT 1 FROM movement_details mdoc
+             WHERE mdoc."movementId" = movement.id
+               AND LOWER(COALESCE(mdoc."documentoMaterial", '')) LIKE :search
+          )
           OR LOWER(COALESCE(movement.notes, '')) LIKE :search
           OR LOWER(COALESCE(product.code, '')) LIKE :search
           OR LOWER(COALESCE(product.description, '')) LIKE :search
@@ -2307,6 +2411,24 @@ export class MovementsService {
             .addSelect('STRING_AGG(DISTINCT dl."lotCode", \', \' ORDER BY dl."lotCode")', 'lotCodes')
             .addSelect('STRING_AGG(DISTINCT dl."sapLot", \', \' ORDER BY dl."sapLot")', 'sapLots')
             .addSelect('COUNT(DISTINCT dl.id)', 'lotCount')
+            // Documento Material lote por lote: el export de Salidas escribe
+            // una fila por lote, y el resumen del movimiento es `null` cuando
+            // difieren — sin esto esas filas saldrían todas como "Pendiente".
+            .addSelect(`(
+              SELECT JSON_AGG(lot_row ORDER BY lot_row."lotCode")
+              FROM (
+                SELECT
+                  dl2."lotCode"                                                                 AS "lotCode",
+                  dl2."sapLot"                                                                  AS "sapLot",
+                  COUNT(DISTINCT md2."palletId") FILTER (WHERE md2."palletId" IS NOT NULL)::int AS "pallets",
+                  SUM(md2.quantity)::float8                                                     AS "quantity",
+                  MIN(md2."documentoMaterial")                                                  AS "documentoMaterial"
+                FROM movement_details md2
+                INNER JOIN lots dl2 ON dl2.id = md2."lotId"
+                WHERE md2."movementId" = md."movementId"
+                GROUP BY dl2.id, dl2."lotCode", dl2."sapLot"
+              ) lot_row
+            )`, 'lotsDetail')
             .groupBy('md."movementId"'),
         'dl_agg',
         'dl_agg."movementId" = movement.id',
@@ -2336,6 +2458,7 @@ export class MovementsService {
         'COALESCE(lot."lotCode", dl_agg."lotCodes") AS "lotCode"',
         'COALESCE(lot."sapLot", dl_agg."sapLots") AS "sapLot"',
         'COALESCE(dl_agg."lotCount", CASE WHEN lot.id IS NOT NULL THEN 1 ELSE 0 END) AS "lotCount"',
+        'dl_agg."lotsDetail" AS "lotsDetail"',
         'product.id AS "productId"',
         'product.code AS "productCode"',
         'product.description AS "productDescription"',
@@ -2605,6 +2728,11 @@ export class MovementsService {
       createdById: row.createdById, createdAt: row.createdAt ?? row.date,
       palletId: row.palletId, lotId: row.lotId, lotCode: row.lotCode ?? null, sapLot: row.sapLot ?? null,
       lotCount: this.parseNumber(row.lotCount),
+      // Desglose por lote (incluye el Documento Material de cada uno), para que
+      // el export de Salidas pueda escribir una fila por lote con el suyo.
+      lotsDetail: row.lotsDetail
+        ? (Array.isArray(row.lotsDetail) ? row.lotsDetail : JSON.parse(row.lotsDetail as string))
+        : null,
       encargado: row.encargadoId ? { id: row.encargadoId, username: row.encargadoUsername, fullName: row.encargadoFullName } : null,
       material: {
         id: row.productId, code: row.productCode,

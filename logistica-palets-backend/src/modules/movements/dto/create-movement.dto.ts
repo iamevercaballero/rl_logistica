@@ -93,6 +93,18 @@ export class PalletItemDto {
   dispatchedPallets?: number;
 
   /**
+   * SALIDA: Documento Material SAP de ESTE lote.
+   *
+   * Un movimiento es un producto entero, así que el campo del movimiento no
+   * alcanza: dos lotes del mismo material pueden salir contra documentos
+   * distintos. Si no viene, se hereda el del remito.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  documentoMaterial?: string;
+
+  /**
    * ENTRADA: Sector-Subsector destino de **este** pallet. Si se omite, hereda
    * el `locationId` de la línea — así el flujo simple (todo el lote al mismo
    * sector) sigue funcionando sin cambios, y el gestor de pallets puede

@@ -139,6 +139,15 @@ type FefoRow = {
    * qué palet. Sin cargar nada, la salida se comporta igual que siempre.
    */
   dispatchedByPallet: Record<string, string>;
+  /**
+   * EXIT only — Documento Material SAP de ESTE lote.
+   *
+   * Vive por lote y no en Datos Logísticos porque dos lotes de la misma salida
+   * —incluso del mismo material— pueden ir contra documentos distintos. El
+   * campo de arriba sigue existiendo como valor por defecto: se copia acá al
+   * agregar el lote y desde ahí se puede pisar uno por uno.
+   */
+  documentoMaterial: string;
 };
 
 /** Vista `ExitSelection` (modelo puro) de una fila. */
@@ -370,6 +379,14 @@ export default function MovementsPage() {
   }, [transports]);
   const [destination, setDestination] = useState("");
   const [documentoMaterial, setDocumentoMaterial] = useState("");
+  /**
+   * Espejo del Documento Material de Datos Logísticos, para sembrar con él cada
+   * lote nuevo. Va por ref y no como dependencia del efecto que hidrata los
+   * lotes: si fuera dependencia, tipear arriba volvería a hidratar y borraría
+   * la selección de palets que el operador ya había hecho.
+   */
+  const documentoMaterialRef = useRef("");
+  documentoMaterialRef.current = documentoMaterial;
   const [notes, setNotes] = useState("");
   // Responsable de recepción/envío. Se elige a propósito y no se autocompleta
   // con el usuario logueado: es un dato operativo (quién recibió la mercadería),
@@ -677,6 +694,9 @@ export default function MovementsPage() {
       fefoTargetInput: "",
       qtyByPallet: {},
       dispatchedByPallet: {},
+      // Arranca con el documento de Datos Logísticos: en el caso común todos
+      // los lotes van contra el mismo y no hay que tipearlo lote por lote.
+      documentoMaterial: documentoMaterialRef.current.trim(),
     })));
   }, [fefoQ.data, fefoQ.dataUpdatedAt, fefoQ.isFetching, fefoEnabled, fefoRows, product?.id]);
 
@@ -852,6 +872,11 @@ export default function MovementsPage() {
       return { ...r, expanded: true, selectedIds: next.selectedIds, qtyByPallet: next.qtyByPallet };
     }));
   }
+  /** Documento Material de un lote — se carga por lote, no para todo el remito. */
+  function setLotDocumentoMaterial(lotIdx: number, value: string) {
+    setFefoRows((rows) => rows.map((r, i) => (i === lotIdx ? { ...r, documentoMaterial: value } : r)));
+  }
+
   /** Paletas físicas resultantes de un palet — dato informativo de la nota. */
   function setDispatchedPallets(lotIdx: number, palletId: string, value: string) {
     setFefoRows((rows) => rows.map((r, i) => i === lotIdx
@@ -1102,11 +1127,20 @@ export default function MovementsPage() {
         continue;
       }
 
+      // Documento Material del lote: lo cargado en su tarjeta, o el de Datos
+      // Logísticos si quedó vacío (el caso común, todos contra el mismo).
+      const docDelLote = row.documentoMaterial.trim() || documentoMaterial.trim() || undefined;
+
       let aportaAlgo = false;
       for (const p of selectedPallets) {
         const take = palletExitQty(row, p.id);
         if (take <= 0) continue;
-        palletItems.push({ palletId: p.id, quantity: roundQty(take), dispatchedPallets: dispatchedOf(p.id) });
+        palletItems.push({
+          palletId: p.id,
+          quantity: roundQty(take),
+          dispatchedPallets: dispatchedOf(p.id),
+          documentoMaterial: docDelLote,
+        });
         aportaAlgo = true;
       }
       if (aportaAlgo) lotesDespachados.push(row);
@@ -1138,6 +1172,7 @@ export default function MovementsPage() {
             lotCode: r.lot.lotCode,
             sapLot: r.lot.sapLot ?? null,
             fechaVencimiento: r.lot.fechaVencimiento ?? null,
+            documentoMaterial: r.documentoMaterial.trim() || documentoMaterial.trim() || null,
           })),
         },
         // `fefoRows` completo (no solo los lotes que aportaron cantidad): así
@@ -2295,6 +2330,26 @@ export default function MovementsPage() {
                                   <span style={{ fontSize: 11, color: "var(--muted)" }}>
                                     reemplaza la selección; después editá a mano
                                   </span>
+                                </div>
+                                {/* Documento Material de ESTE lote. Arranca con el de Datos
+                                    Logísticos y se puede pisar: dos lotes de la misma salida
+                                    pueden ir contra documentos distintos. */}
+                                <div style={{ display: "grid", gap: 4, marginTop: 6 }}>
+                                  <label
+                                    htmlFor={`doc-material-${row.lot.id}`}
+                                    style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}
+                                  >
+                                    Documento material de este lote
+                                  </label>
+                                  <input
+                                    id={`doc-material-${row.lot.id}`}
+                                    className="input"
+                                    placeholder="Opcional"
+                                    maxLength={80}
+                                    value={row.documentoMaterial}
+                                    onChange={(e) => setLotDocumentoMaterial(lotIdx, e.target.value)}
+                                    style={{ fontSize: 13, maxWidth: 240 }}
+                                  />
                                 </div>
                                 {rowError && (
                                   <span style={{ fontSize: 11, color: "var(--danger)", fontWeight: 700 }}>{rowError}</span>

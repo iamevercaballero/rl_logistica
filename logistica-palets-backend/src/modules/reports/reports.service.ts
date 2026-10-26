@@ -547,7 +547,13 @@ export class ReportsService {
                   dl2."lotCode"                                                                 AS "lotCode",
                   dl2."sapLot"                                                                  AS "sapLot",
                   COUNT(DISTINCT md2."palletId") FILTER (WHERE md2."palletId" IS NOT NULL)::int AS "pallets",
-                  SUM(md2.quantity)::float8                                                     AS "quantity"
+                  SUM(md2.quantity)::float8                                                     AS "quantity",
+                  -- Documento Material de ESTE lote. Va acá y no sólo en el
+                  -- movimiento porque el export de Salidas escribe una fila por
+                  -- lote: sin esto, una salida con documentos distintos saldría
+                  -- como "Pendiente" en todas sus filas (el resumen del
+                  -- movimiento es null justamente porque difieren).
+                  MIN(md2."documentoMaterial")                                                  AS "documentoMaterial"
                 FROM movement_details md2
                 INNER JOIN lots dl2 ON dl2.id = md2."lotId"
                 WHERE md2."movementId" = md."movementId"
@@ -590,7 +596,11 @@ export class ReportsService {
       .addSelect('tl.code', 'toLocationCode')
       .addSelect('COALESCE(lot."lotCode", dl_agg."lotCodes")', 'lotCode')
       .addSelect('COALESCE(lot."sapLot", dl_agg."sapLots")', 'sapLot')
-      .addSelect('COALESCE(dl_agg."lotCount", CASE WHEN lot.id IS NOT NULL THEN 1 ELSE 0 END)', 'lotCount');
+      .addSelect('COALESCE(dl_agg."lotCount", CASE WHEN lot.id IS NOT NULL THEN 1 ELSE 0 END)', 'lotCount')
+      // El desglose se armaba en el subquery pero el SELECT de afuera no lo
+      // pedía, así que `lotsDetail` llegaba siempre `null` y el export de
+      // Salidas caía a una sola fila por movimiento con los lotes concatenados.
+      .addSelect('dl_agg."lotsDetail"', 'lotsDetail');
 
     if (scope) {
       // Un movimiento pertenece al alcance si cualquiera de sus tres depósitos
@@ -611,10 +621,19 @@ export class ReportsService {
     if (query.dateTo) qb.andWhere('m.date <= :dateTo', { dateTo: this.toEndDate(query.dateTo) });
     if (query.search?.trim()) {
       qb.andWhere(
+        // El Documento Material se busca también lote por lote: el movimiento
+        // sólo lo guarda mientras todos sus lotes coincidan, así que sin este
+        // EXISTS una salida con un documento distinto por lote sería imposible
+        // de encontrar por cualquiera de esos números.
         `(LOWER(COALESCE(m."documentNumber", '')) LIKE :search
           OR LOWER(COALESCE(m.supplier, '')) LIKE :search
           OR LOWER(COALESCE(m.destination, '')) LIKE :search
           OR LOWER(COALESCE(m."documentoMaterial", '')) LIKE :search
+          OR EXISTS (
+            SELECT 1 FROM movement_details mdoc
+             WHERE mdoc."movementId" = m.id
+               AND LOWER(COALESCE(mdoc."documentoMaterial", '')) LIKE :search
+          )
           OR LOWER(COALESCE(m.notes, '')) LIKE :search
           OR LOWER(COALESCE(p.code, '')) LIKE :search
           OR LOWER(COALESCE(p.description, '')) LIKE :search)`,

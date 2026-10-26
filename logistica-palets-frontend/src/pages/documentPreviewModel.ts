@@ -21,6 +21,12 @@ export type PreviewLot = {
   lotCode: string;
   sapLot?: string | null;
   fechaVencimiento?: string | null;
+  /**
+   * SALIDA: Documento Material SAP de este lote. Se muestra por lote y no sólo
+   * en la cabecera porque dos lotes de la misma salida pueden ir contra
+   * documentos distintos.
+   */
+  documentoMaterial?: string | null;
 };
 
 /** Una línea de mercadería: un material del remito. */

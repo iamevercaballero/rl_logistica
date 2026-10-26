@@ -33,6 +33,8 @@ import { DataTable, createColumnHelper } from "../design-system/DataTable";
 import { exportStockPDF, exportMovementsPDF, exportDailyStockPDF, exportEntradasPDF, exportSalidasPDF, exportLotesPDF, exportTrazabilidadPDF } from "../lib/exportPdf";
 import { exportStockExcel, exportMovementsExcel, exportDailyStockExcel, exportEntradasExcel, exportSalidasExcel, exportLotesExcel, exportTrazabilidadExcel, exportFreshnessExcel } from "../lib/exportExcel";
 import { exportSalidasCsv } from "../lib/exportCsv";
+import { paginaEntradas, paginaMovimientos, paginaSalidas, useExportCompleto } from "./reportsExport";
+import ExportButton from "./ExportButton";
 import { DOCUMENTO_MATERIAL_PENDING } from "../lib/salidasExportRows";
 
 /* ── DataTable column defs for stock tab ──────────────────────────────────── */
@@ -346,6 +348,19 @@ export default function ReportsPage() {
     onError: (err) => setRegError(getFriendlyApiError(err)),
   });
 
+  // ── Exportar el reporte completo ──────────────────────────────────────────
+
+  /* Los botones de PDF/Excel/CSV exportaban la página que se estaba viendo, así
+     que un reporte de varias páginas salía partido en un archivo por página.
+     `useExportCompleto` recorre el listado entero antes de armar el archivo. */
+  const exportCtx = useExportCompleto();
+
+  /* Cada uno repite los filtros de su query: el export tiene que traer
+     exactamente lo que el usuario está mirando, pero completo. */
+  const leerMovimientos = paginaMovimientos(activeWarehouseId, appliedFilters);
+  const leerEntradas    = paginaEntradas(activeWarehouseId, entApplied);
+  const leerSalidas     = paginaSalidas(activeWarehouseId, salApplied);
+
   // ── Derived ───────────────────────────────────────────────────────────────
 
   const products     = productsQ.data  ?? [];
@@ -593,12 +608,10 @@ export default function ReportsPage() {
             </button>
             {movements.length > 0 && (
               <>
-                <button className="btn" onClick={() => exportMovementsPDF(movements, `movimientos-${todayInputValue()}`)} title="Exportar PDF">
-                   PDF
-                </button>
-                <button className="btn" onClick={() => void exportMovementsExcel(movements, `movimientos-${todayInputValue()}`)} title="Exportar Excel">
-                   Excel
-                </button>
+                <ExportButton id="mov-pdf" etiqueta=" PDF" total={movMeta.total} nombre="filas" ctx={exportCtx}
+                  leer={leerMovimientos} escribir={(f) => exportMovementsPDF(f, `movimientos-${todayInputValue()}`)} />
+                <ExportButton id="mov-excel" etiqueta=" Excel" total={movMeta.total} nombre="filas" ctx={exportCtx}
+                  leer={leerMovimientos} escribir={(f) => exportMovementsExcel(f, `movimientos-${todayInputValue()}`)} />
               </>
             )}
           </div>
@@ -833,8 +846,10 @@ export default function ReportsPage() {
             }}>Limpiar</button>
             {entries.length > 0 && (
               <>
-                <button className="btn" onClick={() => exportEntradasPDF(entries, `entradas-${todayInputValue()}`)} title="Exportar PDF"> PDF</button>
-                <button className="btn" onClick={() => void exportEntradasExcel(entries, `entradas-${todayInputValue()}`)} title="Exportar Excel"> Excel</button>
+                <ExportButton id="ent-pdf" etiqueta=" PDF" total={entMeta.total} nombre="entradas" ctx={exportCtx}
+                  leer={leerEntradas} escribir={(f) => exportEntradasPDF(f, `entradas-${todayInputValue()}`)} />
+                <ExportButton id="ent-excel" etiqueta=" Excel" total={entMeta.total} nombre="entradas" ctx={exportCtx}
+                  leer={leerEntradas} escribir={(f) => exportEntradasExcel(f, `entradas-${todayInputValue()}`)} />
               </>
             )}
           </div>
@@ -1134,9 +1149,12 @@ export default function ReportsPage() {
             }}>Limpiar</button>
             {salMovements.length > 0 && (
               <>
-                <button className="btn" onClick={() => exportSalidasPDF(salMovements, `salidas-${todayInputValue()}`)} title="Exportar PDF"> PDF</button>
-                <button className="btn" onClick={() => void exportSalidasExcel(salMovements, `salidas-${todayInputValue()}`)} title="Exportar Excel"> Excel</button>
-                <button className="btn" onClick={() => exportSalidasCsv(salMovements, `salidas-${todayInputValue()}`)} title="Exportar CSV"> CSV</button>
+                <ExportButton id="sal-pdf" etiqueta=" PDF" total={salMeta.total} nombre="salidas" ctx={exportCtx}
+                  leer={leerSalidas} escribir={(f) => exportSalidasPDF(f, `salidas-${todayInputValue()}`)} />
+                <ExportButton id="sal-excel" etiqueta=" Excel" total={salMeta.total} nombre="salidas" ctx={exportCtx}
+                  leer={leerSalidas} escribir={(f) => exportSalidasExcel(f, `salidas-${todayInputValue()}`)} />
+                <ExportButton id="sal-csv" etiqueta=" CSV" total={salMeta.total} nombre="salidas" ctx={exportCtx}
+                  leer={leerSalidas} escribir={(f) => exportSalidasCsv(f, `salidas-${todayInputValue()}`)} />
               </>
             )}
           </div>

@@ -103,7 +103,14 @@ export default function PrintDocumentPage() {
           display: flex; justify-content: space-between; align-items: flex-start;
           border-bottom: 2px solid #000; padding-bottom: 8px; margin-bottom: 8px;
         }
-        .doc-logo { height: 56px; width: auto; object-fit: contain; }
+        /* Usa logo-print.jpg, que es el mismo logo sin el margen blanco que
+           trae logo.jpg —ahí la marca ocupa el 38% del alto, así que agrandar
+           el recuadro agrandaba sobre todo el vacío—. Con el recorte, el alto
+           del recuadro ES el alto de la marca. El tope de ancho evita que
+           empuje al bloque del código del remito.
+           (Sin comillas invertidas: este CSS vive dentro de un template
+           literal y una sola lo corta.) */
+        .doc-logo { height: 64px; width: auto; max-width: 60mm; object-fit: contain; }
         .doc-title-block { text-align: right; }
         .doc-type-label {
           font-size: 13px; font-weight: 900; color: #1a56db;
@@ -204,7 +211,7 @@ export default function PrintDocumentPage() {
 
         {/* ── ENCABEZADO ── */}
         <div className="doc-header">
-          <img src="/logo.jpg" alt="RL Logística" className="doc-logo" />
+          <img src="/logo-print.jpg" alt="RL Logística" className="doc-logo" />
           <div className="doc-title-block">
             <div className="doc-type-label">{docTypeLabel}</div>
             <div className="doc-code-big">{document.code}</div>

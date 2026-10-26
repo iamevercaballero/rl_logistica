@@ -79,7 +79,7 @@ const DECISION_RULES = [
 function SheetHeader({ code }: { code: string }) {
   return (
     <div className="ck-header">
-      <img src="/logo.jpg" alt="" className="ck-header-logo" />
+      <img src="/logo-print.jpg" alt="" className="ck-header-logo" />
       <div className="ck-header-title">{FORM_TITLE}</div>
       <div className="ck-header-meta">
         <div className="ck-header-meta-row">
@@ -486,8 +486,14 @@ export const CHECKLIST_CSS = `
   /* ── Encabezado ── */
   /* Alto fijo: el logo se ajusta adentro en vez de estirar la banda y comerse
      el espacio que necesitan los 20 puntos del formulario. */
-  .ck-header { display: flex; align-items: stretch; border: 1.5px solid #000; margin-bottom: 2mm; height: 15mm; }
-  .ck-header-logo { width: 32mm; height: 100%; object-fit: contain; padding: 1mm 2mm; border-right: 1.5px solid #000; }
+  .ck-header { display: flex; align-items: stretch; border: 1.5px solid #000; margin-bottom: 2mm; height: 16mm; }
+  /* Usa logo-print.jpg, el mismo logo sin el margen blanco que trae logo.jpg
+     —ahí la marca ocupa el 38% del alto, así que la banda se estiraba para
+     mostrar vacío—. Con el recorte, el alto disponible ES el alto de la marca,
+     y la banda casi no crece: lo que crece acá se lo saca al espacio de los 20
+     puntos del formulario, que es el que no puede faltar.
+     (Sin comillas invertidas: este CSS vive dentro de un template literal.) */
+  .ck-header-logo { width: 40mm; height: 100%; object-fit: contain; padding: 1mm 2mm; border-right: 1.5px solid #000; }
   .ck-header-title {
     flex: 1; display: flex; align-items: center; justify-content: center;
     font-size: 15px; font-weight: 900; text-align: center; padding: 1mm;

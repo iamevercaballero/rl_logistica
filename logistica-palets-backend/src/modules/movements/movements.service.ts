@@ -612,8 +612,17 @@ export class MovementsService {
         return resolved.locationId ?? entryFallbackLocationId ?? null;
       };
 
+      /*
+       * `isEntry` y no `type === 'ENTRY'`: un sobrante de inventario aprobado
+       * entra como ADJUSTMENT_IN y también puede registrar pallets nuevos. Con
+       * la condición atada a ENTRY, esos pallets nacían sin ubicación y
+       * quedaban en el limbo: el stock del lote subía —los reportes lo
+       * mostraban— pero el pallet desaparecía de la Salida y del módulo de
+       * diferencias, que filtran por depósito con un JOIN a `locations`. O sea,
+       * unidades contadas que no se podían despachar.
+       */
       if (
-        dto.type === 'ENTRY' &&
+        isEntry &&
         dto.palletItems?.length &&
         resolved.warehouseId &&
         !resolved.locationId &&

@@ -43,6 +43,16 @@ export type AdjustmentRequest = {
   approvalBlockedReason?: string | null;
 };
 
+/** Un renglón del detalle: qué palet/lote se toca y por cuánto. */
+export type AdjustmentLineDetail = {
+  quantity: number;
+  palletCode: string | null;
+  lotCode: string | null;
+  locationCode: string | null;
+  /** `true` cuando el ajuste va a CREAR ese pallet, porque todavía no existe. */
+  esPalletNuevo: boolean;
+};
+
 export type AdjustmentLine = {
   id: string;
   requestId: string;
@@ -50,6 +60,10 @@ export type AdjustmentLine = {
   palletItems: PalletItem[];
   totalQuantity: number;
   locationId?: string | null;
+  /** Resueltos por el backend: con ids crudos no se puede revisar un ajuste. */
+  product?: { id: string; code: string; description: string; unitOfMeasure: string | null } | null;
+  locationCode?: string | null;
+  detalle?: AdjustmentLineDetail[];
 };
 
 export type AdjustmentRequestDetail = {

@@ -9,6 +9,7 @@ import CountEntryPanel from "../components/adjustments/CountEntryPanel";
 import SurplusAllocationPicker, { type SurplusDestination } from "../components/adjustments/SurplusAllocationPicker";
 import ShortageAllocationTable, { computeShortageAllocation, autoDistributeShortage, type CandidatePallet } from "../components/adjustments/ShortageAllocationTable";
 import ShortageModePicker, { type ShortageMode } from "../components/adjustments/ShortageModePicker";
+import AdjustmentLinesDetail from "../components/adjustments/AdjustmentLinesDetail";
 import AdjustmentSummary from "../components/adjustments/AdjustmentSummary";
 import type { Product } from "../api/products";
 import { listWarehouses } from "../api/warehouses";
@@ -1062,6 +1063,12 @@ function RequestCard({ adj, canApprove, rejectingId, rejectReason, onApprove, on
 }) {
   const approvalBlocked = adj.approvalBlockedReason ?? null;
   const isPending = adj.status === "PENDIENTE_APROBACION";
+  /*
+   * El detalle arranca abierto en las que esperan aprobación: es justo lo que
+   * hay que mirar para decidir, y tenerlo detrás de un clic hacía que se
+   * aprobara viendo nada más que el número de la solicitud.
+   */
+  const [verDetalle, setVerDetalle] = useState(isPending);
   const isDraft = adj.status === "BORRADOR";
   const isEditable = adj.status === "BORRADOR" || adj.status === "RECHAZADO";
   const isRejecting = rejectingId === adj.id;
@@ -1092,6 +1099,15 @@ function RequestCard({ adj, canApprove, rejectingId, rejectReason, onApprove, on
           )}
         </div>
         <div style={{ display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
+          <button
+            className="btn"
+            style={{ fontSize: 12, padding: "5px 10px" }}
+            onClick={() => setVerDetalle((v) => !v)}
+            aria-expanded={verDetalle}
+            title={verDetalle ? "Ocultar qué se ajusta" : "Ver qué se ajusta"}
+          >
+            {verDetalle ? "▲ Detalle" : "▼ Detalle"}
+          </button>
           <button className="btn" style={{ fontSize: 12, padding: "5px 10px" }} onClick={onLog} title="Ver bitácora y adjuntos"></button>
           {isDraft && (
             <button className="btn btn--primary" style={{ fontSize: 12 }} onClick={onSubmitDraft} disabled={submittingDraft}>
@@ -1122,6 +1138,7 @@ function RequestCard({ adj, canApprove, rejectingId, rejectReason, onApprove, on
           <button className="btn" style={{ fontSize: 12 }} onClick={onCancelReject}>Cancelar</button>
         </div>
       )}
+      {verDetalle && <AdjustmentLinesDetail requestId={adj.id} type={adj.type} />}
     </div>
   );
 }

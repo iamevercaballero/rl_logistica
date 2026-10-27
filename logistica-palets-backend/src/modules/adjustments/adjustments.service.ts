@@ -19,6 +19,8 @@ import {
 import { MovementsService } from '../movements/movements.service';
 import { CreateMovementDto } from '../movements/dto/create-movement.dto';
 import { Pallet } from '../pallets/entities/pallet.entity';
+import { Product } from '../products/entities/product.entity';
+import { Location as Ubicacion } from '../locations/entities/location.entity';
 import { endOfBusinessDay, parseBusinessDate } from '../../common/date';
 import { sumQuantities } from '../../common/quantity';
 import {
@@ -38,6 +40,17 @@ import { User, type UserRole } from '../users/entities/user.entity';
  */
 export const APPROVER_ROLES: UserRole[] = ['ADMIN', 'MANAGER'];
 
+
+/**
+ * Un ítem tal como quedó guardado en `palletItemsJson`: o apunta a un pallet
+ * que ya existe (faltante, o sobrante sobre un pallet registrado), o trae el
+ * lote de uno nuevo que todavía no se creó.
+ */
+type AdjustmentPalletItem = {
+  palletId?: string;
+  lotCode?: string;
+  quantity: number;
+};
 
 @Injectable()
 export class AdjustmentsService {
@@ -573,12 +586,76 @@ export class AdjustmentsService {
       .getRepository(AdjustmentRequestLine)
       .find({ where: { requestId: id } });
 
+    const items = lines.map((l) => JSON.parse(l.palletItemsJson) as AdjustmentPalletItem[]);
+    const nombres = await this.nombresDeLasLineas(lines, items);
+
     return {
       request,
-      lines: lines.map((l) => ({
+      lines: lines.map((l, i) => ({
         ...l,
-        palletItems: JSON.parse(l.palletItemsJson),
+        palletItems: items[i],
+        // Resuelto acá y no en la pantalla: quien aprueba tiene que poder leer
+        // QUÉ se ajusta, y los ids crudos no se leen.
+        product: nombres.productos.get(l.productId) ?? null,
+        locationCode: l.locationId ? nombres.ubicaciones.get(l.locationId) ?? null : null,
+        detalle: items[i].map((item) => ({
+          quantity: item.quantity,
+          // Pallet existente (faltante, o sobrante sobre un pallet ya registrado).
+          palletCode: item.palletId ? nombres.palets.get(item.palletId)?.code ?? null : null,
+          lotCode: item.palletId
+            ? nombres.palets.get(item.palletId)?.lotCode ?? null
+            // Pallet nuevo: todavía no existe, el lote viene en el propio ítem.
+            : item.lotCode ?? null,
+          locationCode: item.palletId
+            ? nombres.palets.get(item.palletId)?.locationCode ?? null
+            : null,
+          esPalletNuevo: !item.palletId,
+        })),
       })),
+    };
+  }
+
+  /**
+   * Códigos y descripciones de lo que una solicitud ajusta.
+   *
+   * Se resuelve en una tanda por tabla —no una consulta por línea— porque esto
+   * lo pide la pantalla de aprobación cada vez que alguien abre el detalle.
+   */
+  private async nombresDeLasLineas(lines: AdjustmentRequestLine[], items: AdjustmentPalletItem[][]) {
+    const productIds = [...new Set(lines.map((l) => l.productId))];
+    const palletIds = [...new Set(items.flat().map((i) => i.palletId).filter(Boolean))] as string[];
+    const locationIds = [...new Set(lines.map((l) => l.locationId).filter(Boolean))] as string[];
+
+    const [productos, palets, ubicaciones] = await Promise.all([
+      productIds.length
+        ? this.dataSource.getRepository(Product).find({ where: { id: In(productIds) } })
+        : Promise.resolve([] as Product[]),
+      palletIds.length
+        ? this.dataSource
+            .getRepository(Pallet)
+            .createQueryBuilder('pallet')
+            .leftJoin('lots', 'lot', 'lot.id = pallet."lotId"')
+            .leftJoin('locations', 'location', 'location.id = pallet."currentLocationId"')
+            .select([
+              'pallet.id AS id',
+              'pallet.code AS code',
+              'lot."lotCode" AS "lotCode"',
+              'location.code AS "locationCode"',
+            ])
+            .where('pallet.id IN (:...palletIds)', { palletIds })
+            .getRawMany<{ id: string; code: string; lotCode: string | null; locationCode: string | null }>()
+        : Promise.resolve([]),
+      locationIds.length
+        ? this.dataSource.getRepository(Ubicacion).find({ where: { id: In(locationIds) } })
+        : Promise.resolve([] as Ubicacion[]),
+    ]);
+
+    return {
+      productos: new Map(productos.map((p) => [p.id, {
+        id: p.id, code: p.code, description: p.description, unitOfMeasure: p.unitOfMeasure ?? null,
+      }])),
+      palets: new Map(palets.map((p) => [p.id, p])),
+      ubicaciones: new Map(ubicaciones.map((l) => [l.id, l.code])),
     };
   }
 

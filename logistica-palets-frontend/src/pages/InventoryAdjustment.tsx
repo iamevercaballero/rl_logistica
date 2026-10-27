@@ -38,15 +38,10 @@ import { getFriendlyApiError } from "../utils/apiError";
 import { claveDerivada, useClaveIdempotencia } from "../api/idempotency";
 import { useAuth } from "../auth/AuthContext";
 import { can } from "../auth/permissions";
+import type { Bucket, CartLine, CartLineEditState, LotGroup } from "./adjustmentCart";
 
 // ── Tipos locales ────────────────────────────────────────────────────────────
 
-// Sobrante a nivel Producto/Lote (pallet no registrado / sin pallet): registra pallet(s) nuevo(s).
-type PalletLine = { qty: string };
-type LotGroup = {
-  id: number; lotCode: string; quantity: string; palletCount: string;
-  palletLines: PalletLine[]; fechaVencimiento: string; fechaFabricacion: string;
-};
 let _gid = 0;
 const newLotGroup = (lotCode = ""): LotGroup => ({
   id: ++_gid, lotCode, quantity: "", palletCount: "",
@@ -62,21 +57,8 @@ function locationWarehouseId(loc: { warehouseId?: string; warehouse?: { id: stri
   return loc.warehouse?.id ?? loc.warehouseId;
 }
 
-type CartLine = {
-  key: number; productId: string; productLabel: string;
-  direction: AdjustmentType;
-  palletItems: CreateAdjustmentLinePayload["palletItems"];
-  totalQty: number; summary: string;
-  /** Presente solo en líneas "pallet existente" — ubicación real del pallet, derivada, no pedida. */
-  locationId?: string;
-  level: CountLevel;
-  scopeLabel: string;
-  systemQty: number;
-  physicalQty: number;
-};
 let _ck = 0;
 
-type Bucket = { direction: AdjustmentType; warehouseId?: string; lines: CartLine[] };
 
 const STATUS_LABEL: Record<string, string> = {
   BORRADOR: "Borrador",
@@ -208,6 +190,18 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
   const cartHasNewPalletLine = cart.some((l) => l.direction === "ADJUSTMENT_IN" && !l.locationId);
   const pendingIsNewPalletLine = diff !== null && diff > 0 && level !== "PALLET" && surplusDestination !== "EXISTING_PALLET";
   const warehouseRequired = cartHasNewPalletLine || pendingIsNewPalletLine;
+
+  /*
+   * Si dejó de hacer falta, se limpia lo que haya quedado elegido. No es
+   * cosmético: el backend le da prioridad a la ubicación del encabezado por
+   * sobre la de los pallets, así que una ubicación vieja escondida mandaría el
+   * ajuste al depósito equivocado.
+   */
+  useEffect(() => {
+    if (warehouseRequired) return;
+    setWarehouseId((w) => (w ? "" : w));
+    setLocationId((l) => (l ? "" : l));
+  }, [warehouseRequired]);
 
   // ── Reset helpers ──────────────────────────────────────────────────────────
   function resetCountEntry(lotCodeSeed = "") {
@@ -415,6 +409,55 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
     return { direction: "ADJUSTMENT_OUT", palletItems, totalQty: target, summary: `Lotes: ${lotsUsed.join(", ")} · ${detalle}` };
   }
 
+  /**
+   * Devuelve una línea del carrito al formulario para corregirla.
+   *
+   * Sale del carrito y vuelve a entrar al confirmar: así no hay dos copias del
+   * mismo conteo en juego ni hace falta un modo "estoy editando la línea N".
+   * Mismo comportamiento que "Editar" en el carrito de remitos.
+   */
+  function editLine(key: number) {
+    if (product) {
+      setFormError("Agregá o descartá el material que estás contando antes de editar otro del ajuste.");
+      return;
+    }
+    const line = cart.find((l) => l.key === key);
+    if (!line) return;
+
+    setCart((c) => c.filter((l) => l.key !== key));
+    setFormError("");
+
+    const e = line.editState;
+    setProduct(e.product);
+    setLevel(e.level);
+    setScopeLot(e.scopeLot);
+    setScopePallet(e.scopePallet);
+    setPhysicalQtyInput(e.physicalQtyInput);
+    setSurplusDestination(e.surplusDestination);
+    setSurplusPallet(e.surplusPallet);
+    setEntrySapLot(e.entrySapLot);
+    setLotGroups(e.lotGroups);
+    setShortageMode(e.shortageMode);
+    setShortagePhysicalByPallet(e.shortagePhysicalByPallet);
+  }
+
+  /** Foto del formulario actual, para que "Editar" lo devuelva tal cual estaba. */
+  function currentEditState(prod: Product): CartLineEditState {
+    return {
+      product: prod,
+      level,
+      scopeLot,
+      scopePallet,
+      physicalQtyInput,
+      surplusDestination,
+      surplusPallet,
+      entrySapLot,
+      lotGroups,
+      shortageMode,
+      shortagePhysicalByPallet,
+    };
+  }
+
   function addToCart() {
     if (!product) { setFormError("Seleccioná un material."); return; }
     if (diff === null || diff === 0) { setFormError("Ingresá el conteo físico — sin diferencia no hay nada para agregar."); return; }
@@ -426,6 +469,7 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
       key: ++_ck, productId: product.id, productLabel: `${product.code} · ${product.description}`,
       direction: res.direction, palletItems: res.palletItems, totalQty: res.totalQty, summary: res.summary,
       locationId: res.locationId, level, scopeLabel: currentScopeLabel(), systemQty, physicalQty: physicalQty ?? 0,
+      editState: currentEditState(product),
     }]);
     selectProduct(null);
   }
@@ -464,6 +508,7 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
           key: ++_ck, productId: product.id, productLabel: `${product.code} · ${product.description}`,
           direction: res.direction, palletItems: res.palletItems, totalQty: res.totalQty, summary: res.summary,
           locationId: res.locationId, level, scopeLabel: currentScopeLabel(), systemQty, physicalQty: physicalQty ?? 0,
+          editState: currentEditState(product),
         };
         const nextCart = [...cart, newLine];
         setCart(nextCart);
@@ -691,21 +736,33 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
               {ADJUSTMENT_REASON_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </div>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, color: warehouseRequired ? "var(--danger)" : "var(--muted)", textTransform: "uppercase", marginBottom: 2 }}>
-              Depósito{warehouseRequired ? " *" : ""}
+          {/* Depósito: sólo cuando hace falta de verdad, o sea cuando el ajuste
+              registra un pallet que todavía no existe. Si todo lo que se ajusta
+              son pallets ya registrados, el depósito lo deduce el backend de
+              esos pallets (ver `depositoDeLosPalets`) y preguntarlo acá era
+              pedir un dato que el sistema ya tiene. */}
+          {warehouseRequired && (
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--danger)", textTransform: "uppercase", marginBottom: 2 }}>
+                Depósito *
+              </div>
+              <select className="input" value={warehouseId} onChange={(e) => { setWarehouseId(e.target.value); setLocationId(""); }}>
+                <option value="">— Depósito —</option>
+                {(warehousesQ.data ?? []).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+              </select>
+              <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
+                Dónde registrar el pallet nuevo.
+              </div>
             </div>
-            <select className="input" value={warehouseId} onChange={(e) => { setWarehouseId(e.target.value); setLocationId(""); }}>
-              <option value="">— Depósito —</option>
-              {(warehousesQ.data ?? []).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-            </select>
-          </div>
+          )}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8, marginTop: 8 }}>
-          <select className="input" value={locationId} onChange={(e) => setLocationId(e.target.value)}>
-            <option value="">— Ubicación (opcional) —</option>
-            {filteredLocs.map((l) => <option key={l.id} value={l.id}>{l.code}</option>)}
-          </select>
+        <div style={{ display: "grid", gridTemplateColumns: warehouseRequired ? "1fr 2fr" : "1fr", gap: 8, marginTop: 8 }}>
+          {warehouseRequired && (
+            <select className="input" value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+              <option value="">— Ubicación (opcional) —</option>
+              {filteredLocs.map((l) => <option key={l.id} value={l.id}>{l.code}</option>)}
+            </select>
+          )}
           <textarea className="input" placeholder="Observaciones" value={notes} onChange={(e) => setNotes(e.target.value)} rows={1} />
         </div>
 
@@ -902,7 +959,26 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
                     <td style={{ textAlign: "right", fontWeight: 700, color: l.direction === "ADJUSTMENT_IN" ? "var(--success)" : "var(--danger)" }}>
                       {l.direction === "ADJUSTMENT_IN" ? "+" : "−"}{l.totalQty.toLocaleString("es-PY")}
                     </td>
-                    <td><button type="button" className="btn" onClick={() => setCart((c) => c.filter((x) => x.key !== l.key))} style={{ padding: "2px 8px", color: "var(--danger)" }}>×</button></td>
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => editLine(l.key)}
+                        style={{ padding: "2px 8px", marginRight: 6 }}
+                        title={`Corregir el conteo de ${l.productLabel}`}
+                      >
+                        Editar
+                      </button>
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => setCart((c) => c.filter((x) => x.key !== l.key))}
+                        style={{ padding: "2px 8px", color: "var(--danger)" }}
+                        title={`Quitar ${l.productLabel} del ajuste`}
+                      >
+                        ×
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

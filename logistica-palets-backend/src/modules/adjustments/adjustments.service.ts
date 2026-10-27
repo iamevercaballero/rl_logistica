@@ -18,6 +18,7 @@ import {
 } from './dto/adjustment.dto';
 import { MovementsService } from '../movements/movements.service';
 import { CreateMovementDto } from '../movements/dto/create-movement.dto';
+import { Pallet } from '../pallets/entities/pallet.entity';
 import { endOfBusinessDay, parseBusinessDate } from '../../common/date';
 import { sumQuantities } from '../../common/quantity';
 import {
@@ -154,6 +155,48 @@ export class AdjustmentsService {
     void Promise.all(patterns.map((pattern) => this.cache.delPattern(pattern)));
   }
 
+  /**
+   * Depósito deducido de los palets que el ajuste toca.
+   *
+   * Un ajuste de salida ajusta palets concretos, y cada palet está en una
+   * ubicación de un depósito: el dato ya existe y nunca hizo falta pedirlo. Sin
+   * esto, el depósito salía sólo del campo del encabezado —opcional para una
+   * salida—, así que una salida cargada sin completarlo quedaba con
+   * `warehouseId` nulo y después NADIE acotado a un depósito podía aprobarla
+   * ("La solicitud no tiene depósito asignado"). El `null` estaba pensado para
+   * los ajustes previos al multi-depósito, no para los nuevos.
+   *
+   * Devuelve `null` cuando no hay de dónde deducirlo (un sobrante que registra
+   * palets nuevos, que todavía no existen): ahí el depósito sigue viniendo del
+   * encabezado, que para ese caso sí es obligatorio.
+   */
+  private async depositoDeLosPalets(dto: CreateAdjustmentDto): Promise<string | null> {
+    const palletIds = [...new Set(
+      (dto.lines ?? []).flatMap((line) => (line.palletItems ?? []).map((item) => item.palletId).filter(Boolean)),
+    )] as string[];
+    if (palletIds.length === 0) return null;
+
+    const depositos = await this.dataSource
+      .getRepository(Pallet)
+      .createQueryBuilder('pallet')
+      .innerJoin('locations', 'location', 'location.id = pallet."currentLocationId"')
+      .select('DISTINCT location."warehouseId"', 'warehouseId')
+      .where('pallet.id IN (:...palletIds)', { palletIds })
+      .getRawMany<{ warehouseId: string | null }>();
+
+    const ids = depositos.map((d) => d.warehouseId).filter(Boolean) as string[];
+    if (ids.length === 0) return null;
+    if (ids.length > 1) {
+      // La pantalla sólo ofrece palets del depósito activo, así que esto no
+      // sale de la operación normal. Mezclarlos dejaría una solicitud que
+      // afecta a dos depósitos pero se aprueba con el permiso de uno.
+      throw new BadRequestException(
+        'El ajuste toca palets de más de un depósito. Cargá un ajuste por depósito.',
+      );
+    }
+    return ids[0];
+  }
+
   private async assertRequestAccess(user: AccessUser, requestId: string): Promise<void> {
     const row = await this.dataSource
       .getRepository(AdjustmentRequest)
@@ -170,9 +213,12 @@ export class AdjustmentsService {
     // El deposito del ajuste sale de la ubicacion cuando la hay; el del payload
     // es solo un fallback. Se valida antes de crear nada.
     const user: AccessUser = { userId, role: requesterRole ?? '' };
+    // Orden: la ubicación elegida, después los palets que el ajuste toca —que
+    // son el dato duro: están donde están— y recién al final el depósito del
+    // encabezado, que es el único que puede venir de un campo desactualizado.
     const warehouseId = dto.locationId
       ? await this.access.assertEntityAccess(user, 'location', dto.locationId)
-      : dto.warehouseId ?? null;
+      : (await this.depositoDeLosPalets(dto)) ?? dto.warehouseId ?? null;
     if (warehouseId) await this.access.assertWritableWarehouse(user, warehouseId);
 
     const result = await this.dataSource.transaction(async (manager) => {

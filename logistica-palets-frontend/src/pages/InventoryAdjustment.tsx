@@ -35,7 +35,7 @@ import {
 } from "../api/adjustments";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
-import { useClaveIdempotencia } from "../api/idempotency";
+import { claveDerivada, useClaveIdempotencia } from "../api/idempotency";
 import { useAuth } from "../auth/AuthContext";
 import { can } from "../auth/permissions";
 
@@ -491,16 +491,23 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
       // base estable: así un doble clic manda exactamente las mismas y ninguna
       // se duplica. Con una clave generada por llamada, el segundo clic crearía
       // el juego completo de ajustes otra vez.
+      //
+      // La parte que distingue una solicitud de otra sale de su CONTENIDO, no de
+      // su posición: cuando una sale bien y otra falla, la que salió bien se
+      // saca del carrito y las que quedan se renumeran, así que numerarlas hacía
+      // que una reusara la clave de otra que ya se había completado (ver
+      // `claveDerivada`).
       const base = claveAjuste.clave();
-      const settled = await Promise.allSettled(bucketsOrError.map(async (b, i) => {
-        const { requestId, code } = await createAdjustmentDraft({
+      const settled = await Promise.allSettled(bucketsOrError.map(async (b) => {
+        const payload = {
           type: b.direction,
           reason,
           warehouseId: b.direction === "ADJUSTMENT_IN" ? b.warehouseId : undefined,
           locationId: locationId || undefined,
           notes: notes.trim() || undefined,
           lines: b.lines.map((l) => ({ productId: l.productId, palletItems: l.palletItems, locationId: l.locationId })),
-        }, `${base}-${i}`);
+        };
+        const { requestId, code } = await createAdjustmentDraft(payload, claveDerivada(base, payload));
         if (submit) await submitAdjustmentForApproval(requestId);
         return { code, direction: b.direction, keys: b.lines.map((l) => l.key), qty: b.lines.reduce((s, l) => s + l.totalQty, 0) };
       }));

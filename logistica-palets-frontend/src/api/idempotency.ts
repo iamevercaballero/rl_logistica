@@ -30,6 +30,42 @@ export function cabeceraIdempotencia(clave: string | undefined) {
 }
 
 /**
+ * Clave para UNA de las operaciones de un envío que manda varias.
+ *
+ * Se deriva del CONTENIDO de esa operación, no de su posición en el envío.
+ * Numerarlas (`base-0`, `base-1`, …) parece equivalente y no lo es: si una sale
+ * bien y otra falla, la que salió bien se saca del carrito, las que quedan se
+ * recorren de nuevo desde cero y la que antes era la 1 pasa a ser la 0 — o sea,
+ * reusa la clave de una operación distinta que YA se completó. El backend lo
+ * rechaza, con razón, y el operador ve "La clave de idempotencia ya se usó para
+ * otra operación" sin haber hecho nada raro.
+ *
+ * Derivándola del contenido las dos propiedades se sostienen solas: el mismo
+ * contenido da la misma clave (doble clic y reintentos siguen deduplicados) y
+ * un contenido distinto da una clave distinta (nunca choca con otra operación).
+ */
+export function claveDerivada(base: string, contenido: unknown): string {
+  return `${base}-${huella(JSON.stringify(contenido) ?? "")}`;
+}
+
+/**
+ * FNV-1a de 32 bits en hexadecimal.
+ *
+ * Alcanza y sobra: esto no protege nada, sólo distingue operaciones dentro de
+ * un mismo envío —son unas pocas— y la clave ya viene namespaceada por `base`,
+ * que es un UUID. No se usa `crypto.subtle` porque es asíncrono y pide contexto
+ * seguro, que en http:// plano no hay.
+ */
+function huella(texto: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < texto.length; i++) {
+    h ^= texto.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
+/**
  * Mantiene una clave estable mientras dure la carga en curso.
  *
  * `renovar()` va DESPUÉS de un envío exitoso: a partir de ahí, lo que el

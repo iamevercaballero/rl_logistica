@@ -3,18 +3,33 @@ export type ShortageMode = "AUTO" | "MANUAL";
 type Props = {
   mode: ShortageMode;
   onChange: (mode: ShortageMode) => void;
+  /**
+   * Qué se está repartiendo. El criterio del automático no es el mismo: el
+   * faltante vacía por FEFO —el pallet que saldría primero— y el sobrante
+   * reparte en proporción, porque no hay forma de saber en cuál apareció.
+   */
+  direction?: "SHORTAGE" | "SURPLUS";
 };
 
-const OPTIONS: { value: ShortageMode; label: string; desc: string }[] = [
-  { value: "AUTO", label: "Automático", desc: "El sistema reparte el faltante por FEFO y te muestra el detalle." },
-  { value: "MANUAL", label: "Recuento por pallet", desc: "Cargá vos cuánto encontraste en cada pallet." },
-];
+/** ¿Cómo se reparte la diferencia? — automático o pallet por pallet. */
+export default function ShortageModePicker({ mode, onChange, direction = "SHORTAGE" }: Props) {
+  const esSobrante = direction === "SURPLUS";
+  const OPTIONS: { value: ShortageMode; label: string; desc: string }[] = [
+    {
+      value: "AUTO",
+      label: "Automático",
+      desc: esSobrante
+        ? "El sistema reparte el sobrante en proporción al stock de cada pallet y te muestra el detalle."
+        : "El sistema reparte el faltante por FEFO y te muestra el detalle.",
+    },
+    { value: "MANUAL", label: "Recuento por pallet", desc: "Cargá vos cuánto encontraste en cada pallet." },
+  ];
 
-/** ¿Cómo se descuenta el faltante? — automático (FEFO) o pallet por pallet. */
-export default function ShortageModePicker({ mode, onChange }: Props) {
   return (
     <div>
-      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>¿Cómo descontamos el faltante?</div>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+        {esSobrante ? "¿Cómo repartimos el sobrante?" : "¿Cómo descontamos el faltante?"}
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
         {OPTIONS.map((o) => {
           const active = mode === o.value;

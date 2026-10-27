@@ -35,6 +35,8 @@ export type CartLineEditState = {
   lotGroups: LotGroup[];
   shortageMode: ShortageMode;
   shortagePhysicalByPallet: Record<string, string>;
+  surplusMode: ShortageMode;
+  surplusPhysicalByPallet: Record<string, string>;
 };
 
 /** Un material ya contado, esperando a que se envíe el ajuste. */

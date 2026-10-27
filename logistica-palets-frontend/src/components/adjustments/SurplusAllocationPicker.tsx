@@ -1,7 +1,7 @@
 import LotPalletBreakdownTable, { type ScopedLot } from "./LotPalletBreakdownTable";
 import type { LotPallet } from "../../api/pallets";
 
-export type SurplusDestination = "EXISTING_PALLET" | "NEW_PALLET" | "NO_PALLET";
+export type SurplusDestination = "DISTRIBUTE" | "EXISTING_PALLET" | "NEW_PALLET" | "NO_PALLET";
 
 type Props = {
   destination: SurplusDestination;
@@ -14,8 +14,15 @@ type Props = {
   onSelectPallet: (lot: ScopedLot, pallet: LotPallet) => void;
 };
 
+/*
+ * El orden importa: la primera es la que más pasa en el depósito —se cuenta el
+ * lote entero y sobran unidades sin saber de qué pallet salieron— y es la que
+ * arranca elegida. Antes el default era "pallet no registrado", el caso menos
+ * frecuente, y además el único que obliga a elegir depósito.
+ */
 const OPTIONS: { value: SurplusDestination; label: string; desc: string }[] = [
-  { value: "EXISTING_PALLET", label: "En un pallet existente", desc: "Encontré más unidades dentro de un pallet que ya está registrado." },
+  { value: "DISTRIBUTE", label: "Repartido entre los pallets", desc: "Conté el lote entero y sobra, pero no sé en qué pallet estaba." },
+  { value: "EXISTING_PALLET", label: "En un pallet existente", desc: "Sé en cuál: encontré más unidades dentro de un pallet ya registrado." },
   { value: "NEW_PALLET", label: "Es un pallet no registrado", desc: "Encontré un pallet que todavía no está en el sistema." },
   { value: "NO_PALLET", label: "Son unidades sin pallet", desc: "No están agrupadas en un pallet identificable." },
 ];

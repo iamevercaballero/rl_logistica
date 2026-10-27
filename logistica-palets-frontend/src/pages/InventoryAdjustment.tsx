@@ -7,19 +7,20 @@ import LotPalletBreakdownTable, { type ScopedLot } from "../components/adjustmen
 import CountLevelPicker, { type CountLevel } from "../components/adjustments/CountLevelPicker";
 import CountEntryPanel from "../components/adjustments/CountEntryPanel";
 import SurplusAllocationPicker, { type SurplusDestination } from "../components/adjustments/SurplusAllocationPicker";
-import ShortageAllocationTable, { computeShortageAllocation, autoDistributeShortage, type CandidatePallet } from "../components/adjustments/ShortageAllocationTable";
+import ShortageAllocationTable from "../components/adjustments/ShortageAllocationTable";
+import { autoDistributeShortage, autoDistributeSurplus, type CandidatePallet } from "../components/adjustments/allocation";
 import ShortageModePicker, { type ShortageMode } from "../components/adjustments/ShortageModePicker";
 import AdjustmentLinesDetail from "../components/adjustments/AdjustmentLinesDetail";
+import { buildDistributedLine, buildNewPalletSurplusLine } from "./adjustmentLines";
 import AdjustmentSummary from "../components/adjustments/AdjustmentSummary";
 import type { Product } from "../api/products";
 import { listWarehouses } from "../api/warehouses";
 import { listLocations } from "../api/locations";
 import { useActiveWarehouseId } from "../contexts/WarehouseContext";
-import { palletDistributionError, sapLotForProduct } from "./movementFormModel";
 import { generateSapLot, fefoLots } from "../api/lots";
 import type { LotPallet } from "../api/pallets";
 import { formatDateOnly } from "../utils/dateFormat";
-import { distributeQty, fmtQty, parseQtyInput, quantitiesEqual, quantityDelta, quantityMismatch, roundQty, sumQuantities, toQtyPayload } from "../utils/quantity";
+import { distributeQty, fmtQty, parseQtyInput, quantitiesEqual, quantityDelta, roundQty, sumQuantities } from "../utils/quantity";
 import QuantityInput from "../design-system/QuantityInput";
 import {
   createAdjustmentDraft,
@@ -97,7 +98,7 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
   const [physicalQtyInput, setPhysicalQtyInput] = useState("");
 
   // Sobrante (Producto/Lote): dónde están las unidades
-  const [surplusDestination, setSurplusDestination] = useState<SurplusDestination>("NEW_PALLET");
+  const [surplusDestination, setSurplusDestination] = useState<SurplusDestination>("DISTRIBUTE");
   const [surplusPallet, setSurplusPallet] = useState<LotPallet | null>(null);
   const [entrySapLot, setEntrySapLot] = useState(() => generateSapLot());
   const [lotGroups, setLotGroups] = useState<LotGroup[]>([newLotGroup()]);
@@ -105,6 +106,11 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
   // Faltante (Producto/Lote): lo reparte el sistema (FEFO) o se recuenta pallet por pallet
   const [shortageMode, setShortageMode] = useState<ShortageMode>("AUTO");
   const [shortagePhysicalByPallet, setShortagePhysicalByPallet] = useState<Record<string, string>>({});
+
+  // Sobrante repartido entre los pallets del lote/producto: mismo par de estados
+  // que el faltante, porque es la misma tabla con el signo al revés.
+  const [surplusMode, setSurplusMode] = useState<ShortageMode>("AUTO");
+  const [surplusPhysicalByPallet, setSurplusPhysicalByPallet] = useState<Record<string, string>>({});
 
   // Carrito, errores y resumen previo al envío
   const [cart, setCart] = useState<CartLine[]>([]);
@@ -181,6 +187,11 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
 
   // Faltante a repartir y cuánto pueden absorber los pallets candidatos.
   const shortageTarget = diff !== null && diff < 0 && level !== "PALLET" ? roundQty(-diff) : 0;
+  /** Sobrante a repartir entre los pallets que ya existen. */
+  const surplusTarget =
+    diff !== null && diff > 0 && level !== "PALLET" && surplusDestination === "DISTRIBUTE"
+      ? roundQty(diff)
+      : 0;
   const shortageCapacity = sumQuantities(shortageCandidates.map((p) => p.quantity));
   // `shortageCandidates` es un array nuevo en cada render: no sirve como dependencia
   // del efecto de autodistribución, se usa esta clave estable en su lugar.
@@ -189,7 +200,10 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
   const cartInCount = cart.filter((l) => l.direction === "ADJUSTMENT_IN").length;
   const cartOutCount = cart.filter((l) => l.direction === "ADJUSTMENT_OUT").length;
   const cartHasNewPalletLine = cart.some((l) => l.direction === "ADJUSTMENT_IN" && !l.locationId);
-  const pendingIsNewPalletLine = diff !== null && diff > 0 && level !== "PALLET" && surplusDestination !== "EXISTING_PALLET";
+  // Sólo "pallet no registrado" y "sin pallet" crean un pallet; repartir entre
+  // los que ya existen y cargar sobre uno existente no, así que no piden depósito.
+  const pendingIsNewPalletLine = diff !== null && diff > 0 && level !== "PALLET"
+    && surplusDestination !== "EXISTING_PALLET" && surplusDestination !== "DISTRIBUTE";
   const warehouseRequired = cartHasNewPalletLine || pendingIsNewPalletLine;
 
   /*
@@ -207,12 +221,14 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
   // ── Reset helpers ──────────────────────────────────────────────────────────
   function resetCountEntry(lotCodeSeed = "") {
     setPhysicalQtyInput("");
-    setSurplusDestination("NEW_PALLET");
+    setSurplusDestination("DISTRIBUTE");
     setSurplusPallet(null);
     setLotGroups([newLotGroup(lotCodeSeed)]);
     setEntrySapLot(generateSapLot());
     setShortageMode("AUTO");
     setShortagePhysicalByPallet({});
+    setSurplusMode("AUTO");
+    setSurplusPhysicalByPallet({});
     setFormError("");
   }
 
@@ -257,6 +273,9 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
   function changeSurplusDestination(d: SurplusDestination) {
     setSurplusDestination(d);
     setSurplusPallet(null);
+    // El reparto anterior no aplica al destino nuevo: se vuelve a proponer.
+    setSurplusMode("AUTO");
+    setSurplusPhysicalByPallet({});
     if (level === "LOT") {
       // El lote ya es conocido (se eligió al entrar a este nivel): "no registrado" y "sin
       // pallet" terminan siendo el mismo lote, solo cambia si el operador lo confirma o no.
@@ -287,12 +306,33 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
 
   // Sugiere el total en el primer (único) lote apenas se conoce la diferencia — el operador lo puede editar.
   useEffect(() => {
-    if (level === "PALLET" || surplusDestination === "EXISTING_PALLET") return;
+    if (level === "PALLET" || surplusDestination === "EXISTING_PALLET" || surplusDestination === "DISTRIBUTE") return;
     if (diff !== null && diff > 0 && lotGroups.length === 1 && !lotGroups[0].quantity) {
       setLotGroups((g) => [{ ...g[0], quantity: fmtQty(diff) }]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [diff, surplusDestination]);
+
+  /*
+   * Sin pallets donde repartir no hay reparto posible — un sobrante de un
+   * material que hoy tiene stock cero, por ejemplo. Ahí el único destino con
+   * sentido es registrar el pallet, así que se cambia solo en vez de dejar al
+   * operador trabado contra una tabla vacía.
+   */
+  useEffect(() => {
+    if (surplusDestination === "DISTRIBUTE" && !lotsQ.isFetching && shortageCandidates.length === 0) {
+      changeSurplusDestination("NEW_PALLET");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [surplusDestination, lotsQ.isFetching, shortageCandidatesKey]);
+
+  // Sobrante en modo automático: el sistema reparte en proporción al stock de cada
+  // pallet y deja el resultado en el mismo mapa que llena el recuento manual.
+  useEffect(() => {
+    if (surplusMode !== "AUTO" || surplusTarget <= 0) return;
+    setSurplusPhysicalByPallet(autoDistributeSurplus(shortageCandidates, surplusTarget).physicalByPallet);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [surplusMode, surplusTarget, shortageCandidatesKey]);
 
   // Faltante en modo automático: el sistema reparte por FEFO y deja el resultado en el
   // mismo mapa que llena el recuento manual, así la validación, el resumen y el envío
@@ -357,6 +397,14 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
 
     // Nivel Lote/Producto, sobrante.
     if (diff > 0) {
+      // Repartido entre los pallets que ya existen: mismo mecanismo que el
+      // faltante —se recontó cada pallet y la diferencia sale sola—, sólo que
+      // acá las diferencias suman en vez de restar.
+      if (surplusDestination === "DISTRIBUTE") {
+        return buildDistributedLine(
+          "ADJUSTMENT_IN", shortageCandidates, surplusPhysicalByPallet, roundQty(diff), surplusMode === "AUTO",
+        );
+      }
       if (surplusDestination === "EXISTING_PALLET") {
         if (!surplusPallet) return { error: "Elegí el pallet existente donde va el sobrante." };
         return {
@@ -368,46 +416,13 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
         };
       }
       // NEW_PALLET / NO_PALLET: mismo formulario de lote(s) nuevo(s).
-      const validGroups = lotGroups.filter((g) => g.lotCode.trim() && (parseQtyInput(g.quantity) ?? 0) > 0);
-      if (validGroups.length === 0) return { error: "Indicá el lote donde vas a registrar el sobrante." };
-      const sumGroups = sumQuantities(validGroups.map((g) => parseQtyInput(g.quantity) ?? 0));
-      if (!quantitiesEqual(sumGroups, diff)) {
-        return { error: `La suma asignada no coincide con la diferencia — ${quantityMismatch(diff, sumGroups).message}. Ajustá las cantidades.` };
-      }
-      for (const g of validGroups) {
-        if (g.palletLines.length > 0) {
-          const err = palletDistributionError(
-            g.palletLines.map((l) => l.qty),
-            g.quantity,
-            { label: `Lote ${g.lotCode.trim()}` },
-          );
-          if (err) return { error: err };
-        }
-      }
-      const palletItems = validGroups.flatMap((g) => {
-        // Igual que en la Entrada: al material sin Lote SAP no se le manda uno.
-        const base = { lotCode: g.lotCode.trim(), fechaVencimiento: g.fechaVencimiento || undefined, fechaFabricacion: g.fechaFabricacion || undefined, sapLot: sapLotForProduct(product, entrySapLot) };
-        if (g.palletLines.length > 0) return g.palletLines.map((l) => ({ ...base, quantity: toQtyPayload(l.qty) ?? 0 }));
-        return [{ ...base, quantity: toQtyPayload(g.quantity) ?? 0 }];
-      });
-      return { direction: "ADJUSTMENT_IN", palletItems, totalQty: diff, summary: `Lotes: ${validGroups.map((g) => g.lotCode.trim()).join(", ")}` };
+      return buildNewPalletSurplusLine(product, lotGroups, entrySapLot, diff);
     }
 
     // Nivel Lote/Producto, faltante: distribución por pallet (Sistema → Físico → diferencia).
-    const target = shortageTarget;
-    const { palletItems, total } = computeShortageAllocation(shortageCandidates, shortagePhysicalByPallet);
-    if (palletItems.length === 0) return { error: "Recontá al menos un pallet donde encontraste menos, para cubrir el faltante." };
-    if (!quantitiesEqual(total, target)) {
-      const pending = quantityDelta(target, total);
-      return {
-        error: pending > 0
-          ? `Falta asignar ${fmtQty(pending)} unidades — llevás ${fmtQty(total)} de ${fmtQty(target)}.`
-          : `Te pasaste por ${fmtQty(Math.abs(pending))} unidades — asignaste ${fmtQty(total)} y el faltante es ${fmtQty(target)}.`,
-      };
-    }
-    const lotsUsed = [...new Set(palletItems.map((i) => shortageCandidates.find((p) => p.id === i.palletId)?.lotCode).filter((v): v is string => !!v))];
-    const detalle = `${palletItems.length} pallet${palletItems.length !== 1 ? "s" : ""}${shortageMode === "AUTO" ? " (distribución automática)" : ""}`;
-    return { direction: "ADJUSTMENT_OUT", palletItems, totalQty: target, summary: `Lotes: ${lotsUsed.join(", ")} · ${detalle}` };
+    return buildDistributedLine(
+      "ADJUSTMENT_OUT", shortageCandidates, shortagePhysicalByPallet, shortageTarget, shortageMode === "AUTO",
+    );
   }
 
   /**
@@ -440,6 +455,8 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
     setLotGroups(e.lotGroups);
     setShortageMode(e.shortageMode);
     setShortagePhysicalByPallet(e.shortagePhysicalByPallet);
+    setSurplusMode(e.surplusMode);
+    setSurplusPhysicalByPallet(e.surplusPhysicalByPallet);
   }
 
   /** Foto del formulario actual, para que "Editar" lo devuelva tal cual estaba. */
@@ -456,6 +473,8 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
       lotGroups,
       shortageMode,
       shortagePhysicalByPallet,
+      surplusMode,
+      surplusPhysicalByPallet,
     };
   }
 
@@ -807,13 +826,32 @@ export default function InventoryAdjustmentPage({ onTypeChange }: { onTypeChange
                     onSelectPallet={selectSurplusPallet}
                   />
 
+                  {/* Repartido entre los pallets que ya existen: misma tabla que el
+                      faltante, con el signo al revés. El automático propone y el
+                      recuento manual deja cargarlo pallet por pallet. */}
+                  {surplusDestination === "DISTRIBUTE" && (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      <ShortageModePicker mode={surplusMode} onChange={setSurplusMode} direction="SURPLUS" />
+                      <ShortageAllocationTable
+                        direction="SURPLUS"
+                        pallets={shortageCandidates}
+                        physicalByPallet={surplusPhysicalByPallet}
+                        onPhysicalChange={(palletId, value) =>
+                          setSurplusPhysicalByPallet((m) => ({ ...m, [palletId]: value }))}
+                        locationMap={locationMap}
+                        target={surplusTarget}
+                        readOnly={surplusMode === "AUTO"}
+                      />
+                    </div>
+                  )}
+
                   {surplusDestination === "EXISTING_PALLET" && surplusPallet && (
                     <div style={{ background: "var(--panel-hi)", border: "1px solid var(--success)", borderRadius: 8, padding: "10px 14px", fontSize: 13 }}>
                       Se sumarán <strong style={{ color: "var(--success)" }}>+{diff.toLocaleString("es-PY")}</strong> unidades directo al pallet <strong>{surplusPallet.code}</strong> — no se crea pallet nuevo, y el depósito/ubicación se toman del pallet.
                     </div>
                   )}
 
-                  {surplusDestination !== "EXISTING_PALLET" && (
+                  {surplusDestination !== "EXISTING_PALLET" && surplusDestination !== "DISTRIBUTE" && (
                     <>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
                         <div style={{ fontSize: 13, fontWeight: 700 }}>{surplusFormHeading}</div>

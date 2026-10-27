@@ -1,63 +1,12 @@
-import type { LotPallet } from "../../api/pallets";
 import QuantityInput from "../../design-system/QuantityInput";
-import { fmtQty, parseQtyInput, quantityDelta, roundQty, sumQuantities } from "../../utils/quantity";
-
-export type CandidatePallet = LotPallet & { lotCode: string };
-
-/**
- * Las cantidades viven con 3 decimales (columna `numeric(14,3)`). Toda resta y
- * suma se hace por enteros escalados (`quantityDelta` / `sumQuantities`) para
- * que un residuo de coma flotante no haga "no coincidir" la asignación con el
- * faltante.
- */
-const round3 = roundQty;
+import { fmtQty, parseQtyInput, quantityDelta, sumQuantities } from "../../utils/quantity";
+import {
+  computeShortageAllocation,
+  computeSurplusAllocation,
+  type CandidatePallet,
+} from "./allocation";
 
 const fmt = fmtQty;
-
-/**
- * Misma lógica que usará el envío: por cada pallet con un físico válido y menor al
- * sistema, la diferencia (positiva) es lo que se descuenta de ese pallet. Pallets no
- * tocados o con físico ≥ sistema no aportan a esta línea de salida.
- */
-export function computeShortageAllocation(
-  pallets: CandidatePallet[],
-  physicalByPallet: Record<string, string>,
-): { palletItems: { palletId: string; quantity: number }[]; total: number } {
-  const palletItems: { palletId: string; quantity: number }[] = [];
-  for (const p of pallets) {
-    const raw = physicalByPallet[p.id] ?? fmtQty(p.quantity);
-    const phys = parseQtyInput(raw);
-    if (phys === null || phys < 0) continue;
-    const take = quantityDelta(p.quantity, phys);
-    if (take > 0) palletItems.push({ palletId: p.id, quantity: take });
-  }
-  return { palletItems, total: sumQuantities(palletItems.map((i) => i.quantity)) };
-}
-
-/**
- * Distribución automática del faltante — mismo criterio FEFO que el motor de salidas
- * del backend (`autoFefoExit`): consume los pallets en el orden en que llegan de
- * `/lots/fefo` (lotes con vencimiento más próximo primero) y vacía cada uno antes de
- * pasar al siguiente. Devuelve el **conteo físico resultante por pallet**, no la
- * cantidad tomada, para que el resto del flujo (validación, resumen y envío) sea
- * idéntico al del recuento manual — lo único que cambia es quién carga los números.
- *
- * `covered` es lo que efectivamente se pudo repartir: si es menor a `target`, los
- * pallets disponibles no alcanzan para cubrir el faltante.
- */
-export function autoDistributeShortage(
-  pallets: CandidatePallet[],
-  target: number,
-): { physicalByPallet: Record<string, string>; covered: number } {
-  const physicalByPallet: Record<string, string> = {};
-  let remaining = round3(target);
-  for (const p of pallets) {
-    const take = Math.min(p.quantity, Math.max(0, remaining));
-    remaining = quantityDelta(remaining, take);
-    physicalByPallet[p.id] = fmtQty(quantityDelta(p.quantity, take));
-  }
-  return { physicalByPallet, covered: quantityDelta(target, remaining) };
-}
 
 type Props = {
   pallets: CandidatePallet[];
@@ -68,6 +17,12 @@ type Props = {
   target: number;
   /** En modo automático la distribución la hizo el sistema: se muestra, no se edita. */
   readOnly?: boolean;
+  /**
+   * Qué se está repartiendo. El faltante descuenta de cada pallet y el sobrante
+   * le agrega; el resto —recontar pallet por pallet y derivar la diferencia— es
+   * idéntico, así que la tabla es la misma.
+   */
+  direction?: "SHORTAGE" | "SURPLUS";
 };
 
 /**
@@ -77,21 +32,29 @@ type Props = {
  * llegar al faltante, y cada fila ofrece el valor exacto que lo cierra.
  */
 export default function ShortageAllocationTable({
-  pallets, physicalByPallet, onPhysicalChange, locationMap, target, readOnly,
+  pallets, physicalByPallet, onPhysicalChange, locationMap, target, readOnly, direction = "SHORTAGE",
 }: Props) {
+  const esSobrante = direction === "SURPLUS";
+  const palabra = esSobrante ? "sobrante" : "faltante";
   if (pallets.length === 0) {
-    return <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>Sin pallets disponibles para cubrir el faltante.</p>;
+    return <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>Sin pallets disponibles para cubrir el {palabra}.</p>;
   }
 
-  const { total: assigned } = computeShortageAllocation(pallets, physicalByPallet);
+  const { total: assigned } = esSobrante
+    ? computeSurplusAllocation(pallets, physicalByPallet)
+    : computeShortageAllocation(pallets, physicalByPallet);
   const pending = quantityDelta(target, assigned);
 
   return (
     <div style={{ display: "grid", gap: 6 }}>
       <div style={{ fontSize: 13, fontWeight: 700 }}>
         {readOnly
-          ? "Distribución del faltante — así lo repartió el sistema (FEFO: vencimiento más próximo primero)"
-          : "Distribución del faltante — recontá los pallets donde encontraste menos"}
+          ? esSobrante
+            ? "Distribución del sobrante — así lo repartió el sistema (en proporción al stock de cada pallet)"
+            : "Distribución del faltante — así lo repartió el sistema (FEFO: vencimiento más próximo primero)"
+          : esSobrante
+            ? "Distribución del sobrante — recontá los pallets donde encontraste más"
+            : "Distribución del faltante — recontá los pallets donde encontraste menos"}
       </div>
       <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 90px 90px 110px", gap: 8, padding: "6px 10px", fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", background: "var(--bg)", borderBottom: "1px solid var(--border)" }}>
@@ -106,12 +69,22 @@ export default function ShortageAllocationTable({
           const raw = physicalByPallet[p.id] ?? fmtQty(p.quantity);
           const phys = parseQtyInput(raw);
           const valid = phys !== null && phys >= 0;
-          const take = phys !== null && valid ? quantityDelta(p.quantity, phys) : 0;
-          const isSurplusHere = valid && take < 0;
-          // Valor que, puesto en esta fila, deja el faltante exacto en cero. Solo se
-          // ofrece si cabe en el pallet (no puede quedar negativo ni superar el stock).
-          const closeValue = phys !== null && valid ? quantityDelta(phys, pending) : null;
-          const canClose = !readOnly && pending !== 0 && closeValue !== null && closeValue >= 0 && closeValue <= p.quantity;
+          // `aporta` es lo que esta fila suma al total que se está repartiendo:
+          // en el faltante, lo que se descuenta; en el sobrante, lo que se agrega.
+          const aporta = phys !== null && valid
+            ? (esSobrante ? quantityDelta(phys, p.quantity) : quantityDelta(p.quantity, phys))
+            : 0;
+          // Una fila con el signo contrario al que se está cargando: no es un
+          // error de tipeo necesariamente, pero no entra en este ajuste.
+          const alReves = valid && aporta < 0;
+          // Valor que, puesto en esta fila, deja la cuenta exacta en cero.
+          const closeValue = phys !== null && valid
+            ? (esSobrante ? sumQuantities([phys, pending]) : quantityDelta(phys, pending))
+            : null;
+          // En el faltante no puede pedir más de lo que el pallet tiene; en el
+          // sobrante no hay techo, sólo no puede quedar negativo.
+          const canClose = !readOnly && pending !== 0 && closeValue !== null && closeValue >= 0
+            && (esSobrante || closeValue <= p.quantity);
           return (
             <div key={p.id} style={{ borderBottom: idx < pallets.length - 1 ? "1px solid var(--border)" : undefined }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 90px 90px 110px", gap: 8, alignItems: "start", padding: "6px 10px" }}>
@@ -134,20 +107,28 @@ export default function ShortageAllocationTable({
                     <button
                       type="button"
                       onClick={() => onPhysicalChange(p.id, fmtQty(closeValue!))}
-                      title={`Dejar ${fmt(closeValue!)} en este pallet cierra el faltante exacto`}
+                      title={`Dejar ${fmt(closeValue!)} en este pallet cierra el ${palabra} exacto`}
                       style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--primary)", fontSize: 11, fontWeight: 700, textAlign: "left" }}
                     >
                       {closeValue! < (phys ?? 0) ? "↓" : "↑"} {fmt(closeValue!)}
                     </button>
                   )}
                 </div>
-                <span style={{ textAlign: "right", fontSize: 13, fontWeight: 700, paddingTop: 5, color: !valid ? "var(--muted)" : take > 0 ? "var(--danger)" : take < 0 ? "var(--warning)" : "var(--muted)" }}>
-                  {!valid ? "—" : take === 0 ? "0" : take > 0 ? `−${fmt(take)}` : `+${fmt(Math.abs(take))}`}
+                <span style={{ textAlign: "right", fontSize: 13, fontWeight: 700, paddingTop: 5, color: !valid ? "var(--muted)" : aporta > 0 ? (esSobrante ? "var(--success)" : "var(--danger)") : aporta < 0 ? "var(--warning)" : "var(--muted)" }}>
+                  {!valid
+                    ? "—"
+                    : aporta === 0
+                      ? "0"
+                      : aporta > 0
+                        ? `${esSobrante ? "+" : "−"}${fmt(aporta)}`
+                        : `${esSobrante ? "−" : "+"}${fmt(Math.abs(aporta))}`}
                 </span>
               </div>
-              {isSurplusHere && (
+              {alReves && (
                 <div style={{ padding: "0 10px 6px", fontSize: 11, color: "var(--warning)" }}>
-                  Este pallet tiene sobrante — cargalo aparte con un conteo a nivel Pallet.
+                  {esSobrante
+                    ? "Este pallet tiene faltante — cargalo aparte, no entra en este sobrante."
+                    : "Este pallet tiene sobrante — cargalo aparte con un conteo a nivel Pallet."}
                 </div>
               )}
             </div>
@@ -159,7 +140,7 @@ export default function ShortageAllocationTable({
             Asignado <strong style={{ color: "var(--text)" }}>{fmt(assigned)}</strong> de {fmt(target)}
           </span>
           {pending === 0 ? (
-            <span style={{ fontSize: 13, fontWeight: 800, color: "var(--success)" }}>✓ Faltante cubierto</span>
+            <span style={{ fontSize: 13, fontWeight: 800, color: "var(--success)" }}>✓ {esSobrante ? "Sobrante repartido" : "Faltante cubierto"}</span>
           ) : pending > 0 ? (
             <span style={{ fontSize: 13, fontWeight: 800, color: "var(--warning)" }}>Falta asignar {fmt(pending)}</span>
           ) : (

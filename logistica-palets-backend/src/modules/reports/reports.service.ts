@@ -11,6 +11,7 @@ import { SapStockSnapshot } from './entities/sap-stock.entity';
 import { roundQuantity } from '../../common/quantity';
 import { CacheService } from '../cache/cache.service';
 import type { WarehouseScope } from '../warehouses/warehouse-access.service';
+import { movementLotSearchPredicate } from '../../common/movement-lot-search';
 import {
   businessDaysUntil,
   businessToday,
@@ -636,7 +637,8 @@ export class ReportsService {
           )
           OR LOWER(COALESCE(m.notes, '')) LIKE :search
           OR LOWER(COALESCE(p.code, '')) LIKE :search
-          OR LOWER(COALESCE(p.description, '')) LIKE :search)`,
+          OR LOWER(COALESCE(p.description, '')) LIKE :search
+          OR ${movementLotSearchPredicate('m')})`,
         { search: `%${query.search.trim().toLowerCase()}%` },
       );
     }

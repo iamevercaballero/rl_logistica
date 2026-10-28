@@ -89,20 +89,22 @@ export const paginaMovimientos = (
 
 export const paginaEntradas = (
   warehouseId: string | undefined,
-  f: { productId: string; dateFrom: string; dateTo: string },
+  f: { productId?: string; search?: string; dateFrom: string; dateTo: string },
 ) => (page: number, limit: number) => getMovements({
   type: "ENTRY", page, limit, warehouseId,
   productId: f.productId || undefined,
+  search:    f.search?.trim() || undefined,
   dateFrom:  f.dateFrom  || undefined,
   dateTo:    f.dateTo    || undefined,
 });
 
 export const paginaSalidas = (
   warehouseId: string | undefined,
-  f: { productId: string; dateFrom: string; dateTo: string; documentoMaterialStatus: string },
+  f: { productId?: string; search?: string; dateFrom: string; dateTo: string; documentoMaterialStatus: string },
 ) => (page: number, limit: number) => getMovements({
   type: "EXIT", page, limit, warehouseId,
   productId: f.productId || undefined,
+  search:    f.search?.trim() || undefined,
   dateFrom:  f.dateFrom  || undefined,
   dateTo:    f.dateTo    || undefined,
   documentoMaterialStatus: (f.documentoMaterialStatus || undefined) as "PENDING" | "COMPLETED" | undefined,

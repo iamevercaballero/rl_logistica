@@ -9,6 +9,9 @@ import {
 } from "../utils/dateFormat";
 import { useTableSort, sortArrow } from "../hooks/useTableSort";
 import ExpandableText from "../design-system/ExpandableText";
+import SearchField from "../design-system/SearchField";
+import SearchableSelect from "../design-system/SearchableSelect";
+import { matchesInventorySearch } from "../utils/inventorySearch";
 import { sapLotApplies } from "./movementFormModel";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -175,26 +178,25 @@ export default function ReportsPage() {
   const [datePreset, setDatePreset] = useState("");
 
   // Lotes tab
-  const [lotSapSearch, setLotSapSearch] = useState("");
-  const [lotProductSearch, setLotProductSearch] = useState("");
-  const [lotApplied, setLotApplied] = useState<{ sap: string; product: string } | null>(null);
+  const [lotSearch, setLotSearch] = useState("");
+  const [lotApplied, setLotApplied] = useState<string | null>(null);
 
   // Entradas tab
-  const [entProductId, setEntProductId] = useState("");
+  const [entSearch, setEntSearch] = useState("");
   const [entDateFrom, setEntDateFrom] = useState("");
   const [entDateTo, setEntDateTo] = useState("");
   const [entDatePreset, setEntDatePreset] = useState("");
-  const [entApplied, setEntApplied] = useState({ productId: "", dateFrom: "", dateTo: "" });
+  const [entApplied, setEntApplied] = useState({ search: "", dateFrom: "", dateTo: "" });
   const [entPage, setEntPage] = useState(1);
   const [entLimit, setEntLimit] = useState(20);
 
   // Salidas tab
-  const [salProductId, setSalProductId] = useState("");
+  const [salSearch, setSalSearch] = useState("");
   const [salDateFrom, setSalDateFrom] = useState("");
   const [salDateTo, setSalDateTo] = useState("");
   const [salDatePreset, setSalDatePreset] = useState("");
   const [salDocumentoMaterialStatus, setSalDocumentoMaterialStatus] = useState<"" | "PENDING" | "COMPLETED">("");
-  const [salApplied, setSalApplied] = useState({ productId: "", dateFrom: "", dateTo: "", documentoMaterialStatus: "" as "" | "PENDING" | "COMPLETED" });
+  const [salApplied, setSalApplied] = useState({ search: "", dateFrom: "", dateTo: "", documentoMaterialStatus: "" as "" | "PENDING" | "COMPLETED" });
   const [salPage, setSalPage] = useState(1);
   const [salLimit, setSalLimit] = useState(20);
 
@@ -208,8 +210,8 @@ export default function ReportsPage() {
   const [traceApplied, setTraceApplied] = useState("");
 
   // Frescura tab
-  const [freshnessProductId, setFreshnessProductId] = useState("");
-  const [freshnessApplied, setFreshnessApplied] = useState<string | undefined>(undefined);
+  const [freshnessSearch, setFreshnessSearch] = useState("");
+  const [freshnessApplied, setFreshnessApplied] = useState("");
 
   // Daily tab
   const [dailyDateFrom, setDailyDateFrom] = useState(today);
@@ -256,10 +258,8 @@ export default function ReportsPage() {
   });
 
   const lotsQ = useQuery({
-    queryKey: ["lots", "search", activeWarehouseId, lotApplied],
-    queryFn:  () => listLots(
-      lotApplied?.product || undefined, lotApplied?.sap || undefined, false, activeWarehouseId,
-    ),
+    queryKey: ["lots", "search", activeWarehouseId],
+    queryFn:  () => listLots(undefined, undefined, false, activeWarehouseId),
     enabled:  lotApplied !== null && scoped,
   });
 
@@ -268,7 +268,7 @@ export default function ReportsPage() {
     queryFn:  () => getMovements({
       type: "ENTRY", page: entPage, limit: entLimit,
       warehouseId: activeWarehouseId,
-      productId: entApplied.productId || undefined,
+      search: entApplied.search.trim() || undefined,
       dateFrom:  entApplied.dateFrom  || undefined,
       dateTo:    entApplied.dateTo    || undefined,
     }),
@@ -281,7 +281,7 @@ export default function ReportsPage() {
     queryFn:  () => getMovements({
       type: "EXIT", page: salPage, limit: salLimit,
       warehouseId: activeWarehouseId,
-      productId: salApplied.productId || undefined,
+      search: salApplied.search.trim() || undefined,
       dateFrom:  salApplied.dateFrom  || undefined,
       dateTo:    salApplied.dateTo    || undefined,
       documentoMaterialStatus: salApplied.documentoMaterialStatus || undefined,
@@ -306,8 +306,8 @@ export default function ReportsPage() {
   });
 
   const freshnessQ = useQuery({
-    queryKey: ["reports", "freshness", activeWarehouseId, freshnessApplied],
-    queryFn:  () => getFreshnessReport(freshnessApplied, activeWarehouseId),
+    queryKey: ["reports", "freshness", activeWarehouseId],
+    queryFn:  () => getFreshnessReport(undefined, activeWarehouseId),
     enabled:  activeTab === "frescura" && scoped,
     staleTime: 60_000,
   });
@@ -367,14 +367,14 @@ export default function ReportsPage() {
   const stock        = stockQ.data     ?? null;
   const movements    = movementsQ.data?.data ?? [];
   const movMeta      = movementsQ.data?.meta ?? { page: movPage, limit: movLimit, total: 0, totalPages: 1 };
-  const lotResults   = lotsQ.data ?? [];
+  const lotResults   = useMemo(() => lotApplied === null ? [] : (lotsQ.data ?? []).filter((r) => matchesInventorySearch(r, lotApplied)), [lotsQ.data, lotApplied]);
   const entries      = entQ.data?.data ?? [];
   const entMeta      = entQ.data?.meta ?? { page: entPage, limit: entLimit, total: 0, totalPages: 1 };
   const salMovements = salQ.data?.data ?? [];
   const salMeta      = salQ.data?.meta ?? { page: salPage, limit: salLimit, total: 0, totalPages: 1 };
   const dailyStock   = useMemo(() => dailyQ.data ?? [], [dailyQ.data]);
   const traceResult  = traceQ.data ?? null;
-  const freshnessData = freshnessQ.data ?? [];
+  const freshnessData = useMemo(() => (freshnessQ.data ?? []).filter((r) => matchesInventorySearch(r, freshnessApplied)), [freshnessQ.data, freshnessApplied]);
 
   // Filtrado de Control diario por búsqueda de producto (client-side)
   const dailyStockFiltered = useMemo(() => {
@@ -557,11 +557,9 @@ export default function ReportsPage() {
             <span className="badge" title="Depósito activo de la sesión">
               {warehouseLabel(activeWarehouse)}
             </span>
-            <select className="input" value={filters.productId} aria-label="Material"
-              onChange={(e) => setFilters((p) => ({ ...p, productId: e.target.value }))}>
-              <option value="">Todos los materiales</option>
-              {products.map((p) => <option key={p.id} value={p.id}>{p.code}</option>)}
-            </select>
+            <SearchField value={filters.search} label="Buscar movimientos"
+              onChange={(search) => setFilters((p) => ({ ...p, search }))}
+              onSearch={() => { setAppliedFilters(filters); setMovPage(1); }} />
             <select className="input" value={filters.type} aria-label="Tipo de movimiento"
               onChange={(e) => setFilters((p) => ({ ...p, type: e.target.value as MovementFilters["type"] }))}>
               <option value="">Todos los tipos</option>
@@ -598,8 +596,6 @@ export default function ReportsPage() {
                   onChange={(e) => setFilters((p) => ({ ...p, dateTo: e.target.value }))} />
               </>
             )}
-            <input className="input" placeholder="Buscar" value={filters.search} style={{ minWidth: 200 }} aria-label="Buscar"
-              onChange={(e) => setFilters((p) => ({ ...p, search: e.target.value }))} />
             <button className="btn btn--primary" onClick={() => { setAppliedFilters(filters); setMovPage(1); }}>
               Buscar
             </button>
@@ -691,37 +687,21 @@ export default function ReportsPage() {
       {/* ── Tab: Lotes & SAP ── */}
       {activeTab === "lotes" && (
         <section className="card">
-          <h3 style={{ marginTop: 0, fontSize: 15, fontWeight: 800, marginBottom: 4 }}>Consulta de lotes por código SAP</h3>
+          <h3 style={{ marginTop: 0, fontSize: 15, fontWeight: 800, marginBottom: 4 }}>Consulta de lotes y materiales</h3>
           <p style={{ color: "var(--muted)", fontSize: 13, marginBottom: 16 }}>
-            Buscá lotes por su código SAP (ej. <code>Z051308201</code>) o filtrá por material.
+            Buscá por código o descripción del material, lote proveedor o lote SAP.
           </p>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
-            <input
-              className="input"
-              placeholder="Lote SAP (ej. Z051308201)"
-              value={lotSapSearch}
-              onChange={(e) => setLotSapSearch(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && setLotApplied({ sap: lotSapSearch.trim(), product: lotProductSearch })}
-              style={{ minWidth: 220, fontFamily: "monospace" }}
-              aria-label="Código lote SAP"
-            />
-            <select
-              className="input"
-              value={lotProductSearch}
-              onChange={(e) => setLotProductSearch(e.target.value)}
-              aria-label="Material"
-            >
-              <option value="">Todos los materiales</option>
-              {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.description}</option>)}
-            </select>
+            <SearchField value={lotSearch} onChange={setLotSearch} label="Buscar lotes y materiales"
+              onSearch={() => setLotApplied(lotSearch.trim())} />
             <button className="btn btn--primary"
-              onClick={() => setLotApplied({ sap: lotSapSearch.trim(), product: lotProductSearch })}>
+              onClick={() => setLotApplied(lotSearch.trim())}>
               Buscar
             </button>
-            <button className="btn" onClick={() => { setLotSapSearch(""); setLotProductSearch(""); setLotApplied(null); }}>
+            <button className="btn" onClick={() => { setLotSearch(""); setLotApplied(null); }}>
               Limpiar
             </button>
-            {lotResults.length > 0 && (
+            {lotApplied !== null && lotResults.length > 0 && (
               <>
                 <button className="btn" onClick={() => exportLotesPDF(lotResults, `lotes-${todayInputValue()}`)} title="Exportar PDF"> PDF</button>
                 <button className="btn" onClick={() => void exportLotesExcel(lotResults, `lotes-${todayInputValue()}`)} title="Exportar Excel"> Excel</button>
@@ -734,11 +714,11 @@ export default function ReportsPage() {
               {getFriendlyApiError(lotsQ.error)}
             </p>
           )}
-          {!lotApplied && (
-            <p style={{ color: "var(--muted)" }}>Ingresá un lote SAP o seleccioná un material y presioná Buscar.</p>
+          {lotApplied === null && (
+            <p style={{ color: "var(--muted)" }}>Ingresá un código, producto o lote y presioná Enter o Buscar. Dejá el campo vacío para ver todos.</p>
           )}
           {lotsQ.isLoading && <p style={{ color: "var(--muted)", fontSize: 14 }} aria-busy="true">Buscando...</p>}
-          {lotApplied && !lotsQ.isLoading && lotResults.length === 0 && !lotsQ.isError && (
+          {lotApplied !== null && !lotsQ.isLoading && lotResults.length === 0 && !lotsQ.isError && (
             <p style={{ color: "var(--muted)" }}>No se encontraron lotes con esos criterios.</p>
           )}
           {lotResults.length > 0 && (
@@ -807,11 +787,8 @@ export default function ReportsPage() {
 
           {/* Filtros */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
-            <select className="input" value={entProductId} aria-label="Material"
-              onChange={(e) => setEntProductId(e.target.value)}>
-              <option value="">Todos los materiales</option>
-              {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.description}</option>)}
-            </select>
+            <SearchField value={entSearch} onChange={setEntSearch} label="Buscar entradas"
+              onSearch={() => { setEntApplied({ search: entSearch, dateFrom: entDateFrom, dateTo: entDateTo }); setEntPage(1); }} />
             <select className="input" value={entDatePreset} aria-label="Período"
               onChange={(e) => {
                 const v = e.target.value;
@@ -836,12 +813,12 @@ export default function ReportsPage() {
               </>
             )}
             <button className="btn btn--primary" onClick={() => {
-              setEntApplied({ productId: entProductId, dateFrom: entDateFrom, dateTo: entDateTo });
+              setEntApplied({ search: entSearch, dateFrom: entDateFrom, dateTo: entDateTo });
               setEntPage(1);
             }}>Buscar</button>
             <button className="btn" onClick={() => {
-              setEntProductId(""); setEntDateFrom(""); setEntDateTo(""); setEntDatePreset("");
-              setEntApplied({ productId: "", dateFrom: "", dateTo: "" });
+              setEntSearch(""); setEntDateFrom(""); setEntDateTo(""); setEntDatePreset("");
+              setEntApplied({ search: "", dateFrom: "", dateTo: "" });
               setEntPage(1);
             }}>Limpiar</button>
             {entries.length > 0 && (
@@ -1100,11 +1077,8 @@ export default function ReportsPage() {
 
           {/* Filtros */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
-            <select className="input" value={salProductId} aria-label="Material"
-              onChange={(e) => setSalProductId(e.target.value)}>
-              <option value="">Todos los materiales</option>
-              {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.description}</option>)}
-            </select>
+            <SearchField value={salSearch} onChange={setSalSearch} label="Buscar salidas"
+              onSearch={() => { setSalApplied({ search: salSearch, dateFrom: salDateFrom, dateTo: salDateTo, documentoMaterialStatus: salDocumentoMaterialStatus }); setSalPage(1); }} />
             <select className="input" value={salDatePreset} aria-label="Período"
               onChange={(e) => {
                 const v = e.target.value;
@@ -1139,12 +1113,12 @@ export default function ReportsPage() {
               <option value="COMPLETED">Documento Material completo</option>
             </select>
             <button className="btn btn--primary" onClick={() => {
-              setSalApplied({ productId: salProductId, dateFrom: salDateFrom, dateTo: salDateTo, documentoMaterialStatus: salDocumentoMaterialStatus });
+              setSalApplied({ search: salSearch, dateFrom: salDateFrom, dateTo: salDateTo, documentoMaterialStatus: salDocumentoMaterialStatus });
               setSalPage(1);
             }}>Buscar</button>
             <button className="btn" onClick={() => {
-              setSalProductId(""); setSalDateFrom(""); setSalDateTo(""); setSalDatePreset(""); setSalDocumentoMaterialStatus("");
-              setSalApplied({ productId: "", dateFrom: "", dateTo: "", documentoMaterialStatus: "" });
+              setSalSearch(""); setSalDateFrom(""); setSalDateTo(""); setSalDatePreset(""); setSalDocumentoMaterialStatus("");
+              setSalApplied({ search: "", dateFrom: "", dateTo: "", documentoMaterialStatus: "" });
               setSalPage(1);
             }}>Limpiar</button>
             {salMovements.length > 0 && (
@@ -1248,16 +1222,11 @@ export default function ReportsPage() {
         <section className="card">
           <h3 style={{ marginTop: 0, fontSize: 15, fontWeight: 800, marginBottom: 16 }}>Trazabilidad por material</h3>
           <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
-            <select
-              className="input"
-              value={traceMaterialId}
-              onChange={(e) => setTraceMaterialId(e.target.value)}
-              style={{ minWidth: 320 }}
-              aria-label="Seleccionar material"
-            >
-              <option value="">Seleccionar material...</option>
-              {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.description}</option>)}
-            </select>
+            <SearchableSelect options={products} value={products.find((p) => p.id === traceMaterialId) ?? null}
+              onChange={(p) => setTraceMaterialId(p?.id ?? "")} getKey={(p) => p.id}
+              getLabel={(p) => p.code} getDescription={(p) => p.description}
+              placeholder="Buscar código o producto…" ariaLabel="Buscar material para trazabilidad"
+              style={{ flex: "1 1 240px", maxWidth: 440 }} />
             <button
               className="btn btn--primary"
               onClick={() => setTraceApplied(traceMaterialId)}
@@ -1359,24 +1328,17 @@ export default function ReportsPage() {
 
           {/* Filtros */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
-            <select
-              className="input"
-              value={freshnessProductId}
-              onChange={(e) => setFreshnessProductId(e.target.value)}
-              aria-label="Filtrar por material"
-            >
-              <option value="">Todos los materiales</option>
-              {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.description}</option>)}
-            </select>
+            <SearchField value={freshnessSearch} onChange={setFreshnessSearch} label="Buscar frescura por material o lote"
+              onSearch={() => setFreshnessApplied(freshnessSearch.trim())} />
             <button
               className="btn btn--primary"
-              onClick={() => setFreshnessApplied(freshnessProductId || undefined)}
+              onClick={() => setFreshnessApplied(freshnessSearch.trim())}
             >
               Buscar
             </button>
             <button
               className="btn"
-              onClick={() => { setFreshnessProductId(""); setFreshnessApplied(undefined); }}
+              onClick={() => { setFreshnessSearch(""); setFreshnessApplied(""); }}
             >
               Limpiar
             </button>
@@ -1402,7 +1364,7 @@ export default function ReportsPage() {
           {freshnessQ.isLoading && <p style={{ color: "var(--muted)", fontSize: 14 }} aria-busy="true">Cargando...</p>}
           {freshnessQ.isError && <div className="form-error" role="alert">No se pudo cargar el reporte de frescura.</div>}
           {!freshnessQ.isLoading && freshnessData.length === 0 && !freshnessQ.isError && (
-            <p style={{ color: "var(--muted)" }}>No hay lotes con fecha de vencimiento registrada y stock disponible.</p>
+            <p style={{ color: "var(--muted)" }}>{freshnessApplied ? "No se encontraron lotes con esos criterios." : "No hay lotes con fecha de vencimiento registrada y stock disponible."}</p>
           )}
 
           {freshnessData.length > 0 && (

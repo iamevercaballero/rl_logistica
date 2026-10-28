@@ -19,6 +19,7 @@ import { DocumentSequenceService } from './document-sequence.service';
 import { Product } from '../products/entities/product.entity';
 import { Location } from '../locations/entities/location.entity';
 import { Warehouse } from '../warehouses/entities/warehouse.entity';
+import { movementLotSearchPredicate } from '../../common/movement-lot-search';
 import {
   WarehouseAccessService,
   type AccessUser,
@@ -2369,11 +2370,7 @@ export class MovementsService {
           OR LOWER(COALESCE(movement.notes, '')) LIKE :search
           OR LOWER(COALESCE(product.code, '')) LIKE :search
           OR LOWER(COALESCE(product.description, '')) LIKE :search
-          OR LOWER(COALESCE(lot."lotCode", '')) LIKE :search
-          OR EXISTS (
-            SELECT 1 FROM movement_details md INNER JOIN lots dl ON dl.id = md."lotId"
-             WHERE md."movementId" = movement.id AND LOWER(COALESCE(dl."lotCode", '')) LIKE :search
-          )
+          OR ${movementLotSearchPredicate('movement')}
         )`,
         { search },
       );

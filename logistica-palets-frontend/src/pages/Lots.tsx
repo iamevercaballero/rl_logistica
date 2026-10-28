@@ -1,7 +1,8 @@
 import { Fragment, useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { deleteLot, listLots, updateLot, type Lot } from "../api/lots";
-import { listProducts } from "../api/products";
+import SearchField from "../design-system/SearchField";
+import { matchesInventorySearch } from "../utils/inventorySearch";
 import { getAllPalletsByLot, type LotPallet } from "../api/pallets";
 import { listLocations } from "../api/locations";
 import { useActiveWarehouseId } from "../contexts/WarehouseContext";
@@ -214,26 +215,23 @@ export default function LotsPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const [filterProductId, setFilterProductId] = useState("");
-  const [filterSapLot, setFilterSapLot] = useState("");
+  const [search, setSearch] = useState("");
   const [expandedLotId, setExpandedLotId] = useState<string | null>(null);
 
   const [editingLot, setEditingLot] = useState<Lot | null>(null);
   const [editForm, setEditForm] = useState<EditForm>({ lotCode: "", sapLot: "", fechaVencimiento: "", fechaFabricacion: "", proveedor: "" });
 
-  // Lotes y ubicaciones son del depósito activo. El catálogo de materiales no:
-  // es maestro y no cambia con el depósito.
+  // Lotes y ubicaciones son del depósito activo.
   const activeWarehouseId = useActiveWarehouseId();
   const scoped = !!activeWarehouseId;
 
-  const [lotsQ, productsQ, locationsQ] = useQueries({
+  const [lotsQ, locationsQ] = useQueries({
     queries: [
       {
         queryKey: ["lots", activeWarehouseId],
         queryFn: () => listLots(undefined, undefined, false, activeWarehouseId),
         enabled: scoped,
       },
-      { queryKey: ["products"], queryFn: () => listProducts() },
       {
         queryKey: ["locations", activeWarehouseId],
         queryFn: () => listLocations(activeWarehouseId),
@@ -242,23 +240,16 @@ export default function LotsPage() {
     ],
   });
 
-  const items = lotsQ.data ?? [];
-  const products = productsQ.data ?? [];
-  const locations = locationsQ.data ?? [];
-  const isLoading = lotsQ.isLoading || productsQ.isLoading || locationsQ.isLoading;
+  const isLoading = lotsQ.isLoading || locationsQ.isLoading;
   const isError = lotsQ.isError;
 
   const locationMap = useMemo<Record<string, string>>(() => {
     const m: Record<string, string> = {};
-    for (const l of locations) m[l.id] = l.code;
+    for (const l of locationsQ.data ?? []) m[l.id] = l.code;
     return m;
-  }, [locations]);
+  }, [locationsQ.data]);
 
-  const filtered = useMemo(() => items.filter((i) => {
-    if (filterProductId && i.productId !== filterProductId) return false;
-    if (filterSapLot && i.sapLot !== filterSapLot) return false;
-    return true;
-  }), [items, filterProductId, filterSapLot]);
+  const filtered = useMemo(() => (lotsQ.data ?? []).filter((i) => matchesInventorySearch(i, search)), [lotsQ.data, search]);
 
   // Render de a 50 filas: la tabla metía la lista entera en el DOM.
   const { visibles: filasVisibles, info: paginaInfo, setPagina } = usePaginacionLocal(filtered);
@@ -424,26 +415,9 @@ export default function LotsPage() {
       {/* Filters */}
       <section className="card" style={{ marginBottom: 12 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <select
-            className="input"
-            value={filterProductId}
-            onChange={(e) => setFilterProductId(e.target.value)}
-            style={{ maxWidth: 320 }}
-            aria-label="Filtrar por material"
-          >
-            <option value="">Todos los materiales</option>
-            {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.description}</option>)}
-          </select>
-          <input
-            className="input"
-            placeholder="Filtrar por lote SAP"
-            value={filterSapLot}
-            onChange={(e) => setFilterSapLot(e.target.value)}
-            style={{ width: 180 }}
-            aria-label="Filtrar por lote SAP"
-          />
-          {(filterProductId || filterSapLot) && (
-            <button className="btn" onClick={() => { setFilterProductId(""); setFilterSapLot(""); }}>Limpiar</button>
+          <SearchField value={search} onChange={(value) => { setSearch(value); setPagina(1); }} label="Buscar lotes" />
+          {search && (
+            <button className="btn" onClick={() => setSearch("")}>Limpiar</button>
           )}
           <span style={{ fontSize: 13, color: "var(--muted)", marginLeft: "auto" }}>
             {filtered.length} lote{filtered.length !== 1 ? "s" : ""}
@@ -462,8 +436,8 @@ export default function LotsPage() {
       {!isLoading && !isError && (
         filtered.length === 0 ? (
           <div className="empty">
-            <p className="empty__title">Sin lotes</p>
-            <p className="empty__desc">Los lotes se crean automáticamente al registrar entradas en el módulo de Movimientos.</p>
+            <p className="empty__title">{search.trim() ? "Sin coincidencias" : "Sin lotes"}</p>
+            <p className="empty__desc">{search.trim() ? "Probá con otro código, producto o lote." : "Los lotes se crean automáticamente al registrar entradas en el módulo de Movimientos."}</p>
           </div>
         ) : (
           <div className="card" style={{ padding: 0, overflow: "hidden" }}>

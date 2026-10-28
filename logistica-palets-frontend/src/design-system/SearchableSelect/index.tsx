@@ -25,6 +25,7 @@ export type SearchableSelectProps<T> = {
   style?: React.CSSProperties;
   /** id para asociar <label htmlFor>. */
   id?: string;
+  ariaLabel?: string;
 };
 
 /**
@@ -47,6 +48,7 @@ export default function SearchableSelect<T>({
   emptyText = "Sin resultados",
   style,
   id,
+  ariaLabel,
 }: SearchableSelectProps<T>) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -123,6 +125,7 @@ export default function SearchableSelect<T>({
       <div style={{ position: "relative" }}>
         <input
           id={id}
+          aria-label={ariaLabel}
           className="input"
           type="text"
           placeholder={placeholder}

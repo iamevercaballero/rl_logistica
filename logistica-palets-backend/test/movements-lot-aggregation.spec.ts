@@ -17,6 +17,8 @@
  */
 import { DataSource } from 'typeorm';
 import { MovementsService } from '../src/modules/movements/movements.service';
+import { ReportsService } from '../src/modules/reports/reports.service';
+import { SapStockSnapshot } from '../src/modules/reports/entities/sap-stock.entity';
 import { DocumentSequenceService } from '../src/modules/movements/document-sequence.service';
 import { PilasService } from '../src/modules/pilas/pilas.service';
 import { Movement } from '../src/modules/movements/entities/movement.entity';
@@ -40,6 +42,7 @@ const noopUploads = { log: async () => {} } as unknown as UploadsService;
 
 let ds: DataSource;
 let service: MovementsService;
+let reports: ReportsService;
 let base: Basics;
 
 /** Crea un lote del producto de prueba. */
@@ -87,6 +90,7 @@ beforeAll(async () => {
     ds, noopEvents, noopCache, new DocumentSequenceService(), noopUploads,
     new PilasService(), createAccessService(ds),
   );
+  reports = new ReportsService(ds, ds.getRepository(SapStockSnapshot), noopCache);
 }, 60_000);
 
 afterAll(async () => {
@@ -184,6 +188,59 @@ describe('búsqueda por código de lote', () => {
 
     const { data } = await service.findAll({ search: 'l-propio' }, null);
     expect(data.map((r) => String(r.id))).toEqual([mov.id]);
+  });
+});
+
+describe.each(['movimientos', 'historial'] as const)('búsqueda libre en %s', (endpoint) => {
+  const buscar = (search: string, scope: string[] | null = null, page = 1, limit = 20) =>
+    endpoint === 'movimientos'
+      ? service.findAll({ search, page, limit }, scope)
+      : reports.movements({ search, page, limit }, scope);
+
+  it.each(['propio', 'detalle'] as const)('busca parte del lote SAP %s sin distinguir mayúsculas', async (origen) => {
+    const lote = await crearLote('PROVEEDOR-A', 'Z051308201');
+    const mov = await crearMovimiento({ lotId: origen === 'propio' ? lote.id : null });
+    if (origen === 'detalle') await agregarDetalle(mov.id, lote.id);
+    await crearMovimiento({ lotId: (await crearLote('PROVEEDOR-B', 'Z060108201')).id });
+
+    const r = await buscar('  z0513  ');
+    expect(r.data.map((row) => String(row.id))).toEqual([mov.id]);
+    expect(r.meta.total).toBe(1);
+  });
+
+  it('busca el lote proveedor en movimientos con varios lotes sin duplicar filas ni el total', async () => {
+    const lote = await crearLote('PROV-BUSCADO');
+    const mov = await crearMovimiento({ lotId: null });
+    await agregarDetalle(mov.id, lote.id);
+    await agregarDetalle(mov.id, lote.id);
+    await agregarDetalle(mov.id, (await crearLote('PROV-OTRO')).id);
+    await crearMovimiento({ lotId: null });
+
+    const r = await buscar('prov-busc');
+    expect(r.data.map((row) => String(row.id))).toEqual([mov.id]);
+    expect(r.meta.total).toBe(1);
+    expect((await buscar('no-existe')).meta.total).toBe(0);
+  });
+
+  it('filtra antes de paginar y conserva el alcance del depósito', async () => {
+    const lote = await crearLote('PROV-PAGINADO', 'Z070108201');
+    const a = await crearMovimiento({ lotId: lote.id });
+    const b = await crearMovimiento({ lotId: lote.id });
+    await crearMovimiento({ lotId: null });
+
+    const p1 = await buscar('z0701', [base.warehouse.id], 1, 1);
+    const p2 = await buscar('z0701', [base.warehouse.id], 2, 1);
+    expect(new Set([...p1.data, ...p2.data].map((row) => String(row.id)))).toEqual(new Set([a.id, b.id]));
+    expect(p1.meta.total).toBe(2);
+    expect(p1.meta.totalPages).toBe(2);
+    expect((await buscar('z0701', ['00000000-0000-0000-0000-000000000099'])).data).toEqual([]);
+  });
+
+  it('sigue buscando código y descripción del material, y vacío muestra todo', async () => {
+    const mov = await crearMovimiento({ lotId: null });
+    for (const search of [base.product.code, base.product.description.toLowerCase(), '  ']) {
+      expect((await buscar(search)).data.map((row) => String(row.id))).toEqual([mov.id]);
+    }
   });
 });
 

@@ -106,16 +106,25 @@ function Signatures({ responsible }: { responsible?: string }) {
       <div className="ck-sig">
         <div className="ck-sig-line" />
         <div className="ck-sig-label">Firma del Chofer</div>
+        {/* El hueco va en las dos columnas aunque una esté vacía: si no, las
+            líneas de aclaración quedan a distinta altura. */}
+        <div className="ck-sig-gap" />
         <div className="ck-sig-line ck-sig-line--second" />
         <div className="ck-sig-label">Aclaración</div>
       </div>
       <div className="ck-sig">
         <div className="ck-sig-line" />
         <div className="ck-sig-label">Firma del Responsable de Recepción</div>
+        {/* Preimpreso como referencia: la aclaración se firma igual a mano. Va
+            DENTRO del hueco de la línea —donde se escribiría a mano— y no
+            debajo de "Aclaración": ahí sumaba una línea que la hoja no tenía
+            presupuestada y se derramaba a la página siguiente, encima del
+            encabezado. */}
+        <div className="ck-sig-gap">
+          {responsible && <span className="ck-sig-prefill">{responsible}</span>}
+        </div>
         <div className="ck-sig-line ck-sig-line--second" />
         <div className="ck-sig-label">Aclaración</div>
-        {/* Preimpreso como referencia: la aclaración se firma igual a mano. */}
-        {responsible && <div className="ck-sig-prefill">{responsible}</div>}
       </div>
     </div>
   );
@@ -577,9 +586,12 @@ export const CHECKLIST_CSS = `
   .ck-spacer { flex: 1; min-height: 3mm; }
   .ck-signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 12mm; padding: 0 4mm; }
   .ck-sig-line { border-top: 1px solid #000; margin-top: 7mm; }
-  .ck-sig-line--second { margin-top: 6mm; }
+  /* El espacio para firmar ahora es un hueco propio en vez del margen de la
+     línea, así el nombre preimpreso cabe adentro sin agregar alto a la hoja. */
+  .ck-sig-gap { height: 6mm; display: flex; align-items: flex-end; justify-content: center; }
+  .ck-sig-line--second { margin-top: 0; }
   .ck-sig-label { text-align: center; font-size: 9.5px; padding-top: 0.6mm; }
-  .ck-sig-prefill { text-align: center; font-size: 8px; padding-top: 0.4mm; }
+  .ck-sig-prefill { font-size: 8px; line-height: 1; padding-bottom: 0.6mm; }
 
   @media print {
     body { background: #fff; }

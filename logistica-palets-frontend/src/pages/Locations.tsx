@@ -347,7 +347,6 @@ export default function LocationsPage() {
 
   const [view, setView] = useState<ViewKey>("search");
   const [term, setTerm] = useState("");
-  const [submittedTerm, setSubmittedTerm] = useState("");
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [zoneFilter, setZoneFilter] = useState("ALL");
   const [drawerId, setDrawerId] = useState<string | null>(null);
@@ -363,6 +362,15 @@ export default function LocationsPage() {
     enabled: !!warehouseId,
     staleTime: 15_000,
   });
+
+  /*
+   * Lo que se consulta de verdad: el término ya quieto —busca sola al dejar de
+   * escribir, igual que el resto del sistema— y sólo con 2 letras o más, si no
+   * cualquier tecla suelta dispara una consulta sobre todo el stock. Derivado y
+   * no guardado en estado: así no hace falta un efecto que lo copie.
+   */
+  const terminoAplicado = useDebouncedValue(term.trim());
+  const submittedTerm = terminoAplicado.length >= 2 ? terminoAplicado : "";
 
   const searchQ = useQuery({
     queryKey: ["locations", "stock-search", warehouseId, submittedTerm],
@@ -435,25 +443,8 @@ export default function LocationsPage() {
     void queryClient.invalidateQueries({ queryKey: ["locations", "availability"] });
   }
 
-  /*
-   * Busca sola al dejar de escribir, igual que el resto del sistema. El botón
-   * sigue existiendo y aplica sin esperar; el mínimo de 2 letras se mantiene,
-   * si no cualquier tecla suelta dispara una consulta sobre todo el stock.
-   */
-  const terminoAplicado = useDebouncedValue(term.trim());
-  useEffect(() => {
-    if (terminoAplicado.length < 2 && terminoAplicado !== "") return;
-    buscar(terminoAplicado);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [terminoAplicado]);
-
-  function buscar(texto: string) {
-    setSelectedProductId(null);
-    setSubmittedTerm(texto);
-    if (texto) setView("search");
-  }
-
-  function handleSearch(e: React.FormEvent) { e.preventDefault(); buscar(term.trim()); }
+  /** Enter no recarga la página: la búsqueda ya salió sola al dejar de escribir. */
+  function handleSearch(e: React.FormEvent) { e.preventDefault(); }
 
   const searchIsEmpty =
     searchQ.data && searchQ.data.rows.length === 0;
@@ -473,17 +464,21 @@ export default function LocationsPage() {
           className="input"
           style={{ flex: 1, minWidth: 260 }}
           value={term}
-          onChange={(e) => setTerm(e.target.value)}
+          onChange={(e) => {
+            setTerm(e.target.value);
+            setSelectedProductId(null);
+            if (e.target.value.trim()) setView("search");
+          }}
           placeholder="Material, descripción, lote interno, lote proveedor, pallet o ubicación"
           aria-label="Buscar material, lote, pallet o ubicación"
         />
         
         <button className="btn btn--primary" type="submit" disabled={term.trim().length < 2}>Buscar</button>
-        {submittedTerm && (
+        {term && (
           <button
             type="button"
             className="btn"
-            onClick={() => { setTerm(""); setSubmittedTerm(""); setSelectedProductId(null); }}
+            onClick={() => { setTerm(""); setSelectedProductId(null); }}
           >
             Limpiar
           </button>

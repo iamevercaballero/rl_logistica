@@ -5,6 +5,8 @@ import MovementEditorModal from "./MovementEditorModal";
 import DispatchLogDrawer from "../components/DispatchLogDrawer";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
+import { MOVEMENT_SEARCH } from "../utils/searchFields";
+import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { fmtDateTime } from "../utils/dateFormat";
 import { useActiveWarehouseId } from "../contexts/WarehouseContext";
 
@@ -20,8 +22,9 @@ export default function CorregirMovimientoForm({ onTypeChange }: Props) {
   const queryClient = useQueryClient();
   const activeWarehouseId = useActiveWarehouseId();
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("ALL");
-  const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
+  // Busca al dejar de escribir; antes había que apretar Buscar.
+  const search = useDebouncedValue(searchInput.trim());
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<Movement | null>(null);
   const [voidingMovement, setVoidingMovement] = useState<Movement | null>(null);
@@ -65,15 +68,8 @@ export default function CorregirMovimientoForm({ onTypeChange }: Props) {
   const movements = movementsQ.data?.data ?? [];
   const meta = movementsQ.data?.meta;
 
-  function handleSearch(e: React.FormEvent) {
-    e.preventDefault();
-    setSearch(searchInput.trim());
-    setPage(1);
-  }
-
   function clearSearch() {
     setSearchInput("");
-    setSearch("");
     setPage(1);
   }
 
@@ -190,18 +186,18 @@ export default function CorregirMovimientoForm({ onTypeChange }: Props) {
         </div>
 
         {/* Buscador */}
-        <form onSubmit={handleSearch} style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
           <input
             className="input"
             style={{ flex: 1, minWidth: 200 }}
-            placeholder="Buscar por producto, código, lote, proveedor/destino o N° MIC/Factura/Remito..."
+            placeholder={MOVEMENT_SEARCH.placeholder}
+            title={MOVEMENT_SEARCH.title}
             value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
+            onChange={(e) => { setSearchInput(e.target.value); setPage(1); }}
             aria-label="Buscar movimientos"
           />
-          <button className="btn btn--primary" type="submit" style={{ whiteSpace: "nowrap" }}>Buscar</button>
-          {search && <button type="button" className="btn" onClick={clearSearch}>Limpiar</button>}
-        </form>
+          {searchInput && <button type="button" className="btn" onClick={clearSearch}>Limpiar</button>}
+        </div>
 
         {search && (
           <p style={{ fontSize: 12, color: "var(--muted)", margin: "-8px 0 10px" }}>

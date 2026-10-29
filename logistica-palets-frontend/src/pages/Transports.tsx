@@ -27,6 +27,7 @@ import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { formatParaguayPhone, isValidParaguayPhone } from "../utils/phone";
 import { fmtDate, fmtDateTime } from "../utils/dateFormat";
+import { TRANSPORT_SEARCH } from "../utils/searchFields";
 
 /* ── Helpers ───────────────────────────────────────────────────────────── */
 function formatBytes(b: number): string {
@@ -101,10 +102,14 @@ export default function TransportsPage() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return items;
+    // La transportadora y los conductores no se buscaban, y son justo por donde
+    // se pregunta un camión ("el de Transportes X", "el que maneja Y").
     return items.filter((t) =>
       t.plate.toLowerCase().includes(q) ||
       t.type.toLowerCase().includes(q) ||
-      (t.description ?? "").toLowerCase().includes(q));
+      (t.carrier ?? "").toLowerCase().includes(q) ||
+      (t.description ?? "").toLowerCase().includes(q) ||
+      (t.drivers ?? []).some((d) => d.name.toLowerCase().includes(q)));
   }, [items, search]);
 
   function invalidate() {
@@ -175,7 +180,8 @@ export default function TransportsPage() {
 
         {/* ── Lista de flota ── */}
         <div style={{ display: "grid", gap: 8 }}>
-          <input className="input" placeholder="Buscar patente, tipo…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <input className="input" placeholder={TRANSPORT_SEARCH.placeholder} title={TRANSPORT_SEARCH.title}
+            aria-label="Buscar transportes" value={search} onChange={(e) => setSearch(e.target.value)} />
 
           {isLoading ? <p aria-busy="true" style={{ color: "var(--muted)" }}>Cargando…</p> : null}
           {isError ? (

@@ -12,11 +12,17 @@ type Props = {
   onSearch?: (value: string) => void;
   label: string;
   placeholder?: string;
+  /**
+   * Lista completa de campos que recorre la búsqueda, como tooltip. El
+   * placeholder no da para nombrarlos todos sin quedar cortado (ver
+   * `utils/searchFields.ts`).
+   */
+  title?: string;
   style?: CSSProperties;
 };
 
 /** Búsqueda libre, con el mismo aspecto que el buscador de Pallets. */
-export default function SearchField({ value, onChange, onSearch, label, placeholder = "Buscar código, producto, lote…", style }: Props) {
+export default function SearchField({ value, onChange, onSearch, label, placeholder = "Buscar código, producto, lote…", title, style }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   /*
@@ -54,7 +60,7 @@ export default function SearchField({ value, onChange, onSearch, label, placehol
         style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} aria-hidden="true">
         <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
       </svg>
-      <input ref={inputRef} className="input" type="text" role="searchbox" value={value} aria-label={label} placeholder={placeholder}
+      <input ref={inputRef} className="input" type="text" role="searchbox" value={value} aria-label={label} placeholder={placeholder} title={title}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); buscarAhora(value); } }}
         style={{ paddingLeft: 30, paddingRight: value ? 32 : 10, width: "100%", boxSizing: "border-box" }} />

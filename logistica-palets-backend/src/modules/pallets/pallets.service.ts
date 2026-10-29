@@ -34,6 +34,8 @@ export interface EnrichedPallet {
   createdAt: Date;
   exitedAt: Date | null;
   lotCode: string;
+  /** Lote SAP del lote — la pantalla de Palets busca por él, como el Localizador. */
+  sapLot: string | null;
   fechaVencimiento: string | null;
   productId: string;
   productCode: string;
@@ -162,7 +164,11 @@ export class PalletsService {
       params.push(`%${search.trim()}%`);
       const i = params.length;
       conditions.push(
-        `(p.code ILIKE $${i} OR pr.code ILIKE $${i} OR pr.description ILIKE $${i} OR l."lotCode" ILIKE $${i})`,
+        // Los mismos campos que filtra la pantalla de Palets: el palet, el
+        // material, el lote (interno y SAP) y la ubicación donde está. Sin el
+        // lote SAP, el mismo lote se encontraba en el Localizador y no acá.
+        `(p.code ILIKE $${i} OR pr.code ILIKE $${i} OR pr.description ILIKE $${i}
+          OR l."lotCode" ILIKE $${i} OR l."sapLot" ILIKE $${i} OR loc.code ILIKE $${i})`,
       );
     }
     // Un pallet pertenece al depósito donde está **hoy**: los despachados y los
@@ -212,6 +218,7 @@ export class PalletsService {
         p."createdAt",
         p."exitedAt",
         l."lotCode",
+        l."sapLot",
         l."fechaVencimiento",
         l."productId",
         pr.code              AS "productCode",

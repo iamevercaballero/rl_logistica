@@ -3,6 +3,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { deleteLot, listLots, updateLot, type Lot } from "../api/lots";
 import SearchField from "../design-system/SearchField";
 import { matchesInventorySearch } from "../utils/inventorySearch";
+import { INVENTORY_SEARCH } from "../utils/searchFields";
 import { getAllPalletsByLot, type LotPallet } from "../api/pallets";
 import { listLocations } from "../api/locations";
 import { useActiveWarehouseId } from "../contexts/WarehouseContext";
@@ -415,7 +416,8 @@ export default function LotsPage() {
       {/* Filters */}
       <section className="card" style={{ marginBottom: 12 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <SearchField value={search} onChange={(value) => { setSearch(value); setPagina(1); }} label="Buscar lotes" />
+          <SearchField value={search} onChange={(value) => { setSearch(value); setPagina(1); }} label="Buscar lotes"
+            placeholder={INVENTORY_SEARCH.placeholder} title={INVENTORY_SEARCH.title} />
           {search && (
             <button className="btn" onClick={() => setSearch("")}>Limpiar</button>
           )}

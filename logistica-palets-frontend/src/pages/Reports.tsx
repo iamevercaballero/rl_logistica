@@ -10,6 +10,7 @@ import {
 import { useTableSort, sortArrow } from "../hooks/useTableSort";
 import ExpandableText from "../design-system/ExpandableText";
 import SearchField from "../design-system/SearchField";
+import { INVENTORY_SEARCH, MOVEMENT_SEARCH } from "../utils/searchFields";
 import SearchableSelect from "../design-system/SearchableSelect";
 import { matchesInventorySearch } from "../utils/inventorySearch";
 import { sapLotApplies } from "./movementFormModel";
@@ -592,6 +593,7 @@ export default function ReportsPage() {
               {warehouseLabel(activeWarehouse)}
             </span>
             <SearchField value={filters.search} label="Buscar movimientos"
+              placeholder={MOVEMENT_SEARCH.placeholder} title={MOVEMENT_SEARCH.title}
               onChange={(search) => setFilters((p) => ({ ...p, search }))}
               onSearch={(search) => { setAppliedFilters({ ...filters, search }); setMovPage(1); }} />
             <select className="input" value={filters.type} aria-label="Tipo de movimiento"
@@ -727,6 +729,7 @@ export default function ReportsPage() {
           </p>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
             <SearchField value={lotSearch} onChange={setLotSearch} label="Buscar lotes y materiales"
+              placeholder={INVENTORY_SEARCH.placeholder} title={INVENTORY_SEARCH.title}
               onSearch={(search) => setLotApplied(search.trim())} />
             <button className="btn btn--primary"
               onClick={() => setLotApplied(lotSearch.trim())}>
@@ -822,6 +825,7 @@ export default function ReportsPage() {
           {/* Filtros */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
             <SearchField value={entSearch} onChange={setEntSearch} label="Buscar entradas"
+              placeholder={MOVEMENT_SEARCH.placeholder} title={MOVEMENT_SEARCH.title}
               onSearch={(search) => { setEntApplied({ search, dateFrom: entDateFrom, dateTo: entDateTo }); setEntPage(1); }} />
             <select className="input" value={entDatePreset} aria-label="Período"
               onChange={(e) => {
@@ -1112,6 +1116,7 @@ export default function ReportsPage() {
           {/* Filtros */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
             <SearchField value={salSearch} onChange={setSalSearch} label="Buscar salidas"
+              placeholder={MOVEMENT_SEARCH.placeholder} title={MOVEMENT_SEARCH.title}
               onSearch={(search) => { setSalApplied({ search, dateFrom: salDateFrom, dateTo: salDateTo, documentoMaterialStatus: salDocumentoMaterialStatus }); setSalPage(1); }} />
             <select className="input" value={salDatePreset} aria-label="Período"
               onChange={(e) => {
@@ -1363,6 +1368,7 @@ export default function ReportsPage() {
           {/* Filtros */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
             <SearchField value={freshnessSearch} onChange={setFreshnessSearch} label="Buscar frescura por material o lote"
+              placeholder={INVENTORY_SEARCH.placeholder} title={INVENTORY_SEARCH.title}
               onSearch={(search) => setFreshnessApplied(search.trim())} />
             <button
               className="btn btn--primary"

@@ -13,6 +13,8 @@ import AttachmentUploader from "../components/AttachmentUploader";
 import { useToast } from "../design-system/toast";
 import ExpandableText from "../design-system/ExpandableText";
 import { getFriendlyApiError } from "../utils/apiError";
+import { DOCUMENT_SEARCH } from "../utils/searchFields";
+import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { useAuth } from "../auth/AuthContext";
 import { fmtDateTime } from "../utils/dateFormat";
 
@@ -469,8 +471,9 @@ export default function BitacoraPage() {
   const [typeFilter, setTypeFilter] = useState<"" | "ENTRY" | "EXIT">("");
   const [from,       setFrom]       = useState("");
   const [to,         setTo]         = useState("");
-  const [search,     setSearch]     = useState("");
   const [searchInput, setSearchInput] = useState("");
+  // Era una de las dos pantallas que todavía obligaban a apretar Buscar.
+  const search = useDebouncedValue(searchInput.trim());
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   // La bitácora operativa muestra solo los remitos del depósito activo.
@@ -497,14 +500,9 @@ export default function BitacoraPage() {
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   );
 
-  function handleSearch(e: React.FormEvent) {
-    e.preventDefault();
-    setSearch(searchInput.trim());
-  }
-
   function clearFilters() {
     setTypeFilter(""); setFrom(""); setTo("");
-    setSearch(""); setSearchInput("");
+    setSearchInput("");
   }
 
   const hasFilters = !!(typeFilter || from || to || search);
@@ -524,20 +522,21 @@ export default function BitacoraPage() {
       {/* Filtros */}
       <section className="card" style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
-          {/* Búsqueda por N° remito / proveedor */}
-          <form onSubmit={handleSearch} style={{ display: "flex", gap: 6, flex: "1 1 280px" }}>
+          {/* Búsqueda por N° remito / proveedor / Documento Material */}
+          <div style={{ display: "flex", gap: 6, flex: "1 1 280px" }}>
             <input
               className="input"
               style={{ flex: 1 }}
-              placeholder="N° MIC/Factura/Remito, proveedor, destino..."
+              placeholder={DOCUMENT_SEARCH.placeholder}
+              title={DOCUMENT_SEARCH.title}
+              aria-label="Buscar remitos"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
             />
-            <button className="btn btn--primary" type="submit">Buscar</button>
-            {search && (
-              <button type="button" className="btn" onClick={() => { setSearchInput(""); setSearch(""); }}>✕</button>
+            {searchInput && (
+              <button type="button" className="btn" aria-label="Limpiar búsqueda" onClick={() => setSearchInput("")}>✕</button>
             )}
-          </form>
+          </div>
 
           {/* Tipo */}
           <div>

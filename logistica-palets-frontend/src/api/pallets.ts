@@ -13,6 +13,8 @@ export type LotPallet = {
   exitedAt?: string | null;
   // Enriched fields (present when returned from GET /pallets)
   lotCode?: string;
+  /** Lote SAP del lote — lo usa el buscador de Palets. */
+  sapLot?: string | null;
   fechaVencimiento?: string | null;
   productId?: string;
   productCode?: string;

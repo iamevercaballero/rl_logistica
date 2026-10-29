@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveWarehouseId } from "../contexts/WarehouseContext";
@@ -14,9 +14,12 @@ import {
 } from "../api/pallets";
 import { useAuth } from "../auth/AuthContext";
 import { can } from "../auth/permissions";
+import SearchField from "../design-system/SearchField";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { fmtDateLong, fmtDateTimeLong } from "../utils/dateFormat";
+import { matchesPalletSearch } from "../utils/inventorySearch";
+import { PALLET_SEARCH } from "../utils/searchFields";
 import LocationPicker from "../components/LocationPicker";
 import { Paginador } from "../components/Paginador";
 import { usePaginacionLocal } from "../hooks/usePaginacionLocal";
@@ -597,13 +600,6 @@ export default function PalletsPage() {
   const [statusFilter, setStatusFilter] = useState("");
   const [productFilter, setProductFilter] = useState("");
   const [locationFilter, setLocationFilter] = useState("");
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => setSearch(searchInput.trim()), 300);
-    return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
-  }, [searchInput]);
 
   // ── Queries ───────────────────────────────────────────────────────────────
   // Palets, ubicaciones y KPIs son todos del depósito activo: la key lo incluye
@@ -668,17 +664,7 @@ export default function PalletsPage() {
     if (statusFilter)   result = result.filter((p) => p.status === statusFilter);
     if (productFilter)  result = result.filter((p) => p.productId === productFilter);
     if (locationFilter) result = result.filter((p) => p.currentLocationId === locationFilter);
-    if (search) {
-      const q = search.toLowerCase();
-      result = result.filter(
-        (p) =>
-          p.code.toLowerCase().includes(q) ||
-          (p.productCode ?? "").toLowerCase().includes(q) ||
-          (p.productDescription ?? "").toLowerCase().includes(q) ||
-          (p.lotCode ?? "").toLowerCase().includes(q) ||
-          (p.locationCode ?? "").toLowerCase().includes(q),
-      );
-    }
+    if (search) result = result.filter((p) => matchesPalletSearch(p, search));
     return result;
   }, [allPallets, statusFilter, productFilter, locationFilter, search]);
 
@@ -735,39 +721,16 @@ export default function PalletsPage() {
 
       {/* Filter bar */}
       <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
-        {/* Search */}
-        <div style={{ position: "relative", flex: "1 1 200px", maxWidth: 300 }}>
-          <svg
-            width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="2"
-            style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}
-            aria-hidden="true"
-          >
-            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-          </svg>
-          <input
-            className="input"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="Buscar código, producto, lote…"
-            aria-label="Buscar pallets"
-            style={{ paddingLeft: 30, paddingRight: searchInput ? 28 : 10, width: "100%", boxSizing: "border-box" }}
-          />
-          {searchInput && (
-            <button
-              type="button"
-              onClick={() => setSearchInput("")}
-              aria-label="Limpiar búsqueda"
-              style={{
-                position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)",
-                background: "none", border: "none", cursor: "pointer", color: "var(--muted)", padding: 2,
-              }}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
-                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-              </svg>
-            </button>
-          )}
-        </div>
+        {/* Búsqueda: el mismo campo que el resto del sistema (ver SearchField). */}
+        <SearchField
+          value={searchInput}
+          onChange={setSearchInput}
+          onSearch={setSearch}
+          label="Buscar pallets"
+          placeholder={PALLET_SEARCH.placeholder}
+          title={PALLET_SEARCH.title}
+          style={{ flex: "1 1 200px", maxWidth: 300 }}
+        />
 
         {/* Status filter */}
         <select
@@ -820,7 +783,7 @@ export default function PalletsPage() {
           <button
             className="btn"
             style={{ fontSize: 12, height: 34 }}
-            onClick={() => { setStatusFilter(""); setProductFilter(""); setLocationFilter(""); setSearchInput(""); }}
+            onClick={() => { setStatusFilter(""); setProductFilter(""); setLocationFilter(""); setSearchInput(""); setSearch(""); }}
           >
             Limpiar filtros
           </button>

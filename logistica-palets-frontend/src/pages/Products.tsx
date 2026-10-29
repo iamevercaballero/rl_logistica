@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   bulkImportProducts,
@@ -11,6 +11,7 @@ import {
 } from "../api/products";
 import { useAuth } from "../auth/AuthContext";
 import { can } from "../auth/permissions";
+import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { useToast } from "../design-system/toast";
 import { getFriendlyApiError } from "../utils/apiError";
 import { Paginador } from "../components/Paginador";
@@ -61,15 +62,11 @@ export default function ProductsPage() {
   const [canReceiveWeightOnTop, setCanReceiveWeightOnTop] = useState(true);
   const [submitted, setSubmitted] = useState(false);
   const [searchInput, setSearchInput] = useState("");
-  const [search, setSearch] = useState("");
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Debounce 300ms
-  useEffect(() => {
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => setSearch(searchInput.trim()), 300);
-    return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
-  }, [searchInput]);
+  /*
+   * El mismo retraso que el resto de los buscadores, con la implementación
+   * compartida: antes esta pantalla tenía su propio timer a mano.
+   */
+  const search = useDebouncedValue(searchInput.trim());
 
   const codeError = useMemo(() => {
     const value = code.trim();
@@ -89,7 +86,6 @@ export default function ProductsPage() {
   // en el DOM de una sola vez. Al cambiar la búsqueda se vuelve a la página 1,
   // si no el operador queda mirando una página vacía del resultado nuevo.
   const [pagina, setPagina] = useState(1);
-  useEffect(() => { setPagina(1); }, [search]);
 
   const { data: pageData, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ["products", "page", pagina, search],
@@ -204,7 +200,7 @@ export default function ProductsPage() {
           <input
             className="input"
             value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
+            onChange={(e) => { setSearchInput(e.target.value); setPagina(1); }}
             placeholder="Buscar código o descripción…"
             aria-label="Buscar materiales"
             style={{ paddingLeft: 32, paddingRight: searchInput ? 30 : 10, width: "100%", boxSizing: "border-box" }}
@@ -213,7 +209,7 @@ export default function ProductsPage() {
           {searchInput && (
             <button
               type="button"
-              onClick={() => setSearchInput("")}
+              onClick={() => { setSearchInput(""); setPagina(1); }}
               aria-label="Limpiar búsqueda"
               style={{
                 position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)",

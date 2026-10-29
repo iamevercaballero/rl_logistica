@@ -412,19 +412,26 @@ export default function ReportsPage() {
   function applyDatePreset(preset: string) {
     setDatePreset(preset);
     const today = todayInputValue();
+    const aplicar = (dateFrom: string, dateTo: string) => aplicarHistorial({ dateFrom, dateTo });
     if (preset === "hoy") {
       setFilters((p) => ({ ...p, dateFrom: today, dateTo: today }));
+      aplicar(today, today);
     } else if (preset === "ayer") {
       const ayer = shiftInputValue(today, -1);
       setFilters((p) => ({ ...p, dateFrom: ayer, dateTo: ayer }));
+      aplicar(ayer, ayer);
     } else if (preset === "semana") {
       setFilters((p) => ({ ...p, dateFrom: startOfWeekInputValue(today), dateTo: today }));
+      aplicar(startOfWeekInputValue(today), today);
     } else if (preset === "mes") {
       setFilters((p) => ({ ...p, dateFrom: startOfMonthInputValue(today), dateTo: today }));
+      aplicar(startOfMonthInputValue(today), today);
     } else if (preset === "30dias") {
       setFilters((p) => ({ ...p, dateFrom: shiftInputValue(today, -30), dateTo: today }));
+      aplicar(shiftInputValue(today, -30), today);
     } else if (preset === "todo") {
       setFilters((p) => ({ ...p, dateFrom: "", dateTo: "" }));
+      aplicar("", "");
     }
   }
 
@@ -438,26 +445,53 @@ export default function ReportsPage() {
     else if (preset === "30dias"){ setDailyDateFrom(shiftInputValue(t, -30)); setDailyDateTo(t); }
   }
 
+  /*
+   * Los filtros que NO son texto se aplican al cambiarlos. Un `select` no se
+   * "termina de escribir": esperar a que aprieten Buscar dejaba la pantalla
+   * mostrando otra cosa que la que decía el filtro. El texto va aparte, con su
+   * propio retraso (ver `SearchField`).
+   */
+  function aplicarEntradas(cambios: Partial<typeof entApplied>) {
+    setEntApplied((a) => ({ ...a, ...cambios }));
+    setEntPage(1);
+  }
+  function aplicarSalidas(cambios: Partial<typeof salApplied>) {
+    setSalApplied((a) => ({ ...a, ...cambios }));
+    setSalPage(1);
+  }
+  function aplicarHistorial(cambios: Partial<MovementFilters>) {
+    setAppliedFilters((a) => ({ ...a, ...cambios }));
+    setMovPage(1);
+  }
+
   function applyEntDatePreset(preset: string) {
     setEntDatePreset(preset);
     const today = todayInputValue();
-    if (preset === "hoy")    { setEntDateFrom(today); setEntDateTo(today); }
-    else if (preset === "ayer") { const d = shiftInputValue(today, -1); setEntDateFrom(d); setEntDateTo(d); }
-    else if (preset === "semana") { setEntDateFrom(startOfWeekInputValue(today)); setEntDateTo(today); }
-    else if (preset === "mes")   { setEntDateFrom(startOfMonthInputValue(today)); setEntDateTo(today); }
-    else if (preset === "30dias"){ setEntDateFrom(shiftInputValue(today, -30)); setEntDateTo(today); }
-    else if (preset === "todo")  { setEntDateFrom(""); setEntDateTo(""); }
+    let desde = entDateFrom;
+    let hasta = entDateTo;
+    if (preset === "hoy")         { desde = today; hasta = today; }
+    else if (preset === "ayer")   { desde = shiftInputValue(today, -1); hasta = desde; }
+    else if (preset === "semana") { desde = startOfWeekInputValue(today); hasta = today; }
+    else if (preset === "mes")    { desde = startOfMonthInputValue(today); hasta = today; }
+    else if (preset === "30dias") { desde = shiftInputValue(today, -30); hasta = today; }
+    else if (preset === "todo")   { desde = ""; hasta = ""; }
+    setEntDateFrom(desde); setEntDateTo(hasta);
+    aplicarEntradas({ dateFrom: desde, dateTo: hasta });
   }
 
   function applySalDatePreset(preset: string) {
     setSalDatePreset(preset);
     const today = todayInputValue();
-    if (preset === "hoy")    { setSalDateFrom(today); setSalDateTo(today); }
-    else if (preset === "ayer") { const d = shiftInputValue(today, -1); setSalDateFrom(d); setSalDateTo(d); }
-    else if (preset === "semana") { setSalDateFrom(startOfWeekInputValue(today)); setSalDateTo(today); }
-    else if (preset === "mes")   { setSalDateFrom(startOfMonthInputValue(today)); setSalDateTo(today); }
-    else if (preset === "30dias"){ setSalDateFrom(shiftInputValue(today, -30)); setSalDateTo(today); }
-    else if (preset === "todo")  { setSalDateFrom(""); setSalDateTo(""); }
+    let desde = salDateFrom;
+    let hasta = salDateTo;
+    if (preset === "hoy")         { desde = today; hasta = today; }
+    else if (preset === "ayer")   { desde = shiftInputValue(today, -1); hasta = desde; }
+    else if (preset === "semana") { desde = startOfWeekInputValue(today); hasta = today; }
+    else if (preset === "mes")    { desde = startOfMonthInputValue(today); hasta = today; }
+    else if (preset === "30dias") { desde = shiftInputValue(today, -30); hasta = today; }
+    else if (preset === "todo")   { desde = ""; hasta = ""; }
+    setSalDateFrom(desde); setSalDateTo(hasta);
+    aplicarSalidas({ dateFrom: desde, dateTo: hasta });
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -559,9 +593,9 @@ export default function ReportsPage() {
             </span>
             <SearchField value={filters.search} label="Buscar movimientos"
               onChange={(search) => setFilters((p) => ({ ...p, search }))}
-              onSearch={() => { setAppliedFilters(filters); setMovPage(1); }} />
+              onSearch={(search) => { setAppliedFilters({ ...filters, search }); setMovPage(1); }} />
             <select className="input" value={filters.type} aria-label="Tipo de movimiento"
-              onChange={(e) => setFilters((p) => ({ ...p, type: e.target.value as MovementFilters["type"] }))}>
+              onChange={(e) => { const type = e.target.value as MovementFilters["type"]; setFilters((p) => ({ ...p, type })); aplicarHistorial({ type }); }}>
               <option value="">Todos los tipos</option>
               <option value="ENTRY">Entrada</option>
               <option value="EXIT">Salida</option>
@@ -591,9 +625,9 @@ export default function ReportsPage() {
             {datePreset === "personalizado" && (
               <>
                 <input className="input" type="date" value={filters.dateFrom} aria-label="Desde"
-                  onChange={(e) => setFilters((p) => ({ ...p, dateFrom: e.target.value }))} />
+                  onChange={(e) => { const dateFrom = e.target.value; setFilters((p) => ({ ...p, dateFrom })); aplicarHistorial({ dateFrom }); }} />
                 <input className="input" type="date" value={filters.dateTo} aria-label="Hasta"
-                  onChange={(e) => setFilters((p) => ({ ...p, dateTo: e.target.value }))} />
+                  onChange={(e) => { const dateTo = e.target.value; setFilters((p) => ({ ...p, dateTo })); aplicarHistorial({ dateTo }); }} />
               </>
             )}
             <button className="btn btn--primary" onClick={() => { setAppliedFilters(filters); setMovPage(1); }}>
@@ -693,7 +727,7 @@ export default function ReportsPage() {
           </p>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
             <SearchField value={lotSearch} onChange={setLotSearch} label="Buscar lotes y materiales"
-              onSearch={() => setLotApplied(lotSearch.trim())} />
+              onSearch={(search) => setLotApplied(search.trim())} />
             <button className="btn btn--primary"
               onClick={() => setLotApplied(lotSearch.trim())}>
               Buscar
@@ -788,7 +822,7 @@ export default function ReportsPage() {
           {/* Filtros */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
             <SearchField value={entSearch} onChange={setEntSearch} label="Buscar entradas"
-              onSearch={() => { setEntApplied({ search: entSearch, dateFrom: entDateFrom, dateTo: entDateTo }); setEntPage(1); }} />
+              onSearch={(search) => { setEntApplied({ search, dateFrom: entDateFrom, dateTo: entDateTo }); setEntPage(1); }} />
             <select className="input" value={entDatePreset} aria-label="Período"
               onChange={(e) => {
                 const v = e.target.value;
@@ -807,9 +841,9 @@ export default function ReportsPage() {
             {entDatePreset === "personalizado" && (
               <>
                 <input className="input" type="date" value={entDateFrom} aria-label="Desde"
-                  onChange={(e) => setEntDateFrom(e.target.value)} />
+                  onChange={(e) => { setEntDateFrom(e.target.value); aplicarEntradas({ dateFrom: e.target.value }); }} />
                 <input className="input" type="date" value={entDateTo} aria-label="Hasta"
-                  onChange={(e) => setEntDateTo(e.target.value)} />
+                  onChange={(e) => { setEntDateTo(e.target.value); aplicarEntradas({ dateTo: e.target.value }); }} />
               </>
             )}
             <button className="btn btn--primary" onClick={() => {
@@ -1078,7 +1112,7 @@ export default function ReportsPage() {
           {/* Filtros */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
             <SearchField value={salSearch} onChange={setSalSearch} label="Buscar salidas"
-              onSearch={() => { setSalApplied({ search: salSearch, dateFrom: salDateFrom, dateTo: salDateTo, documentoMaterialStatus: salDocumentoMaterialStatus }); setSalPage(1); }} />
+              onSearch={(search) => { setSalApplied({ search, dateFrom: salDateFrom, dateTo: salDateTo, documentoMaterialStatus: salDocumentoMaterialStatus }); setSalPage(1); }} />
             <select className="input" value={salDatePreset} aria-label="Período"
               onChange={(e) => {
                 const v = e.target.value;
@@ -1097,16 +1131,16 @@ export default function ReportsPage() {
             {salDatePreset === "personalizado" && (
               <>
                 <input className="input" type="date" value={salDateFrom} aria-label="Desde"
-                  onChange={(e) => setSalDateFrom(e.target.value)} />
+                  onChange={(e) => { setSalDateFrom(e.target.value); aplicarSalidas({ dateFrom: e.target.value }); }} />
                 <input className="input" type="date" value={salDateTo} aria-label="Hasta"
-                  onChange={(e) => setSalDateTo(e.target.value)} />
+                  onChange={(e) => { setSalDateTo(e.target.value); aplicarSalidas({ dateTo: e.target.value }); }} />
               </>
             )}
             <select
               className="input"
               value={salDocumentoMaterialStatus}
               aria-label="Estado de Documento Material"
-              onChange={(e) => setSalDocumentoMaterialStatus(e.target.value as "" | "PENDING" | "COMPLETED")}
+              onChange={(e) => { const documentoMaterialStatus = e.target.value as "" | "PENDING" | "COMPLETED"; setSalDocumentoMaterialStatus(documentoMaterialStatus); aplicarSalidas({ documentoMaterialStatus }); }}
             >
               <option value="">Todos los documentos SAP</option>
               <option value="PENDING">Documento Material pendiente</option>
@@ -1329,7 +1363,7 @@ export default function ReportsPage() {
           {/* Filtros */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
             <SearchField value={freshnessSearch} onChange={setFreshnessSearch} label="Buscar frescura por material o lote"
-              onSearch={() => setFreshnessApplied(freshnessSearch.trim())} />
+              onSearch={(search) => setFreshnessApplied(search.trim())} />
             <button
               className="btn btn--primary"
               onClick={() => setFreshnessApplied(freshnessSearch.trim())}

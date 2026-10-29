@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getLocationContent,
@@ -434,12 +435,25 @@ export default function LocationsPage() {
     void queryClient.invalidateQueries({ queryKey: ["locations", "availability"] });
   }
 
-  function handleSearch(e: React.FormEvent) {
-    e.preventDefault();
+  /*
+   * Busca sola al dejar de escribir, igual que el resto del sistema. El botón
+   * sigue existiendo y aplica sin esperar; el mínimo de 2 letras se mantiene,
+   * si no cualquier tecla suelta dispara una consulta sobre todo el stock.
+   */
+  const terminoAplicado = useDebouncedValue(term.trim());
+  useEffect(() => {
+    if (terminoAplicado.length < 2 && terminoAplicado !== "") return;
+    buscar(terminoAplicado);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [terminoAplicado]);
+
+  function buscar(texto: string) {
     setSelectedProductId(null);
-    setSubmittedTerm(term.trim());
-    setView("search");
+    setSubmittedTerm(texto);
+    if (texto) setView("search");
   }
+
+  function handleSearch(e: React.FormEvent) { e.preventDefault(); buscar(term.trim()); }
 
   const searchIsEmpty =
     searchQ.data && searchQ.data.rows.length === 0;

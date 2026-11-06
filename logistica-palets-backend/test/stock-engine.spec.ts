@@ -26,6 +26,7 @@ import { Movement } from '../src/modules/movements/entities/movement.entity';
 import { MovementDetail } from '../src/modules/movements/entities/movement-detail.entity';
 import { RegularizationLog } from '../src/modules/movements/entities/regularization-log.entity';
 import { AdjustmentRequest } from '../src/modules/adjustments/entities/adjustment-request.entity';
+import { AdjustmentRequestLine } from '../src/modules/adjustments/entities/adjustment-request-line.entity';
 import { SapStockSnapshot } from '../src/modules/reports/entities/sap-stock.entity';
 import type { EventsGateway } from '../src/modules/events/events.gateway';
 import type { CacheService } from '../src/modules/cache/cache.service';
@@ -900,6 +901,87 @@ describe('corregir movimiento — peso por pallet y sin cambios', () => {
     expect(pesoLog!.oldValue).toBe('800');
     expect(pesoLog!.newValue).toBe('845.5');
     expect(pesoLog!.reason).toContain('repesó');
+  });
+
+  describe('repartir un lote entre sus pallets', () => {
+    /** 114 en 30 pallets con el reparto entero automático: 24 de 4 y 6 de 3. */
+    async function entradaDe30Pallets() {
+      const palletItems = [...Array(24).fill(4), ...Array(6).fill(3)].map((quantity) => ({
+        lotCode: 'LR-1', quantity, fechaVencimiento: '2027-01-01',
+      }));
+      const res = await service.create({
+        type: 'ENTRY', productId: base.product.id, warehouseId: base.warehouse.id, locationId: base.location.id,
+        palletItems,
+      }, USER_ID);
+      const lot = await lotByCode(base.product.id, 'LR-1');
+      const pallets = await ds.getRepository(Pallet).find({ where: { lotId: lot!.id } });
+      return { movementId: res.movementId, lotId: lot!.id, pallets };
+    }
+
+    /** Postea las solicitudes como lo hace `AdjustmentsService.approve` con cada línea. */
+    async function ejecutarSolicitudes(requests: Array<{ requestId: string; type: string }>) {
+      for (const r of requests) {
+        const [line] = await ds.getRepository(AdjustmentRequestLine).find({ where: { requestId: r.requestId } });
+        await ds.transaction((manager) => service.createInTransactionPublic(manager, {
+          type: r.type as 'ADJUSTMENT_IN' | 'ADJUSTMENT_OUT',
+          productId: line.productId,
+          warehouseId: base.warehouse.id,
+          locationId: base.location.id,
+          adjustmentReason: 'DIFERENCIA_INVENTARIO',
+          palletItems: JSON.parse(line.palletItemsJson),
+        }, USER_ID));
+      }
+    }
+
+    it('dejar los 30 en 3,8 mantiene los 114 al ejecutar las dos solicitudes', async () => {
+      const { movementId, lotId, pallets } = await entradaDe30Pallets();
+
+      const res = await service.requestQuantityEdit(movementId, {
+        reason: 'El cliente maneja 3,8 por pallet',
+        lots: [{ lotId, palletEdits: pallets.map((p) => ({ palletId: p.id, newQuantity: 3.8 })) }],
+      }, USER_ID);
+
+      expect(res.requests.map((r) => [r.type, r.totalQuantity]).sort()).toEqual([
+        ['ADJUSTMENT_IN', 4.8],
+        ['ADJUSTMENT_OUT', 4.8],
+      ]);
+
+      // Pendiente: el stock no se movió.
+      const antes = await ds.getRepository(Pallet).find({ where: { lotId } });
+      expect(sumQuantities(antes.map((p) => p.quantity))).toBe(114);
+      expect(antes.some((p) => p.quantity === 3.8)).toBe(false);
+
+      await ejecutarSolicitudes(res.requests);
+
+      const despues = await ds.getRepository(Pallet).find({ where: { lotId } });
+      expect(despues.every((p) => p.quantity === 3.8)).toBe(true);
+      expect(sumQuantities(despues.map((p) => p.quantity))).toBe(114);
+      expect((await stockOf(base.product.id))!.currentQuantity).toBe(114);
+    });
+
+    it('subir un pallet sin bajar otro se rechaza: eso es agregar unidades', async () => {
+      const { movementId, lotId, pallets } = await entradaDe30Pallets();
+      const deTres = pallets.find((p) => p.quantity === 3)!;
+
+      await expect(service.requestQuantityEdit(movementId, {
+        reason: 'Sube sin compensar',
+        lots: [{ lotId, palletEdits: [{ palletId: deTres.id, newQuantity: 3.8 }] }],
+      }, USER_ID)).rejects.toThrow(/suben 0,8 unid\. más/);
+    });
+
+    it('subir más de lo que bajan los otros se rechaza por la diferencia', async () => {
+      const { movementId, lotId, pallets } = await entradaDe30Pallets();
+      const deTres = pallets.find((p) => p.quantity === 3)!;
+      const deCuatro = pallets.find((p) => p.quantity === 4)!;
+
+      await expect(service.requestQuantityEdit(movementId, {
+        reason: 'Sube de más',
+        lots: [{ lotId, palletEdits: [
+          { palletId: deTres.id, newQuantity: 4 },
+          { palletId: deCuatro.id, newQuantity: 3.5 },
+        ] }],
+      }, USER_ID)).rejects.toThrow(/suben 0,5 unid\. más/);
+    });
   });
 
   it('sin ningún cambio real, rechaza con "No hay cambios"', async () => {

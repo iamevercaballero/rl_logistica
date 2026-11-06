@@ -188,8 +188,9 @@ Arreglar una entrada o salida **ya registrada**.
 
 - **Se aplica solo:** datos que no tocan cantidades — N° de remito, proveedor, transportadora,
   chofer, destino, código de lote, lote SAP, vencimiento. Queda registrado quién lo cambió y por qué.
-- **Va a aprobación:** cambios de **cantidad** (reducir lo que trajo un palet, o agregar unidades
-  que aparecieron).
+- **Va a aprobación:** cambios de **cantidad** (reducir lo que trajo un palet, agregar unidades
+  que aparecieron, o repartir distinto el lote entre sus palets). Un reparto genera dos solicitudes,
+  una por lo que baja y otra por lo que sube: el gerente tiene que **aprobar las dos**.
 - **Anular:** con **⊘ Anular** das de baja toda la entrada o salida. También pasa por aprobación.
 
 > *Ejemplo:* cargaste 2.000 en un palet pero eran 1.500. Pedís la corrección con el motivo; al

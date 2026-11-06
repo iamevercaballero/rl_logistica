@@ -24,7 +24,7 @@ type LotEdit = {
   sapLot: string;
   fechaVencimiento: string;
   fechaFabricacion: string;
-  /** palletId → nueva cantidad (solo reducir) */
+  /** palletId → nueva cantidad */
   pallets: Record<string, string>;
   /** palletId → nuevo peso en kg. Es descriptivo: no genera solicitud de ajuste. */
   weights: Record<string, string>;
@@ -198,9 +198,11 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
       const vencChanged = !!edit.fechaVencimiento && edit.fechaVencimiento !== (l.fechaVencimiento ?? "");
       const fabChanged = !!edit.fechaFabricacion && edit.fechaFabricacion !== (l.fechaFabricacion ?? "");
 
-      // Corrección por pallet. ENTRY: solo se puede bajar el saldo actual (para sumar
-      // está "Agregar unidades"). EXIT: se compara contra lo que salió en ESTE movimiento
-      // (quantityInMovement) y se puede subir o bajar — no hay "Agregar unidades".
+      // Corrección por pallet. ENTRY: un pallet puede subir mientras el lote no supere lo
+      // que tiene — repartir no suma nada; para sumar está "Agregar unidades". EXIT: se
+      // compara contra lo que salió en ESTE movimiento (quantityInMovement) y se puede
+      // subir o bajar — no hay "Agregar unidades".
+      const entryDiffs: number[] = [];
       const palletEdits: { palletId: string; newQuantity: number; weightKg?: number; dispatchedPallets?: number | null }[] = [];
       for (const p of l.pallets) {
         if (!isExit && p.status === "EXITED") continue;
@@ -258,16 +260,21 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
             setFormError(`El pallet ${p.code}: como máximo se le puede sacar ${fmtQty(ceiling)} unid. en total.`);
             return;
           }
-        } else if (roundQty(newQty - p.currentQuantity) > 0) {
-          setFormError(
-            `El pallet ${p.code} tiene ${fmtQty(p.currentQuantity)} unid. — solo se puede reducir. Para sumar unidades usá "Agregar unidades" del lote.`,
-          );
-          return;
+        } else {
+          entryDiffs.push(quantityDelta(newQty, p.currentQuantity));
         }
 
         if (qtyChanged || weightKg !== undefined || dispatchedPallets !== undefined) {
           palletEdits.push({ palletId: p.id, newQuantity: newQty, weightKg, dispatchedPallets });
         }
+      }
+
+      const entryExcess = sumQuantities(entryDiffs);
+      if (entryExcess > 0) {
+        setFormError(
+          `Los pallets del lote ${l.lotCode} suman ${fmtQty(entryExcess)} unid. más de lo que tiene el lote. Para sumar unidades usá "Agregar unidades".`,
+        );
+        return;
       }
 
       // Agregado de unidades → pallets nuevos al aprobar (solo ENTRY)
@@ -588,14 +595,19 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                     const activePallets = isExit ? l.pallets : l.pallets.filter((p) => p.status !== "EXITED");
                     const exitedPallets = isExit ? [] : l.pallets.filter((p) => p.status === "EXITED");
                     const baseline = (p: MovementLotBreakdown["pallets"][number]) => isExit ? p.quantityInMovement : p.currentQuantity;
-                    const ceiling = (p: MovementLotBreakdown["pallets"][number]) => isExit ? p.quantityInMovement + p.currentQuantity : p.currentQuantity;
+                    // Solo la salida tiene tope por pallet. En la entrada el tope es el del lote.
+                    const ceiling = (p: MovementLotBreakdown["pallets"][number]) => isExit ? p.quantityInMovement + p.currentQuantity : Infinity;
                     const currentTotal = sumQuantities(activePallets.map((p) => baseline(p)));
-                    const newTotal = sumQuantities(activePallets.map((p) => {
+                    // Suma lo que dicen los campos: recortarlo acá mostraba un total que no
+                    // coincidía con lo escrito. Lo inválido lo marca el campo y lo frena el submit.
+                    const newQuantities = activePallets.map((p) => {
                       const raw = edit.pallets[p.id];
                       const n = parseQtyInput(raw ?? "");
-                      if (raw === undefined || n === null || n < 0) return baseline(p);
-                      return Math.min(n, ceiling(p));
-                    }));
+                      return raw === undefined || n === null || n < 0 ? baseline(p) : n;
+                    });
+                    const newTotal = sumQuantities(newQuantities);
+                    const palletsChanged = activePallets.some((p, i) => !quantitiesEqual(newQuantities[i], baseline(p)));
+                    const entryExcess = isExit ? 0 : Math.max(0, quantityDelta(newTotal, currentTotal));
                     const addQtyNum = parseQtyInput(edit.addQuantity);
                     const addQty = !isExit && addQtyNum !== null && addQtyNum > 0 ? addQtyNum : 0;
                     const addCount = Math.max(1, Math.floor(Number(edit.addPalletCount)) || 1);
@@ -611,7 +623,7 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                       <div
                         key={l.lotId}
                         style={{
-                          border: `1.5px solid ${delta !== 0 || codeChanged ? "var(--primary)" : "var(--border)"}`,
+                          border: `1.5px solid ${delta !== 0 || palletsChanged || codeChanged ? "var(--primary)" : "var(--border)"}`,
                           borderRadius: 10,
                           overflow: "hidden",
                         }}
@@ -813,9 +825,17 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
                           <span style={{ color: "var(--muted)" }}>
                             Nuevo total: <strong style={{ color: "var(--text)" }}>{fmtQty(sumQuantities([newTotal, addQty]))} unid.</strong>
                           </span>
-                          {delta !== 0 ? (
+                          {entryExcess > 0 ? (
+                            <span style={{ fontWeight: 800, color: "var(--danger)" }}>
+                              {fmtQty(entryExcess)} unid. de más · para sumar usá Agregar unidades
+                            </span>
+                          ) : delta !== 0 ? (
                             <span style={{ fontWeight: 800, color: delta > 0 ? "var(--success)" : "var(--warning)" }}>
                               {delta > 0 ? "+" : "−"}{fmtQty(Math.abs(delta))} unid. · requiere aprobación
+                            </span>
+                          ) : palletsChanged ? (
+                            <span style={{ fontWeight: 800, color: "var(--primary)" }}>
+                              Reparto entre pallets · requiere aprobación
                             </span>
                           ) : codeChanged ? (
                             <span style={{ fontWeight: 700, color: "var(--primary)" }}>Renombra el lote (directo, auditado)</span>
@@ -827,7 +847,8 @@ export default function MovementEditorModal({ movement, onClose, onSuccess }: Pr
 
                   <p style={{ fontSize: 11, color: "var(--muted)", margin: 0 }}>
                     Los cambios de cantidad por pallet generan solicitudes de ajuste (RLAI/RLAO) pendientes de aprobación
-                    del MANAGER — el stock no cambia hasta aprobar. El código y los datos del lote se aplican al guardar y quedan auditados.
+                    del MANAGER — el stock no cambia hasta aprobar. Un reparto entre pallets genera las dos, y hay que aprobar ambas.
+                    El código y los datos del lote se aplican al guardar y quedan auditados.
                   </p>
                 </div>
               )}

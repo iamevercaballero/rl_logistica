@@ -1774,8 +1774,11 @@ export class MovementsService {
    * - Las diferencias de cantidad generan AdjustmentRequest (RLAI/RLAO) en PENDIENTE_APROBACION:
    *   el stock NO cambia hasta que el MANAGER apruebe. A diferencia de la anulación,
    *   NO se setea originalMovementId (el movimiento original no se marca VOIDED).
-   * - ENTRY: la cantidad por pallet se compara contra el saldo actual del pallet (solo se
-   *   puede reducir; para sumar existe "agregar pallets nuevos").
+   * - ENTRY: la cantidad por pallet se compara contra el saldo actual del pallet. Se puede
+   *   bajar, y subir solo mientras el lote no termine con más de lo que tiene: repartir
+   *   114 en 30 pallets de 3,8 cuando quedaron 4 y 3 no suma nada al lote, pero genera
+   *   un RLAO por lo que baja y un RLAI por lo que sube. Para sumar unidades que no
+   *   estaban existe "agregar pallets nuevos".
    * - EXIT: la cantidad por pallet se compara contra lo que ESA salida registró para ese
    *   pallet (MovementDetail.quantity), no contra el saldo actual — son ejes distintos.
    *   Reducir lo que salió devuelve stock al pallet (ADJUSTMENT_IN); aumentar saca más
@@ -1882,6 +1885,9 @@ export class MovementsService {
       // ── Corrección por pallet ──
       const lotDetails = details.filter((d) => d.lotId === lot.id);
       const lotPalletIds = new Set(lotDetails.map((d) => d.palletId).filter(Boolean) as string[]);
+      // ENTRY: lo que suben y bajan los pallets de este lote, para validar el reparto al final.
+      const entryRaises: Array<{ palletId: string; quantity: number }> = [];
+      const entryLowers: number[] = [];
       for (const pe of edit.palletEdits ?? []) {
         const pallet = palletMap[pe.palletId];
         if (!pallet || !lotPalletIds.has(pe.palletId)) {
@@ -1910,19 +1916,19 @@ export class MovementsService {
             restoreItems.push({ palletId: pallet.id, quantity: -exitDelta });
           }
         } else {
-          // ENTRY: solo se puede reducir el saldo actual del pallet.
+          // ENTRY: se corrige el saldo actual del pallet. Si sube, el tope es el del
+          // lote, no el del pallet — se valida al terminar con todos sus pallets.
           if (pallet.status === 'EXITED') {
             warnings.push(`El pallet ${pallet.code} ya fue despachado — no se modifica.`);
             continue;
           }
-          if (roundQuantity(pe.newQuantity - pallet.quantity) > 0) {
-            throw new BadRequestException(
-              `El pallet ${pallet.code} tiene ${pallet.quantity} unid. — solo se puede reducir. ` +
-              `Para sumar unidades usá "Agregar pallets nuevos" del lote.`,
-            );
+          const entryDelta = quantityDelta(pe.newQuantity, pallet.quantity);
+          if (entryDelta > 0) {
+            entryRaises.push({ palletId: pallet.id, quantity: entryDelta });
+          } else if (entryDelta < 0) {
+            entryLowers.push(-entryDelta);
+            decreaseItems.push({ palletId: pallet.id, quantity: -entryDelta });
           }
-          const take = roundQuantity(pallet.quantity - pe.newQuantity);
-          if (take > 0) decreaseItems.push({ palletId: pallet.id, quantity: take });
         }
 
         // El peso no mueve stock: se aplica directo (auditado), sin aprobación.
@@ -1948,6 +1954,18 @@ export class MovementsService {
             }
           }
         }
+      }
+
+      if (entryRaises.length > 0) {
+        const raised = sumQuantities(entryRaises.map((r) => r.quantity));
+        const excess = quantityDelta(raised, sumQuantities(entryLowers));
+        if (excess > 0) {
+          throw new BadRequestException(
+            `Los pallets del lote ${lot.lotCode} suben ${formatQuantity(excess)} unid. más de lo que bajan los otros — ` +
+            `solo se puede repartir lo que ya tiene el lote. Para sumar unidades usá "Agregar pallets nuevos" del lote.`,
+          );
+        }
+        restoreItems.push(...entryRaises);
       }
 
       // ── Agregado de unidades → pallets nuevos al aprobar (solo ENTRY) ──
@@ -2056,6 +2074,9 @@ export class MovementsService {
 
       // 3. Solicitudes de ajuste por los deltas — pendientes de aprobación
       const requests: Array<{ requestId: string; code: string; type: string; totalQuantity: number }> = [];
+      // En una ENTRADA, subir pallets solo es posible bajando otros: las dos solicitudes
+      // son un mismo reparto, y aprobar una sola deja el lote descuadrado.
+      const repartoEntrePallets = !isExit && restoreItems.length > 0;
       const createRequest = async (
         type: 'ADJUSTMENT_IN' | 'ADJUSTMENT_OUT',
         items: Array<{ quantity: number }>,
@@ -2068,7 +2089,8 @@ export class MovementsService {
           status: 'PENDIENTE_APROBACION',
           reason: 'DIFERENCIA_INVENTARIO',
           notes: `Corrección de cantidad de ${isExit ? 'SALIDA' : 'ENTRADA'} del ${formatBusinessDate(movement.date)}` +
-            `${movement.documentNumber ? ` · MIC/Fac/Rem. ${movement.documentNumber}` : ''} — ${dto.reason}`,
+            `${movement.documentNumber ? ` · MIC/Fac/Rem. ${movement.documentNumber}` : ''} — ${dto.reason}` +
+            `${repartoEntrePallets ? ' · Reparto entre pallets: aprobar junto con su RLAI/RLAO.' : ''}`,
           warehouseId: movement.warehouseId ?? null,
           locationId: movement.locationId ?? null,
           createdById: userId,

@@ -127,7 +127,7 @@ export class ReportsController {
 
   /** Ocupación: ubicaciones ocupadas vs totales y pallets vs capacidad, por depósito. */
   @Get('occupancy')
-  @Roles('ADMIN', 'MANAGER', 'AUDITOR')
+  @Roles('ADMIN', 'MANAGER', 'AUDITOR', 'OPERATOR')
   @RequirePermission('reports', 'read')
   async occupancy(@Req() req: AuthedRequest, @Query('warehouseId') warehouseId?: string) {
     return this.service.occupancy(await this.scopeOf(req, warehouseId));
@@ -135,7 +135,7 @@ export class ReportsController {
 
   /** Rotación por producto en un período: salidas vs stock, top movers y dead stock. */
   @Get('rotation')
-  @Roles('ADMIN', 'MANAGER', 'AUDITOR')
+  @Roles('ADMIN', 'MANAGER', 'AUDITOR', 'OPERATOR')
   @RequirePermission('reports', 'read')
   async rotation(
     @Req() req: AuthedRequest,
@@ -148,7 +148,7 @@ export class ReportsController {
 
   /** Dwell-time: antigüedad de los pallets en stock (base de facturación de almacenaje). */
   @Get('dwell-time')
-  @Roles('ADMIN', 'MANAGER', 'AUDITOR')
+  @Roles('ADMIN', 'MANAGER', 'AUDITOR', 'OPERATOR')
   @RequirePermission('reports', 'read')
   async dwellTime(@Req() req: AuthedRequest, @Query('warehouseId') warehouseId?: string) {
     return this.service.dwellTime(await this.scopeOf(req, warehouseId));

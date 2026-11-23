@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getDocuments, type LogisticsDocument } from "../api/movements";
 import { useActiveWarehouseId } from "../contexts/WarehouseContext";
@@ -17,6 +17,8 @@ import { DOCUMENT_SEARCH } from "../utils/searchFields";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { useAuth } from "../auth/AuthContext";
 import { fmtDateTime } from "../utils/dateFormat";
+import { Paginador } from "../components/Paginador";
+import { usePaginaPorFiltros } from "../utils/usePaginaPorFiltros";
 
 // ── Helpers de formato ───────────────────────────────────────────────────────
 
@@ -479,14 +481,23 @@ export default function BitacoraPage() {
   // La bitácora operativa muestra solo los remitos del depósito activo.
   const activeWarehouseId = useActiveWarehouseId();
 
+  // El backend pagina de a 50; cambiar un filtro vuelve a la primera página.
+  const [page, setPage] = usePaginaPorFiltros([activeWarehouseId, typeFilter, from, to, search]);
+  const listaRef = useRef<HTMLElement>(null);
+  function irAPagina(pagina: number) {
+    setPage(pagina);
+    listaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   const docsQ = useQuery({
-    queryKey: ["bitacora", activeWarehouseId, { typeFilter, from, to, search }],
+    queryKey: ["bitacora", activeWarehouseId, { typeFilter, from, to, search, page }],
     queryFn: () => getDocuments({
       type:   typeFilter || undefined,
       from:   from       || undefined,
       to:     to         || undefined,
       search: search     || undefined,
       warehouseId: activeWarehouseId,
+      page,
     }),
     enabled: !!activeWarehouseId,
     placeholderData: (prev) => prev,
@@ -602,7 +613,7 @@ export default function BitacoraPage() {
       </section>
 
       {/* Lista de documentos */}
-      <section className="card" style={{ padding: 0, overflow: "hidden" }}>
+      <section ref={listaRef} className="card" style={{ padding: 0, overflow: "hidden" }}>
         {/* Cabecera de la lista */}
         <div style={{
           padding: "12px 20px",
@@ -613,12 +624,9 @@ export default function BitacoraPage() {
             Registros{" "}
             {docsQ.data !== undefined && (
               <span style={{ fontWeight: 400, color: "var(--muted)", fontSize: 13 }}>
-                {/* El total viene del backend, no del largo de la página: antes
-                    se mostraban 200 como si fueran todos y no había forma de
-                    saber que faltaban. */}
-                — {sorted.length === documentsTotal
-                    ? `${documentsTotal} total`
-                    : `${sorted.length} de ${documentsTotal}`}
+                {/* El total viene del backend, no del largo de la página. El
+                    tramo visible y el paso de página van en el pie. */}
+                — {documentsTotal.toLocaleString("es-PY")} total
               </span>
             )}
           </h3>
@@ -665,6 +673,11 @@ export default function BitacoraPage() {
                 onToggle={() => setExpandedId((prev) => (prev === doc.id ? null : doc.id))}
               />
             ))}
+            {docsQ.data && docsQ.data.meta.totalPages > 1 && (
+              <div style={{ padding: "0 16px 12px" }}>
+                <Paginador info={docsQ.data.meta} onPagina={irAPagina} cargando={docsQ.isFetching} etiqueta="remitos" />
+              </div>
+            )}
           </div>
         )}
       </section>

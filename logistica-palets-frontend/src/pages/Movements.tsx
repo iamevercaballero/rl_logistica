@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Paginador } from "../components/Paginador";
+import { usePaginaPorFiltros } from "../utils/usePaginaPorFiltros";
 import ProductSearch from "../components/ProductSearch";
 import ProductCatalogModal from "../components/ProductCatalogModal";
 import LocationPicker, { type LocationSessionUsage } from "../components/LocationPicker";
@@ -319,12 +321,15 @@ export default function MovementsPage() {
   const [showAttachModal, setShowAttachModal] = useState(false);
 
   const isDocType = movType === "ENTRY" || movType === "EXIT";
+  // De a 50 como lo pagina el backend; cambiar de tipo o de depósito vuelve a la página 1.
+  const [docsPage, setDocsPage] = usePaginaPorFiltros([movType, activeWarehouseId]);
   const docsQ = useQuery({
     // "Historial reciente" es del depósito activo, como el resto del módulo —
     // sin esto mezclaba remitos de todos los depósitos que ve el usuario.
-    queryKey: ["documents", movType, showDocHistory, activeWarehouseId],
-    queryFn: () => getDocuments({ type: movType as "ENTRY" | "EXIT", warehouseId: activeWarehouseId }),
+    queryKey: ["documents", movType, showDocHistory, activeWarehouseId, docsPage],
+    queryFn: () => getDocuments({ type: movType as "ENTRY" | "EXIT", warehouseId: activeWarehouseId, page: docsPage }),
     enabled: isDocType && showDocHistory && !!activeWarehouseId,
+    placeholderData: (prev) => prev,
     staleTime: 30_000,
   });
   const documents: LogisticsDocument[] = docsQ.data?.data ?? [];
@@ -1731,6 +1736,9 @@ export default function MovementsPage() {
                   ))}
                 </tbody>
               </table>
+              {docsQ.data && docsQ.data.meta.totalPages > 1 && (
+                <Paginador info={docsQ.data.meta} onPagina={setDocsPage} cargando={docsQ.isFetching} etiqueta="remitos" />
+              )}
             </div>
           )}
         </section>

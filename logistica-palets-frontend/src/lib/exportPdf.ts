@@ -210,7 +210,8 @@ export function exportEntradasPDF(data: Movement[], filename = "entradas"): void
         ld.lotCode ?? "-",
         showSapLot ? (ld.sapLot ?? "-") : "-",
         m.documentNumber ?? "-",
-        `${ld.quantity.toLocaleString("es-PY")} ${m.material.unitOfMeasure ?? ""}`.trim(),
+        ld.quantity.toLocaleString("es-PY"),
+        m.material.unitOfMeasure ?? "-",
         ld.pallets != null ? String(ld.pallets) : "-",
         `${m.warehouse?.name ?? "-"}${m.location?.code ? ` / ${m.location.code}` : ""}`,
         m.supplier ?? "-",
@@ -227,26 +228,30 @@ export function exportEntradasPDF(data: Movement[], filename = "entradas"): void
     startY,
     margin: { left: 8, right: 8 },
     bodyStyles: { ...baseStyles.bodyStyles, fontSize: 7.5 },
-    headStyles: { ...baseStyles.headStyles, fontSize: 8 },
-    head: [["Fecha y hora", "Material", "Lote", "Lote SAP", "MIC/Fac/Rem.", "Cantidad", "Pal.", "Depósito / Ubic.", "Proveedor", "Transportista", "Chofer", "Notas", "Estado"]],
+    // Margen interno chico en el encabezado: con 3 mm por lado, "Cantidad",
+    // "Unidad" y "Estado" se partían en dos renglones.
+    headStyles: { ...baseStyles.headStyles, fontSize: 8, cellPadding: { top: 3, bottom: 3, left: 1.5, right: 1.5 } },
+    head: [["Fecha y hora", "Material", "Lote", "Lote SAP", "MIC/Fac/Rem.", "Cantidad", "Unidad", "Pal.", "Depósito / Ubic.", "Proveedor", "Transportista", "Chofer", "Notas", "Estado"]],
     body,
+    // A4 apaisado con márgenes de 8 mm deja 281 mm.
     columnStyles: {
       0: { cellWidth: 20 },
-      1: { cellWidth: 44 },
+      1: { cellWidth: 40 },
       2: { cellWidth: 18 },
       3: { cellWidth: 18 },
-      4: { cellWidth: 18 },
-      5: { halign: "right", cellWidth: 18 },
-      6: { halign: "center", cellWidth: 10 },
-      7: { cellWidth: 27 },
-      8: { cellWidth: 20 },
+      4: { cellWidth: 20 },
+      5: { halign: "right", cellWidth: 16 },
+      6: { halign: "center", cellWidth: 14 },
+      7: { halign: "center", cellWidth: 9 },
+      8: { cellWidth: 26 },
       9: { cellWidth: 20 },
-      10: { cellWidth: 18 },
-      11: { cellWidth: 24 },
-      12: { cellWidth: 14 },
+      10: { cellWidth: 22 },
+      11: { cellWidth: 18 },
+      12: { cellWidth: 23 },
+      13: { cellWidth: 16 },
     },
     didParseCell: (data) => {
-      if (data.section === "body" && (data.row.raw as (string | number)[])[12] === "Anulado") {
+      if (data.section === "body" && (data.row.raw as (string | number)[])[13] === "Anulado") {
         data.cell.styles.textColor = [156, 148, 136];
       }
     },
@@ -268,7 +273,8 @@ export function exportSalidasPDF(data: Movement[], filename = "salidas"): void {
     item.lote,
     item.sapLot,
     item.documentoMaterial,
-    `${item.quantity.toLocaleString("es-PY")} ${item.unit}`.trim(),
+    item.quantity.toLocaleString("es-PY"),
+    item.unit || "-",
     String(item.pallets),
     item.desde,
     item.destino,
@@ -282,7 +288,8 @@ export function exportSalidasPDF(data: Movement[], filename = "salidas"): void {
     ...baseStyles,
     startY,
     margin: { left: 10, right: 10 },
-    head: [["Fecha y hora", "Material", "Lote", "Lote SAP", "Documento Material", "Cantidad", "Pal.", "Desde", "Destino", "Transportista", "Chofer", "Notas", "Estado"]],
+    headStyles: { ...baseStyles.headStyles, fontSize: 8, cellPadding: { top: 3, bottom: 3, left: 1.5, right: 1.5 } },
+    head: [["Fecha y hora", "Material", "Lote", "Lote SAP", "Documento Material", "Cantidad", "Unidad", "Pal.", "Desde", "Destino", "Transportista", "Chofer", "Notas", "Estado"]],
     body,
     columnStyles: {
       0: { cellWidth: 19 },
@@ -290,14 +297,15 @@ export function exportSalidasPDF(data: Movement[], filename = "salidas"): void {
       2: { cellWidth: 15 },
       3: { cellWidth: 15 },
       4: { cellWidth: 19 },
-      5: { halign: "right", cellWidth: 16 },
-      6: { halign: "center", cellWidth: 8 },
-      7: { cellWidth: 25 },
-      8: { cellWidth: 23 },
-      9: { cellWidth: 20 },
-      10: { cellWidth: 17 },
-      11: { cellWidth: 20 },
-      12: { cellWidth: 12 },
+      5: { halign: "right", cellWidth: 19 },
+      6: { halign: "center", cellWidth: 16 },
+      7: { halign: "center", cellWidth: 11 },
+      8: { cellWidth: 25 },
+      9: { cellWidth: 23 },
+      10: { cellWidth: 22 },
+      11: { cellWidth: 17 },
+      12: { cellWidth: 20 },
+      13: { cellWidth: 17 },
     },
     didParseCell: (data) => {
       const row = data.row.raw as (string | number)[];
@@ -306,7 +314,7 @@ export function exportSalidasPDF(data: Movement[], filename = "salidas"): void {
         data.cell.styles.textColor = [146, 64, 14];
         data.cell.styles.fontStyle = "bold";
       }
-      if (data.section === "body" && row[12] === "Anulado") {
+      if (data.section === "body" && row[13] === "Anulado") {
         data.cell.styles.textColor = [156, 148, 136];
       }
     },

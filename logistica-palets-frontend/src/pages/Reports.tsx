@@ -879,7 +879,7 @@ export default function ReportsPage() {
           {entries.length > 0 && (
             <>
               <div style={{ overflowX: "auto" }}>
-                <table className="table" style={{ minWidth: 1100 }}>
+                <table className="table" style={{ minWidth: 1170 }}>
                   <thead>
                     <tr>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("createdAt")}>Fecha y hora{sortArrow(entradasSort.sortConfig, "createdAt")}</th>
@@ -888,6 +888,7 @@ export default function ReportsPage() {
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("sapLot")}>Lote SAP{sortArrow(entradasSort.sortConfig, "sapLot")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("documentNumber")}>MIC/Factura/Remito{sortArrow(entradasSort.sortConfig, "documentNumber")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("quantity")}>Cantidad{sortArrow(entradasSort.sortConfig, "quantity")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("material.unitOfMeasure")}>Unidad{sortArrow(entradasSort.sortConfig, "material.unitOfMeasure")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("pallets")}>Pallets{sortArrow(entradasSort.sortConfig, "pallets")}</th>
                       <th scope="col">Depósito / Ubic.</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => entradasSort.handleSort("supplier")}>Proveedor{sortArrow(entradasSort.sortConfig, "supplier")}</th>
@@ -917,7 +918,8 @@ export default function ReportsPage() {
                         <td style={{ fontSize: 12 }}>{r.lot ?? "—"}</td>
                         <td style={{ fontFamily: "monospace", fontSize: 12 }}>{r.sapLot ?? "—"}</td>
                         <td style={{ fontSize: 12, color: "var(--muted)" }}>{m.documentNumber ?? "—"}</td>
-                        <td style={{ fontWeight: 600, textDecoration: voided ? "line-through" : undefined }}>{r.quantity.toLocaleString("es-PY")} {m.material.unitOfMeasure ?? ""}</td>
+                        <td style={{ fontWeight: 600, textAlign: "right", textDecoration: voided ? "line-through" : undefined }}>{r.quantity.toLocaleString("es-PY")}</td>
+                        <td style={{ color: "var(--muted)", fontSize: 12 }}>{m.material.unitOfMeasure ?? "—"}</td>
                         <td style={{ textAlign: "center" }}>{r.pallets != null ? r.pallets : "—"}</td>
                         <td style={{ fontSize: 12 }}>
                           {m.warehouse?.name ?? "—"}{m.location?.code ? ` / ${m.location.code}` : ""}
@@ -1182,7 +1184,7 @@ export default function ReportsPage() {
           {salMovements.length > 0 && (
             <>
               <div style={{ overflowX: "auto" }}>
-                <table className="table" style={{ minWidth: 1120 }}>
+                <table className="table" style={{ minWidth: 1190 }}>
                   <thead>
                     <tr>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("createdAt")}>Fecha y hora{sortArrow(salidasSort.sortConfig, "createdAt")}</th>
@@ -1191,6 +1193,7 @@ export default function ReportsPage() {
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("sapLot")}>Lote SAP{sortArrow(salidasSort.sortConfig, "sapLot")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("documentoMaterial")}>Documento Material{sortArrow(salidasSort.sortConfig, "documentoMaterial")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("quantity")}>Cantidad{sortArrow(salidasSort.sortConfig, "quantity")}</th>
+                      <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("material.unitOfMeasure")}>Unidad{sortArrow(salidasSort.sortConfig, "material.unitOfMeasure")}</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("pallets")}>Pallets{sortArrow(salidasSort.sortConfig, "pallets")}</th>
                       <th scope="col">Desde</th>
                       <th scope="col" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => salidasSort.handleSort("destination")}>Destino{sortArrow(salidasSort.sortConfig, "destination")}</th>
@@ -1222,7 +1225,8 @@ export default function ReportsPage() {
                             <span className="badge badge--estado-pendiente">{DOCUMENTO_MATERIAL_PENDING}</span>
                           )}
                         </td>
-                        <td style={{ fontWeight: 600, textDecoration: voided ? "line-through" : undefined }}>{r.quantity.toLocaleString("es-PY")} {m.material.unitOfMeasure ?? ""}</td>
+                        <td style={{ fontWeight: 600, textAlign: "right", textDecoration: voided ? "line-through" : undefined }}>{r.quantity.toLocaleString("es-PY")}</td>
+                        <td style={{ color: "var(--muted)", fontSize: 12 }}>{m.material.unitOfMeasure ?? "—"}</td>
                         <td style={{ textAlign: "center" }}>{r.pallets != null ? r.pallets : "—"}</td>
                         <td style={{ fontSize: 12 }}>
                           {m.warehouse?.name ?? m.from?.warehouseName ?? "—"}{(m.location?.code ?? m.from?.locationCode) ? ` / ${m.location?.code ?? m.from?.locationCode}` : ""}

@@ -147,7 +147,7 @@ export async function exportStockExcel(
     ]);
     styleDataRow(row, i, COL_COUNT);
     row.getCell(5).alignment = { horizontal: "right" };
-    row.getCell(5).numFmt = '#,##0';
+    row.getCell(5).numFmt = quantityNumFmt(Number(r.currentQuantity));
     row.getCell(6).alignment = { horizontal: "center" };
     rowCount++;
   });
@@ -207,11 +207,11 @@ export async function exportSapDiffExcel(
     for (let c = 1; c <= COL_COUNT; c++) row.getCell(c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: bgArgb } };
 
     row.getCell(5).alignment = { horizontal: "right" };
-    row.getCell(5).numFmt = '#,##0';
+    row.getCell(5).numFmt = quantityNumFmt(Number(r.stockSistema));
     row.getCell(6).alignment = { horizontal: "right" };
-    row.getCell(6).numFmt = '#,##0';
+    row.getCell(6).numFmt = quantityNumFmt(Number(r.stockSAP));
     row.getCell(7).alignment = { horizontal: "right" };
-    row.getCell(7).numFmt = '#,##0';
+    row.getCell(7).numFmt = quantityNumFmt(Number(r.diferencia));
     row.getCell(7).font = {
       bold: true,
       color: { argb: r.diferencia === 0 ? "FF166534" : "FF991B1B" },
@@ -276,7 +276,7 @@ export async function exportMovementsExcel(
       for (let col = 1; col <= COL_COUNT; col++) row.getCell(col).font = { ...row.getCell(col).font, strike: true, color: { argb: "FF9C9488" } };
     }
     row.getCell(4).alignment = { horizontal: "right" };
-    row.getCell(4).numFmt = '#,##0';
+    row.getCell(4).numFmt = quantityNumFmt(Number(r.quantity));
     rowCount++;
   });
 
@@ -324,15 +324,15 @@ export async function exportDailyStockExcel(
     styleDataRow(row, i, COL_COUNT);
     row.getCell(3).alignment = { horizontal: "center" };
     row.getCell(4).alignment = { horizontal: "right" };
-    row.getCell(4).numFmt = '#,##0';
+    row.getCell(4).numFmt = quantityNumFmt(Number(r.stockInicial));
     row.getCell(5).alignment = { horizontal: "right" };
-    row.getCell(5).numFmt = '#,##0';
+    row.getCell(5).numFmt = quantityNumFmt(Number(r.entradas));
     row.getCell(5).font = { color: { argb: r.entradas > 0 ? "FF166534" : "FF374151" }, bold: r.entradas > 0 };
     row.getCell(6).alignment = { horizontal: "right" };
-    row.getCell(6).numFmt = '#,##0';
+    row.getCell(6).numFmt = quantityNumFmt(Number(r.salidas));
     row.getCell(6).font = { color: { argb: r.salidas > 0 ? "FF991B1B" : "FF374151" }, bold: r.salidas > 0 };
     row.getCell(7).alignment = { horizontal: "right" };
-    row.getCell(7).numFmt = '#,##0';
+    row.getCell(7).numFmt = quantityNumFmt(Number(r.stockFinal));
     row.getCell(7).font = { bold: true };
     rowCount++;
   });
@@ -346,7 +346,7 @@ export async function exportDailyStockExcel(
 /* ── Entradas report (expands lotsDetail like the UI table) ──────────────── */
 
 export async function exportEntradasExcel(data: Movement[], filename = "entradas"): Promise<void> {
-  const COL_COUNT = 13;
+  const COL_COUNT = 14;
   const wb = buildBaseWorkbook();
   const ws = wb.addWorksheet("Entradas");
 
@@ -357,6 +357,7 @@ export async function exportEntradasExcel(data: Movement[], filename = "entradas
     { key: "sapLot",   width: 20 },
     { key: "doc",      width: 20 },
     { key: "qty",      width: 16 },
+    { key: "unidad",   width: 10 },
     { key: "pallets",  width: 10 },
     { key: "ubic",     width: 28 },
     { key: "prov",     width: 26 },
@@ -368,7 +369,7 @@ export async function exportEntradasExcel(data: Movement[], filename = "entradas
 
   addReportHeader(ws, "Reporte de Entradas", COL_COUNT);
   applyHeaderRow(ws.addRow([]), [
-    "Fecha y hora", "Material", "Lote", "Lote SAP", "MIC/Factura/Remito", "Cantidad", "Pallets",
+    "Fecha y hora", "Material", "Lote", "Lote SAP", "MIC/Factura/Remito", "Cantidad", "Unidad", "Pallets",
     "Depósito / Ubic.", "Proveedor", "Transportista", "Chofer", "Notas", "Estado",
   ]);
 
@@ -389,6 +390,7 @@ export async function exportEntradasExcel(data: Movement[], filename = "entradas
         showSapLot ? (ld.sapLot ?? "-") : "-",
         m.documentNumber ?? "-",
         ld.quantity,
+        m.material.unitOfMeasure ?? "-",
         ld.pallets ?? "-",
         `${m.warehouse?.name ?? "-"}${m.location?.code ? ` / ${m.location.code}` : ""}`,
         m.supplier ?? "-",
@@ -401,12 +403,13 @@ export async function exportEntradasExcel(data: Movement[], filename = "entradas
       if (m.voidStatus === "VOIDED") {
         for (let col = 1; col <= COL_COUNT; col++) row.getCell(col).font = { ...row.getCell(col).font, strike: true, color: { argb: "FF9C9488" } };
       } else if (m.status === "PENDING_REGULARIZATION") {
-        row.getCell(13).fill = { type: "pattern", pattern: "solid", fgColor: { argb: `FF${RED_LIGHT}` } };
-        row.getCell(13).font = { bold: true, color: { argb: "FF991B1B" } };
+        row.getCell(14).fill = { type: "pattern", pattern: "solid", fgColor: { argb: `FF${RED_LIGHT}` } };
+        row.getCell(14).font = { bold: true, color: { argb: "FF991B1B" } };
       }
       row.getCell(6).alignment = { horizontal: "right" };
-      row.getCell(6).numFmt = '#,##0';
+      row.getCell(6).numFmt = quantityNumFmt(ld.quantity);
       row.getCell(7).alignment = { horizontal: "center" };
+      row.getCell(8).alignment = { horizontal: "center" };
       rowCount++;
     });
   }
@@ -420,7 +423,7 @@ export async function exportEntradasExcel(data: Movement[], filename = "entradas
 /* ── Salidas report (expands lotsDetail like the UI table) ───────────────── */
 
 export async function exportSalidasExcel(data: Movement[], filename = "salidas"): Promise<void> {
-  const COL_COUNT = 13;
+  const COL_COUNT = 14;
   const wb = buildBaseWorkbook();
   const ws = wb.addWorksheet("Salidas");
 
@@ -431,6 +434,7 @@ export async function exportSalidasExcel(data: Movement[], filename = "salidas")
     { key: "sapLot",   width: 20 },
     { key: "documentoMaterial", width: 22 },
     { key: "qty",      width: 16 },
+    { key: "unidad",   width: 10 },
     { key: "pallets",  width: 10 },
     { key: "desde",    width: 28 },
     { key: "destino",  width: 28 },
@@ -442,7 +446,7 @@ export async function exportSalidasExcel(data: Movement[], filename = "salidas")
 
   addReportHeader(ws, "Reporte de Salidas", COL_COUNT);
   applyHeaderRow(ws.addRow([]), [
-    "Fecha y hora", "Material", "Lote", "Lote SAP", "Documento Material", "Cantidad", "Pallets",
+    "Fecha y hora", "Material", "Lote", "Lote SAP", "Documento Material", "Cantidad", "Unidad", "Pallets",
     "Desde", "Destino", "Transportista", "Chofer", "Notas", "Estado",
   ]);
 
@@ -450,7 +454,7 @@ export async function exportSalidasExcel(data: Movement[], filename = "salidas")
   for (const item of buildSalidasExportRows(data)) {
     const row = ws.addRow([
       item.fecha, item.material, item.lote, item.sapLot, item.documentoMaterial,
-      item.quantity, item.pallets, item.desde, item.destino, item.carrier,
+      item.quantity, item.unit || "-", item.pallets, item.desde, item.destino, item.carrier,
       item.driver, item.notes, item.estado,
     ]);
     styleDataRow(row, rowCount, COL_COUNT);
@@ -462,8 +466,9 @@ export async function exportSalidasExcel(data: Movement[], filename = "salidas")
       for (let col = 1; col <= COL_COUNT; col++) row.getCell(col).font = { ...row.getCell(col).font, strike: true, color: { argb: "FF9C9488" } };
     }
     row.getCell(6).alignment = { horizontal: "right" };
-    row.getCell(6).numFmt = '#,##0';
+    row.getCell(6).numFmt = quantityNumFmt(item.quantity);
     row.getCell(7).alignment = { horizontal: "center" };
+    row.getCell(8).alignment = { horizontal: "center" };
     rowCount++;
   }
 
@@ -512,7 +517,7 @@ export async function exportLotesExcel(data: Lot[], filename = "lotes"): Promise
       row.getCell(8).font = { bold: true, color: { argb: "FF991B1B" } };
     }
     row.getCell(7).alignment = { horizontal: "right" };
-    row.getCell(7).numFmt = '#,##0';
+    row.getCell(7).numFmt = quantityNumFmt(Number(r.stockActual));
     rowCount++;
   });
 
@@ -577,7 +582,7 @@ export async function exportFreshnessExcel(data: FreshnessRow[], filename = "con
 
     row.getCell(3).alignment = { horizontal: "center" };
     row.getCell(7).alignment = { horizontal: "right" };
-    row.getCell(7).numFmt = '#,##0';
+    row.getCell(7).numFmt = quantityNumFmt(Number(r.stockActual));
     row.getCell(10).alignment = { horizontal: "right" };
     row.getCell(10).numFmt = '#,##0';
     row.getCell(10).font = {
@@ -654,7 +659,7 @@ export async function exportTrazabilidadExcel(
       for (let col = 1; col <= COL_COUNT; col++) row.getCell(col).font = { ...row.getCell(col).font, strike: true, color: { argb: "FF9C9488" } };
     }
     row.getCell(3).alignment = { horizontal: "right" };
-    row.getCell(3).numFmt = '#,##0';
+    row.getCell(3).numFmt = quantityNumFmt(Number(e.quantity));
     rowCount++;
   });
 
@@ -662,4 +667,15 @@ export async function exportTrazabilidadExcel(
   ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: COL_COUNT } };
   addBrandFooter(ws, 3 + rowCount);
   await downloadWorkbook(wb, filename);
+}
+
+/**
+ * Formato de celda para una cantidad: sin decimales si es entera y con los que
+ * trae si no. Con `#,##0` fijo, Excel mostraba 2.721,6 KG como 2.722 aunque el
+ * valor guardado fuera el correcto; `#,##0.###` deja un separador colgando en
+ * las enteras ("1.000,").
+ */
+export function quantityNumFmt(value: number): string {
+  const decimals = Math.min(3, (String(value).split(".")[1] ?? "").length);
+  return decimals === 0 ? "#,##0" : `#,##0.${"0".repeat(decimals)}`;
 }
